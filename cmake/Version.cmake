@@ -1,0 +1,26 @@
+# Script mode: writes OUTPUT with the version string shown by the frontend and --version.
+# Needs -DSOURCE_DIR, -DOUTPUT and -DVERSION. Runs on every build so the commit stays current.
+set(commit "")
+set(tag "")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" describe --always --dirty --abbrev=8 --exclude "*"
+    OUTPUT_VARIABLE commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" describe --tags --exact-match --match "v[0-9]*"
+    OUTPUT_VARIABLE tag OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+if(tag AND commit)
+  set(text "${tag} (${commit})")
+elseif(commit)
+  set(text "v${VERSION}-dev (${commit})")
+else()
+  set(text "v${VERSION}-dev (no git commit)")
+endif()
+set(content "#pragma once\n\nnamespace xs {\ninline constexpr char version[] = \"${text}\";\n} // namespace xs\n")
+set(previous "")
+if(EXISTS "${OUTPUT}")
+  file(READ "${OUTPUT}" previous)
+endif()
+if(NOT content STREQUAL previous)
+  file(WRITE "${OUTPUT}" "${content}")
+endif()

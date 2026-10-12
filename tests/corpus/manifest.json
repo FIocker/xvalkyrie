@@ -1,0 +1,17 @@
+{
+  "name": "synthetic-directories",
+  "target": "synthetic-not-xbox",
+  "architecture": "x86_64",
+  "format": "PE32+",
+  "source": "generate.py",
+  "comparison_config": "game.config",
+  "comparison_note": "The synthetic PC declaration tests rejection of a non-Scarlett family, not artifact provenance.",
+  "requires_gdkx": false,
+  "verified_on_console": false,
+  "verified_on_compatibility_layer": false,
+  "purpose": "Read-only import, export, relocation, TLS and exception metadata; no code or entry point",
+  "variants": {
+    "scarlett-modules": "Import table with the 27 DLL names from the xbdepends readme, no symbols",
+    "delay": "Made up normal and delay-load imports"
+  }
+}

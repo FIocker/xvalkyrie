@@ -1,0 +1,51 @@
+name: build
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+        config: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorg-dev libgl-dev libdbus-1-dev libgl1-mesa-dri xvfb xauth xdotool libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+      - name: Configure Linux
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DXS_GRAPHICS_TEST=ON -DXS_VULKAN=ON
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - run: cmake --build build --config ${{ matrix.config }} --parallel 3
+      - name: Test Linux (Mesa software renderer)
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          test -f "$VK_ICD_FILENAMES" || export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          export VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+          xvfb-run -a ctest --test-dir build --output-on-failure
+      - name: Test Windows (headless)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+  source-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18 clang-tidy-18 xorg-dev libgl-dev libdbus-1-dev
+          git ls-files -z 'src/*.c' 'src/*.cpp' 'src/*.hpp' 'tests/*.cpp' | xargs -0 clang-format-18 --dry-run --Werror
+          cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DXS_SANITIZE=ON
+          cmake --build build --parallel 2
+          ctest --test-dir build --output-on-failure
+          clang-tidy-18 -p build -checks='-*,clang-analyzer-core.*,bugprone-narrowing-conversions' -warnings-as-errors='*' src/formats/pe/*.cpp src/formats/gdk/*.cpp src/formats/xvd/*.cpp src/guest/*.cpp src/compatibility/*.cpp src/core/settings.cpp src/platform/host/runtime.cpp src/platform/linux/runtime.cpp
