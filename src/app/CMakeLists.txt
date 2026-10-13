@@ -1,0 +1,8 @@
+add_library(xs_launch launch.cpp)
+target_link_libraries(xs_launch PRIVATE xs_options xs_host xs_pe xs_compat xs_xvd xs_loader xs_runtime)
+add_executable(xscarlet main.cpp)
+target_link_libraries(xscarlet PRIVATE xs_options xs_version xs_launch xs_frontend xs_pe xs_host xs_game_config xs_compat xs_xvd xs_loader xs_runtime)
+set_target_properties(xscarlet PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+if(MINGW)
+  target_link_options(xscarlet PRIVATE -municode)
+endif()

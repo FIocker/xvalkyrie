@@ -1,0 +1,8 @@
+if(WIN32)
+  add_library(xs_runtime_common runtime.cpp windows/execute.cpp)
+  target_compile_definitions(xs_runtime_common PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+  add_library(xs_runtime_common runtime.cpp unsupported.cpp)
+endif()
+target_link_libraries(xs_runtime_common PUBLIC nlohmann_json::nlohmann_json PRIVATE xs_options xs_pe xs_compat xs_loader)
+target_include_directories(xs_runtime_common PUBLIC ${PROJECT_SOURCE_DIR}/src)

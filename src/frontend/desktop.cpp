@@ -266,7 +266,7 @@ class Desktop {
         if (!ImGui::BeginPopupModal("About XScarlet", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             return;
         ImGui::Text("XScarlet %s", version);
-        ImGui::TextUnformatted("Experimental Xbox Series X|S compatibility layer.");
+        ImGui::TextUnformatted("Experimental Xbox One and Xbox Series X|S compatibility layer.");
         ImGui::TextUnformatted("Not affiliated with or endorsed by Microsoft. MIT license.");
         ImGui::Spacing();
         if (ImGui::Button("OK", {96, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape))

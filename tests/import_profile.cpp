@@ -70,7 +70,14 @@ TEST_CASE("series template module list") {
 TEST_CASE("target detection") {
     CHECK(profile_of({"kernel32.dll", "xgameruntime.dll"})["target_indication"] == "unknown");
     CHECK(profile_of({"d3d12_x.dll"})["target_indication"] == "xbox_one");
+    CHECK(profile_of({"kernelx.dll"})["target_indication"] == "xbox_one"); // ERA
     CHECK(profile_of({"dxgi.dll", "d3d9.dll"})["target_indication"] == "pc");
+    CHECK(profile_of({"d3d12_xs.dll", "d3d12_x.dll"})["target_indication"] == "mixed");
+    using xs::compat::console_target;
+    CHECK(console_target(profile_of({"d3d12_x.dll"})) == xs::Target::durango);
+    CHECK(console_target(profile_of({"xg_xs.dll"})) == xs::Target::scarlett);
+    CHECK_FALSE(console_target(profile_of({"D3D12.dll"})));
+    CHECK_FALSE(console_target(profile_of({"kernel32.dll"})));
     const auto mixed = profile_of({"d3d12_xs.dll", "D3D12.dll", "kernelx.dll", "gdi32.dll"});
     CHECK(mixed["target_indication"] == "mixed");
     CHECK(mixed["findings"].size() == 3);
@@ -104,9 +111,15 @@ TEST_CASE("delay imports") {
     }
 }
 
-TEST_CASE("launch series image") {
+TEST_CASE("launch console images") {
+    const auto durango = xs::launch_title("durango-modules.pe");
+    CHECK(durango.status == xs::LaunchStatus::runtime_unavailable);
+    CHECK(durango.target == xs::Target::durango);
+    CHECK(durango.detail.find("d3d12_x.dll") != std::string::npos);
+    CHECK(durango.detail.find("Xbox One runtime is not implemented") != std::string::npos);
     const auto scarlett = xs::launch_title("scarlett-modules.pe");
     CHECK(scarlett.status == xs::LaunchStatus::runtime_unavailable);
+    CHECK(scarlett.target == xs::Target::scarlett);
     CHECK(scarlett.detail.find("d3d12_xs.dll") != std::string::npos);
     CHECK(scarlett.detail.find("No guest code ran") != std::string::npos);
     CHECK(xs::launch_title("delay.pe").status == xs::LaunchStatus::runtime_unavailable);

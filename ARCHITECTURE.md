@@ -1,19 +1,80 @@
 # Architecture
 
-Quick tour of the code. Everything lives under `src/`.
+Quick tour of the code. Everything lives under `src/`, one static library per
+directory, each with its own `CMakeLists.txt`. There is a single executable,
+`xscarlet`, that runs both Xbox One and Xbox Series X|S titles: it looks at the
+import table of the title and picks the console runtime to use.
+
+```
+src/
+  core/            settings, log, the Target enum (durango, scarlett)
+  platform/        OS wrappers
+  formats/         pe, gdk (MicrosoftGame.config), xvd
+  compatibility/   import classification, console target detection
+  loader/          image mapping
+  graphics/        host rendering backends
+  runtime/
+    common/        import registry and resolver, guest execution
+    durango/       Xbox One console modules
+    scarlett/      Xbox Series X|S console modules
+    console.*      picks durango or scarlett for a title
+  frontend/        window
+  app/             CLI and launch logic
+```
+
+### Shared
+
+Used for every title, whatever console it was built for.
 
 | Directory | Library | What it does |
 |---|---|---|
+| `core` | `xs_core` | Settings, log and `Target` |
+| `platform` | `xs_host` | OS wrappers: memory, files, threads, TLS, native modules |
 | `formats/pe` | `xs_pe` | PE32+ parser. Takes bytes, returns a JSON report. Never loads anything. |
 | `formats/gdk` | `xs_game_config` | Reads `MicrosoftGame.config` |
 | `formats/xvd` | `xs_xvd` | Reads the header of an XVD/XVC package |
-| `compatibility` | `xs_compat` | Classifies imported DLLs and API names, guesses the build target |
-| `guest` | `xs_guest` | Maps an image in memory: sections, relocations, import slots |
-| `runtime` | `xs_runtime` | Import resolver and the code that actually runs a guest (Windows) |
-| `platform` | `xs_host` | OS wrappers: memory, files, threads, TLS, native modules |
+| `compatibility` | `xs_compat` | Classifies imported DLLs and API names, detects the console target |
+| `loader` | `xs_loader` | Maps an image in memory: sections, relocations, import slots |
 | `graphics` | `xs_graphics`, `xs_vulkan` | Clear pass description and the offscreen Vulkan test backend |
+| `runtime/common` | `xs_runtime_common` | Import registry and resolver, and the code that actually runs a guest (Windows) |
+
+### Per console
+
+| Directory | Library | What it does |
+|---|---|---|
+| `runtime/durango` | `xs_runtime_durango` | Xbox One modules (`d3d12_x.dll` and friends) |
+| `runtime/scarlett` | `xs_runtime_scarlett` | Xbox Series X\|S modules (`d3d12_xs.dll` and friends) |
+
+Both are empty for now. Each one has a single entry point,
+`install(Registry &)`, that adds its modules to the import registry.
+
+### Executable
+
+| Directory | Library | What it does |
+|---|---|---|
+| `runtime` | `xs_runtime` | `console_registry(Target)`: the registry of one console |
 | `frontend` | `xs_frontend` | GLFW + ImGui main window, native file dialog |
 | `app` | `xscarlet` | CLI and launch logic |
+
+### Where new code goes
+
+- Works the same on both consoles (the D3D12 to Vulkan translation, audio
+  output, input, file access): a shared library, next to `graphics`.
+- A console DLL (`d3d12_x.dll`, `d3d12_xs.dll`): its exports go in that
+  console's runtime and call into the shared libraries.
+- A module both consoles have with the same interface: register it from
+  `console_registry` in `runtime/console.cpp` so that both get it.
+- Console runtimes do not include each other.
+
+## Target detection
+
+`compat::import_profile` classifies every imported DLL with the tables of
+Microsoft's `xbdepends` tool. `d3d12_x.dll`, `dxcompiler_x.dll`, `xg_x.dll`
+and the ERA module `kernelx.dll` mean Xbox One (`Target::durango`).
+`d3d12_xs.dll`, `dxcompiler_xs.dll` and `xg_xs.dll` mean Series
+(`Target::scarlett`). Stock Direct3D DLLs mean a PC build and are refused, as
+are images that mix targets. An image with none of them has an unknown target
+and gets no console modules.
 
 ## Parsing
 
@@ -27,7 +88,7 @@ pointed at any file without risk of executing it.
 
 ## Loading
 
-`guest::MappedImage` reserves `SizeOfImage` bytes, copies headers and sections
+`loader::MappedImage` reserves `SizeOfImage` bytes, copies headers and sections
 to their RVAs, applies DIR64 relocations and fills the import address table by
 calling a resolver for each `(module, symbol)` pair.
 
@@ -41,10 +102,10 @@ that wants to be writable and executable at the same time is rejected.
 
 ## Resolving imports
 
-Every import goes through one place (`runtime/`). The order is:
+Every import goes through one place (`runtime/common`). The order is:
 
-1. `Registry`: our own implementations, keyed by DLL name and symbol. This is
-   where `d3d12_xs.dll` and the other console libraries will live.
+1. `Registry`: our own implementations, keyed by DLL name and symbol, filled
+   by the runtime of the title's console.
 2. Runtime overrides, see below.
 3. The real Windows export with the same name. This is only allowed for CRT
    DLLs and for system DLLs when the function name is in the list of APIs that

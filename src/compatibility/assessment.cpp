@@ -10,7 +10,7 @@ using json = nlohmann::json;
 struct Reference {
     std::string_view name, url;
 };
-// Public source names only; none establish a Scarlett DLL or ordinal binding.
+// Public source names only; none establish a console DLL or ordinal binding.
 constexpr std::array references{
     Reference{"XGameRuntimeInitialize",
               "https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/system/xgameruntimeinit/"
@@ -66,7 +66,9 @@ json assess(const json &pe_report) {
     auto refs = json::object();
     for (const auto &ref : references)
         refs[ref.name] = ref.url;
-    return {{"target", "xbox-scarlett"},
+    auto profile = import_profile(pe_report);
+    const auto target = console_target(profile);
+    return {{"target", target ? target_id(*target) : "unknown"},
             {"source_references", std::move(refs)},
             {"format", pe_report.at("format")},
             {"architecture", pe_report.at("architecture")},
@@ -74,7 +76,7 @@ json assess(const json &pe_report) {
             {"platform_indicator", pe_report.at("platform_indicator")},
             {"standard_imports", table("imports")},
             {"delay_imports", table("delay_imports")},
-            {"import_profile", import_profile(pe_report)},
+            {"import_profile", std::move(profile)},
             {"console_target_verified", false},
             {"execution_supported", false}};
 }
@@ -94,14 +96,19 @@ json compare_declaration(const json &pe, const json &config, std::string_view na
     const auto &machine = pe.at("machine");
     const auto arch_matches = (architecture == "x64" && machine == 0x8664) ||
                               (architecture == "ARM64" && machine == 0xaa64);
-    return {
-        {"association", "user_supplied_entry_name"},
-        {"declaration", *entry},
-        {"family_vs_scarlett", entry->at("device_family_status") != "documented_value" ? "unknown"
-                               : entry->at("declared_device_family") == "Scarlett" ? "consistent"
-                                                                                   : "conflict"},
-        {"declared_architecture_vs_pe", architecture != "x64" && architecture != "ARM64" ? "unknown"
-                                        : arch_matches ? "consistent"
-                                                       : "conflict"}};
+    const auto target = console_target(import_profile(pe));
+    const auto &family = entry->at("declared_device_family");
+    return {{"association", "user_supplied_entry_name"},
+            {"declaration", *entry},
+            {"family_vs_target", entry->at("device_family_status") != "documented_value" ? "unknown"
+                                 : family == "PC" ? "conflict"
+                                 : !target        ? "unknown"
+                                 : family == (*target == Target::durango ? "XboxOne" : "Scarlett")
+                                     ? "consistent"
+                                     : "conflict"},
+            {"declared_architecture_vs_pe", architecture != "x64" && architecture != "ARM64"
+                                                ? "unknown"
+                                            : arch_matches ? "consistent"
+                                                           : "conflict"}};
 }
 } // namespace xs::compat

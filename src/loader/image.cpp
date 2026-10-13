@@ -1,10 +1,10 @@
-#include "guest/image.hpp"
+#include "loader/image.hpp"
 #include "formats/pe/inspect.hpp"
 #include <cstring>
 #include <stdexcept>
 #include <string>
 
-namespace xs::guest {
+namespace xs::loader {
 using json = nlohmann::json;
 namespace {
 constexpr std::uint32_t section_execute = 0x20000000, section_write = 0x80000000;
@@ -196,4 +196,4 @@ std::uint64_t MappedImage::read64(std::uint64_t rva) const {
     }
     throw std::out_of_range("Guest read outside mapped headers and sections");
 }
-} // namespace xs::guest
+} // namespace xs::loader

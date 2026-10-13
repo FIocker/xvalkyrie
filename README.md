@@ -2,12 +2,17 @@
 
 [![build](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml)
 
-Experimental Xbox Series X|S compatibility layer for Windows, written in C++20.
+Experimental Xbox One and Xbox Series X|S compatibility layer for Windows, written in C++20.
 
-Series consoles are x86-64 machines running a trimmed-down Windows, so XScarlet
+Both consoles are x86-64 machines running a trimmed-down Windows, so XScarlet
 does not emulate a CPU. The idea is closer to a compatibility layer than to a classic emulator:
 load the game's executable, run its code natively and provide our own versions
-of the console libraries it expects (`d3d12_xs.dll` and friends).
+of the console libraries it expects (`d3d12_x.dll` on Xbox One, `d3d12_xs.dll`
+on Series, and friends).
+
+Xbox One (Durango) is the first target and Series (Scarlett) comes after it.
+One executable handles both: the loader, the import resolver and the graphics
+backend are shared, and each console has its own runtime on top of them.
 
 This is a hobby project and it is at a very early stage.
 
@@ -25,9 +30,18 @@ What exists today:
 - Read-only XVD/XVC package header identification
 - A tiny offscreen Vulkan backend used for testing
 
-What is missing is pretty much everything that makes a game boot: the D3D12.X
-implementation, the Gaming Runtime, audio, input, storage and package support.
-See the [roadmap](ROADMAP.md).
+What is missing is pretty much everything that makes a game boot: both console
+runtimes are empty. No D3D12.X implementation, Gaming Runtime, audio, input,
+storage or package support.
+
+The plan, see the [roadmap](ROADMAP.md):
+
+1. PE loader: x64 executables, imports, relocations, memory, entry points
+2. Xbox One runtime: the APIs a test program needs
+3. Graphics: a first D3D12 to Vulkan translation
+4. Xbox One compatibility: filesystem, audio, input, runtime services
+
+Series comes after those.
 
 ## Building
 
@@ -91,15 +105,16 @@ process exits naming the import as soon as one of them gets called.
 
 ## How it works
 
-1. The executable is parsed and its import table is checked. Series builds
-   link against `d3d12_xs.dll`, Xbox One builds against `d3d12_x.dll`.
+1. The executable is parsed and its import table is checked. Xbox One builds
+   link against `d3d12_x.dll`, Series builds against `d3d12_xs.dll`. That
+   decides which console runtime is used.
 2. The image is mapped, relocated and its imports are bound through a single
    resolver. Each import goes to our own implementation if there is one, then
    to the real Windows function if it is part of the API set games are allowed
    to use, and otherwise to a stub.
 3. The entry point runs on its own thread.
 
-More details in [docs/architecture.md](docs/architecture.md). Research notes
+More details in [ARCHITECTURE.md](ARCHITECTURE.md). Research notes
 live in [docs/research](docs/research).
 
 ## FAQ
@@ -124,8 +139,8 @@ Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Legal
 
-XScarlet is not affiliated with or endorsed by Microsoft. Xbox and Xbox Series
-X|S are trademarks of Microsoft Corporation. The project is written from
+XScarlet is not affiliated with or endorsed by Microsoft. Xbox, Xbox One and
+Xbox Series X|S are trademarks of Microsoft Corporation. The project is written from
 public documentation and public source code.
 
 ## License

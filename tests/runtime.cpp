@@ -1,4 +1,4 @@
-#include "runtime/runtime.hpp"
+#include "runtime/console.hpp"
 #include <catch2/catch.hpp>
 #include <fstream>
 #include <iterator>
@@ -24,6 +24,18 @@ TEST_CASE("registry lookup") {
     CHECK_THROWS(registry.add("fixture.dll", "Probe", function));
     CHECK_THROWS(registry.add("fixture.dll", "Other", nullptr));
     CHECK_THROWS(registry.add("", "Other", function));
+}
+
+TEST_CASE("console registries") {
+    // nothing is implemented yet, so no console module resolves for either target
+    for (auto target : {xs::Target::durango, xs::Target::scarlett}) {
+        const auto registry = xs::runtime::console_registry(target);
+        CHECK(registry.find("d3d12_x.dll", "D3D12XboxCreateDevice") == nullptr);
+        CHECK(registry.find("d3d12_xs.dll", "D3D12XboxCreateDevice") == nullptr);
+    }
+    CHECK(xs::runtime::title_registry(file("durango-modules.pe")).find("d3d12_x.dll", "#1") ==
+          nullptr);
+    CHECK_THROWS(xs::runtime::title_registry({}));
 }
 
 TEST_CASE("host export policy") {

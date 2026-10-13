@@ -1,7 +1,7 @@
-#include "runtime/runtime.hpp"
+#include "runtime/common/runtime.hpp"
 #include "compatibility/modules.hpp"
 #include "formats/pe/inspect.hpp"
-#include "guest/image.hpp"
+#include "loader/image.hpp"
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
@@ -51,7 +51,7 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
                 continue;
             }
             for (const auto &item : entry.at("symbols")) {
-                const auto symbol = guest::import_label(item);
+                const auto symbol = loader::import_label(item);
                 const char *origin = "missing";
                 if (registry.find(module, symbol) || detail::runtime_override(module, symbol)) {
                     origin = "own";

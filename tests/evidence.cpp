@@ -41,7 +41,7 @@ TEST_CASE("assess imports") {
     CHECK(modules[1]["symbols"][0]["evidence_match"] == "unknown");
     CHECK(modules[1]["symbols"][1]["evidence_match"] == "source_name_only");
     CHECK(modules[2]["symbols"].is_null());
-    CHECK(report["target"] == "xbox-scarlett");
+    CHECK(report["target"] == "unknown");
     CHECK(report["console_target_verified"] == false);
     CHECK(report["execution_supported"] == false);
 }
@@ -52,18 +52,30 @@ TEST_CASE("assess config") {
         <Executable Name="B.exe"/><Executable Name="C.exe" TargetDeviceFamily="Future"/>
         <Executable Name="D.exe" TargetDeviceFamily="XboxOne"/>
         </ExecutableList></Game>)");
-    const auto input = pe();
+    const auto built_for = [](const char *module) {
+        auto image = pe();
+        image["directory_contents"]["imports"] =
+            json::array({{{"module", module}, {"symbols", json::array()}}});
+        return image;
+    };
+    const auto input = built_for("d3d12_xs.dll");
+    CHECK(assess(input)["target"] == "scarlett");
     const auto match = compare_declaration(input, decl, R"(bin\A.exe)");
-    CHECK(match["family_vs_scarlett"] == "consistent");
+    CHECK(match["family_vs_target"] == "consistent");
     CHECK(match["declared_architecture_vs_pe"] == "consistent");
-    CHECK(compare_declaration(input, decl, "D.exe")["family_vs_scarlett"] == "conflict");
+    CHECK(compare_declaration(input, decl, "D.exe")["family_vs_target"] == "conflict");
+    const auto durango = built_for("d3d12_x.dll");
+    CHECK(assess(durango)["target"] == "durango");
+    CHECK(compare_declaration(durango, decl, "D.exe")["family_vs_target"] == "consistent");
+    CHECK(compare_declaration(durango, decl, R"(bin\A.exe)")["family_vs_target"] == "conflict");
+    CHECK(compare_declaration(pe(), decl, "D.exe")["family_vs_target"] == "unknown");
     auto arm = input;
     arm["machine"] = 0xaa64;
     arm["architecture"] = "arm64";
     CHECK(assess(arm)["within_x64_scope"] == false);
     CHECK(compare_declaration(arm, decl, R"(bin\A.exe)")["declared_architecture_vs_pe"] ==
           "conflict");
-    CHECK(compare_declaration(input, decl, "B.exe")["family_vs_scarlett"] == "unknown");
+    CHECK(compare_declaration(input, decl, "B.exe")["family_vs_target"] == "unknown");
     CHECK(decl["executables"][1]["declared_architecture"].is_null());
     CHECK(decl["executables"][2]["device_family_status"] == "unknown_value");
     CHECK_THROWS(compare_declaration(input, decl, "A.exe"));

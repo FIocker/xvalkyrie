@@ -1,0 +1,2 @@
+add_library(xs_runtime_durango runtime.cpp)
+target_link_libraries(xs_runtime_durango PRIVATE xs_options xs_runtime_common)

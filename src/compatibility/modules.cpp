@@ -136,7 +136,8 @@ json import_profile(const json &pe_report) {
             }
         }
     }
-    const auto runtimes = int{!scarlett.empty()} + int{!xbox_one.empty()} + int{!pc.empty()};
+    const bool durango = !xbox_one.empty() || !era.empty();
+    const auto runtimes = int{!scarlett.empty()} + int{durango} + int{!pc.empty()};
     auto findings = json::array();
     const auto finding = [&](const char *text, const std::set<std::string> &names) {
         if (names.empty())
@@ -146,8 +147,8 @@ json import_profile(const json &pe_report) {
         findings.push_back(std::move(item));
     };
     if (runtimes > 1)
-        findings.push_back({{"finding", "mix of Direct3D runtimes in one image"}});
-    finding("legacy ERA module; not part of the GDK application model", era);
+        findings.push_back({{"finding", "modules of more than one target in one image"}});
+    finding("Xbox One ERA module; not part of the GDK application model", era);
     finding("module xbdepends lists as unavailable to Game OS titles", pc_modules);
     finding("development-only module", dev_only);
     finding("module not in the xbdepends tables; a title-local DLL or unrecognized", unknown);
@@ -156,11 +157,20 @@ json import_profile(const json &pe_report) {
         {"basis", "microsoft/Xbox-GDK-Samples xbdepends tables; file names and API spellings only"},
         {"target_indication", runtimes > 1        ? "mixed"
                               : !scarlett.empty() ? "scarlett"
-                              : !xbox_one.empty() ? "xbox_one"
+                              : durango           ? "xbox_one"
                               : !pc.empty()       ? "pc"
                                                   : "unknown"},
         {"modules", std::move(modules)},
         {"game_os_api_names", inside},
         {"findings", std::move(findings)}};
+}
+
+std::optional<Target> console_target(const json &profile) {
+    const auto &indication = profile.at("target_indication").get_ref<const std::string &>();
+    if (indication == "xbox_one")
+        return Target::durango;
+    if (indication == "scarlett")
+        return Target::scarlett;
+    return std::nullopt;
 }
 } // namespace xs::compat

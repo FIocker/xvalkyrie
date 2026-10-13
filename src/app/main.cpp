@@ -5,9 +5,9 @@
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "frontend/desktop.hpp"
-#include "guest/image.hpp"
+#include "loader/image.hpp"
 #include "platform/host/files.hpp"
-#include "runtime/runtime.hpp"
+#include "runtime/console.hpp"
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -24,7 +24,7 @@ nlohmann::json config_report(const std::filesystem::path &path) {
 }
 constexpr std::string_view usage =
     "Usage: xscarlet [FILE]\n"
-    "Target: Xbox Series X/S (Scarlett)\n\n"
+    "Targets: Xbox One (Durango), Xbox Series X|S (Scarlett)\n\n"
     "Opens the XScarlet window, loading FILE if one is given.\n\n"
     "Optional verification:\n"
     "  xscarlet inspect FILE | inspect-config MicrosoftGame.config\n"
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
         }
         if (command == "map" &&
             (argc == 3 || (argc == 5 && std::filesystem::path(argv[3]) == "--base"))) {
-            xs::guest::MapOptions options;
+            xs::loader::MapOptions options;
             if (argc == 5) {
                 const auto text = std::filesystem::path(argv[4]).string();
                 std::size_t used = 0;
@@ -81,18 +81,20 @@ int main(int argc, char **argv) {
                     throw std::invalid_argument("--base expects a hexadecimal guest address");
             }
             const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
-            std::cout << xs::guest::MappedImage(bytes, options).report().dump(2) << '\n';
+            std::cout << xs::loader::MappedImage(bytes, options).report().dump(2) << '\n';
             return 0;
         }
         if (argc == 3 && command == "bind") {
             const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
-            std::cout << xs::runtime::bind_plan(bytes, {}).dump(2) << '\n';
+            std::cout << xs::runtime::bind_plan(bytes, xs::runtime::title_registry(bytes)).dump(2)
+                      << '\n';
             return 0;
         }
         if (command == "exec" &&
             (argc == 3 || (argc == 4 && std::filesystem::path(argv[3]) == "--allow-missing"))) {
             const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
-            return static_cast<int>(xs::runtime::execute(argv[2], bytes, {}, argc == 4));
+            return static_cast<int>(xs::runtime::execute(
+                argv[2], bytes, xs::runtime::title_registry(bytes), argc == 4));
         }
         if (argc == 2 && command == "--help") {
             std::cout << usage;
@@ -115,7 +117,7 @@ int main(int argc, char **argv) {
         };
         hooks.run = [](const std::filesystem::path &path) {
             const auto bytes = xs::host::read_snapshot(path, 256 * 1024 * 1024);
-            return xs::runtime::execute(path, bytes, {}, false);
+            return xs::runtime::execute(path, bytes, xs::runtime::title_registry(bytes), false);
         };
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);

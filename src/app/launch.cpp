@@ -2,9 +2,9 @@
 #include "compatibility/modules.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
-#include "guest/image.hpp"
+#include "loader/image.hpp"
 #include "platform/host/files.hpp"
-#include "runtime/runtime.hpp"
+#include "runtime/console.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -26,7 +26,6 @@ std::string names(const nlohmann::json &profile, std::string_view prefix) {
     }
     return text;
 }
-const char *const not_run = " The Scarlett runtime is not implemented. No guest code ran.";
 } // namespace
 
 LaunchResult launch_title(const std::filesystem::path &path) {
@@ -54,49 +53,46 @@ LaunchResult launch_title(const std::filesystem::path &path) {
         const auto report = pe::inspect(bytes);
         if (report.at("machine") != 0x8664) {
             result.status = LaunchStatus::wrong_machine;
-            result.detail =
-                "This executable is not x86-64, the CPU architecture of Xbox Series X/S.";
+            result.detail = "This executable is not x86-64, the CPU architecture of Xbox One and "
+                            "Xbox Series X|S.";
             return result;
         }
         const auto profile = compat::import_profile(report);
-        const auto &target = profile.at("target_indication").get_ref<const std::string &>();
-        if (target == "pc" || target == "xbox_one" || target == "mixed") {
+        const auto &indication = profile.at("target_indication").get_ref<const std::string &>();
+        if (indication == "pc" || indication == "mixed") {
             result.status = LaunchStatus::other_target;
-            result.detail =
-                "Imports " + names(profile, "d3d_") +
-                (target == "pc"         ? ", the Direct3D runtime of a Windows PC build."
-                 : target == "xbox_one" ? ", the Direct3D 12.X runtime of an Xbox One build."
-                                        : ", a mix of Direct3D runtimes for different targets.") +
-                " XScarlet only targets Xbox Series X|S builds. No guest code ran.";
+            result.detail = indication == "pc"
+                                ? "Imports " + names(profile, "d3d_") +
+                                      ", the Direct3D runtime of a Windows PC build."
+                                : std::string("Imports modules of more than one target.");
+            result.detail +=
+                " XScarlet runs Xbox One and Xbox Series X|S builds. No guest code ran.";
             return result;
         }
-        if (target != "scarlett") {
-            const auto era = names(profile, "legacy_era");
-            if (!era.empty()) {
-                result.status = LaunchStatus::other_target;
-                result.detail = "Imports " + era +
-                                ", which belongs to the Xbox One ERA application model rather "
-                                "than a GDK Scarlett title. No guest code ran.";
-                return result;
-            }
+        result.target = compat::console_target(profile);
+        if (!result.target) {
             result.status = LaunchStatus::runtime_unavailable;
-            result.detail = std::string("Read an x64 PE32+ executable. It imports no Scarlett "
-                                        "Direct3D module, so its Scarlett origin is unverified.") +
-                            not_run;
+            result.detail = "Read an x64 PE32+ executable. It imports no Xbox One or Xbox Series "
+                            "X|S module, so its console target is unknown. No guest code ran.";
             return result;
         }
+        const std::string console(target_name(*result.target));
+        auto modules =
+            names(profile, *result.target == Target::durango ? "d3d_xbox_one" : "d3d_scarlett");
+        if (modules.empty())
+            modules = names(profile, "legacy_era");
         // no relocations = can't rebase, map it at the preferred base just to look at it
-        guest::MapOptions options;
+        loader::MapOptions options;
         if (!report.at("directory_contents").contains("base_relocations"))
             options.guest_base = report.at("image_base").get<std::uint64_t>();
-        const guest::MappedImage image(bytes, options);
+        const loader::MappedImage image(bytes, options);
         const auto &map = image.report();
-        const auto plan = runtime::bind_plan(bytes, {});
+        const auto plan = runtime::bind_plan(bytes, runtime::console_registry(*result.target));
         const auto missing = plan.at("missing").get<std::size_t>();
         result.detail =
-            "Imports " + names(profile, "d3d_scarlett") +
-            ", which Microsoft's tooling treats as a Scarlett build. Mapped " +
-            hex(map.at("size_of_image")) + " bytes at " + hex(map.at("guest_base")) + " with " +
+            "Imports " + modules + ", which Microsoft's tooling treats as an " + console +
+            " build. Mapped " + hex(map.at("size_of_image")) + " bytes at " +
+            hex(map.at("guest_base")) + " with " +
             std::to_string(map.at("relocation").at("dir64_fixups").get<std::uint64_t>()) +
             " relocations. Of " + std::to_string(plan.at("imports").size()) + " imports in " +
             std::to_string(profile.at("modules").size()) + " modules, " +
@@ -117,7 +113,8 @@ LaunchResult launch_title(const std::filesystem::path &path) {
                              "!" + import.at("symbol").get<std::string>();
         }
         result.detail += std::string(listed ? (missing > listed ? ", ...)" : ")") : "") +
-                         ", so the entry point was not called." + not_run;
+                         ", so the entry point was not called. The " + console +
+                         " runtime is not implemented. No guest code ran.";
     } catch (const std::exception &e) {
         result.detail = e.what();
     }

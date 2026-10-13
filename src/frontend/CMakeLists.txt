@@ -1,0 +1,8 @@
+add_library(xs_gl STATIC gl.c)
+target_include_directories(xs_gl SYSTEM PUBLIC ${glfw_SOURCE_DIR}/deps)
+add_library(xs_frontend desktop.cpp file_dialog.cpp)
+target_compile_definitions(xs_frontend PRIVATE GLFW_INCLUDE_NONE)
+if(WIN32)
+  target_compile_definitions(xs_frontend PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+target_link_libraries(xs_frontend PRIVATE xs_options xs_version xs_imgui xs_gl glfw nfd Threads::Threads)

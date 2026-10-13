@@ -33,4 +33,4 @@ with tempfile.TemporaryDirectory() as directory:
     title.write_bytes(Path(fixture).read_bytes())
     code, errors = session([title], "XScarlet - sample title\\.bin")
     assert code == 1 and str(title) in errors, (code, errors)
-    assert "Scarlett runtime is not implemented" in errors
+    assert "console target is unknown" in errors

@@ -1,4 +1,4 @@
-#include "runtime/runtime.hpp"
+#include "runtime/common/runtime.hpp"
 #include <stdexcept>
 
 namespace xs::runtime {

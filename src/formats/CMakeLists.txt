@@ -1,0 +1,6 @@
+add_library(xs_pe pe/inspect.cpp pe/directories.cpp)
+target_link_libraries(xs_pe PUBLIC nlohmann_json::nlohmann_json PRIVATE xs_options)
+add_library(xs_game_config gdk/game_config.cpp)
+target_link_libraries(xs_game_config PUBLIC nlohmann_json::nlohmann_json PRIVATE xs_options pugixml::pugixml)
+add_library(xs_xvd xvd/identify.cpp)
+target_link_libraries(xs_xvd PUBLIC nlohmann_json::nlohmann_json PRIVATE xs_options)

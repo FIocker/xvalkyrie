@@ -1,6 +1,6 @@
 #include "formats/pe/inspect.hpp"
-#include "guest/image.hpp"
-#include "runtime/runtime.hpp"
+#include "loader/image.hpp"
+#include "runtime/common/runtime.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -213,7 +213,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         ~Reset() { guest = nullptr; }
     } reset;
 
-    guest::MapOptions options;
+    loader::MapOptions options;
     options.executable = true;
     options.resolve = [&](std::string_view module,
                           std::string_view symbol) -> std::optional<std::uint64_t> {
@@ -226,7 +226,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
             return reinterpret_cast<std::uint64_t>(function);
         return make_stub(std::string(module) + "!" + std::string(symbol));
     };
-    const guest::MappedImage image(file, options);
+    const loader::MappedImage image(file, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())
         throw std::runtime_error("Unsupported: the image has a bound import table");
