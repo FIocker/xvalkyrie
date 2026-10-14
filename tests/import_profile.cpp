@@ -32,6 +32,8 @@ TEST_CASE("module classification") {
     CHECK(classify_module("d3d12_x.dll").category == "d3d_xbox_one");
     CHECK(classify_module("D3D12.dll").category == "d3d_stock");
     CHECK(classify_module("kernelx.dll").category == "legacy_era");
+    CHECK(classify_module("D3D11_X.dll").category == "d3d_xbox_one"); // ERA, not in xbdepends
+    CHECK(classify_module("EtwPlus.dll").category == "legacy_era");
     CHECK(classify_module("PIXEvt.dll").category == "game_os_only");
     CHECK(classify_module("api-ms-win-core-memory-l1-1-0.dll").os_surface);
     CHECK(classify_module("api-ms-win-crt-runtime-l1-1-0.dll").category == "os_crt");

@@ -3,3 +3,5 @@
 /imgui.ini
 /.cache/
 /compile_commands.json
+/samples/*
+!/samples/.gitkeep

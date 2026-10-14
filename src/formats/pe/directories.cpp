@@ -8,8 +8,8 @@ namespace {
 using json = nlohmann::json;
 
 struct Budget {
-    std::size_t records = 65536;
-    std::size_t characters = 1024 * 1024;
+    std::size_t records = 4 * 1024 * 1024;
+    std::size_t characters = 16 * 1024 * 1024;
     void consume(std::uint64_t n = 1) {
         if (n > records)
             throw std::runtime_error("Directory report exceeds record limit");

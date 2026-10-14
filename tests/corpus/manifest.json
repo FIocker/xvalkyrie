@@ -11,7 +11,8 @@
   "verified_on_compatibility_layer": false,
   "purpose": "Read-only import, export, relocation, TLS and exception metadata; no code or entry point",
   "variants": {
-    "durango-modules": "Made up import table naming d3d12_x.dll, no symbols for it",
+    "durango-modules": "Made up import table with one import from d3d12_x.dll",
+    "era-modules": "Made up import table with the modules of an Xbox One ERA title",
     "scarlett-modules": "Import table with the 27 DLL names from the xbdepends readme, no symbols",
     "delay": "Made up normal and delay-load imports"
   }

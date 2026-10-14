@@ -20,8 +20,11 @@ both consoles (`formats/pe`, `loader`, `runtime/common`).
 - [x] Entry point on a guest thread, unwind tables, exit codes (Windows)
 - [x] Runs our own test programs (with and without the CRT, C++ exceptions, RTTI, threads)
 - [x] Console target detection from the import table (Xbox One, Series, PC)
+- [x] Unpacked title folders: executable taken from `AppxManifest.xml`
+- [x] Parses and maps a real ERA title (74k relocations, 502 imports)
 - [ ] Static TLS
-- [ ] Delay-load imports and title-local DLLs
+- [x] Title-local DLLs: mapped like the executable, `DllMain` called before the entry point
+- [ ] Delay-load imports
 - [ ] `LoadLibrary` / `GetProcAddress` going through the resolver
 - [ ] Guest command line
 
@@ -30,25 +33,75 @@ both consoles (`formats/pe`, `loader`, `runtime/common`).
 Implement the APIs a test program needs and reproduce its behavior
 (`runtime/durango`).
 
-- [ ] Get a minimal Xbox One test program with known expected output
-- [ ] Find out exactly what it imports (`xscarlet bind`)
-- [ ] Implement those imports and run it
-- [ ] Compare its output and exit code against the expected ones
+The test program is an unpacked ERA title kept outside the repository, in
+`samples/`. What it needs is listed in
+[docs/research/era-title.md](docs/research/era-title.md).
 
-There is no test program yet. Building one needs the GDK with Xbox Extensions
-or the older XDK, which are only available to registered developers. A desktop
-GDK build is not a substitute.
+- [x] Find out exactly what it imports (`xscarlet bind`)
+- [x] `kernelx.dll`: the Win32 subset goes to the host, plus `XMemAllocDefault` / `XMemFreeDefault`
+- [x] `combase.dll` and `ws2_32.dll` go to the host, also by ordinal
+- [x] `etwplus.dll` as no-ops
+- [x] `exec --trace`: first call of every import, last calls and C++ exception type on a fault
+- [x] The entry point runs up to the first WinRT class that is missing
+- [ ] Title-local DLLs loaded from the title folder
+- [x] `msvcr110.dll`, `msvcp110.dll`, `vccorlib110.dll` from the host (needs the Visual C++ 2012 redistributable)
+- [x] Activation factories: our classes first, a short list of host namespaces, placeholders for the rest
+- [x] Placeholders that report the class, interface, method number and caller of every call nobody implements
+- [x] Inert console classes for what the title touches before its first frame (transport controls,
+  store license, users, network status, downloadable content, party)
+- [x] `CoreApplication::Run`, `CoreApplicationView`, `CoreWindow` and `CoreDispatcher` with a host window
+- [x] The title's view is created, initialized, loaded, activated and run, up to `D3D11CreateDevice`
+- [ ] A signed-in user and connected storage instead of the inert versions
+- [x] The title draws inside the xscarlet window (16:9 between the menu and the status
+  bar); `exec` still gives it a window of its own
+- [x] Opening a title does not block the window: it is read on a worker thread, with a
+  loading screen until its first frame
+- [ ] Closing a running title without closing xscarlet
+- [x] DLLs shipped with the title (`xcompress.dll`), loaded from its folder
+- [x] Finished async operations and actions (`winrt/async.cpp`)
+- [x] `CoreWindow` in the console layout (bounds, dispatcher, activate; the rest unknown)
+- [x] Audio engine: `xaudio2_9.dll` from the host, with the console's creation function
+- [ ] Connected storage (save games): inert for now, nothing is saved
+- [x] The title's window messages are handled on another thread than the title's: moving
+  or resizing the window does not stop it, and a busy title does not freeze the window
+- [x] Input (`src/input`): one gamepad for the title, fed by the keyboard or by the host's
+  gamepad. Two capture methods, chosen in Options > Input together with the key bindings:
+  from the window's events, or read directly from the system (XInput and the keyboard
+  state, Windows only). Saved in the per-user `settings.json`
+- [x] `Windows.Xbox.Input.Gamepad`: the list of gamepads and the raw reading
+- [ ] The controller interface of the gamepad (user pairing, id), vibration
+- [ ] More than one gamepad, binding the host gamepad's buttons, mouse
+- [ ] Window events (keys, size, visibility): registered, never raised
 
 ## Phase 3: Graphics
 
-A first D3D12 to Vulkan translation with working rendering
-(`graphics`, used by `d3d12_x.dll` in `runtime/durango`).
+Two backends behind the console Direct3D modules, chosen with `--backend`:
 
+- `d3d11`: the host's own Direct3D 11. Windows only, and the default there. This
+  is the one that gets titles on screen first.
+- `vulkan`: exists on Windows and Linux, cannot render a title yet. It is the
+  backend D3D12 (later Xbox One titles, all Series titles) and Linux need.
+
+ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
+
+- [x] Backend selection (`graphics/backend`)
 - [x] Offscreen Vulkan clear + readback test (host only, not connected to anything)
-- [ ] D3D12 device, queues, command lists and resources on Vulkan
-- [ ] Shaders
-- [ ] `d3d12_x.dll` as our own module, starting with what the test program uses
-- [ ] Presentation into the xscarlet window
+- [x] `D3D11CreateDevice` from `d3d11_x.dll` on the host's Direct3D 11
+- [x] Swap chain for the title's `CoreWindow`, created on the host window
+- [x] Direct3D 11.X objects in the console layout in front of the host's: device, context
+  (vtable and in-object method table), swap chain, resources, views, states, shaders
+- [x] `xg_x.dll`: tile modes and texture sizes, with one plain layout
+- [x] The test program creates its renderer and its UI renderer (targets, shaders, states,
+  buffers, samplers)
+- [x] State the title writes into the context object instead of calling a method (input
+  layout, shaders, topology), applied at each draw
+- [x] The test program presents frames: splash screens and its main menu scene
+- [x] `XS_FRAME_DUMP` writes a presented frame to a file; `XS_D3D_DEBUG` prints what the
+  host's debug layer says after each call
+- [ ] The methods of the context whose place is still a guess (see `d3d11x/layout.cpp`)
+- [ ] Check the picture against the console's, frame by frame
+- [ ] Vulkan: device, command submission, resources, shaders (DXBC to SPIR-V)
+- [ ] `d3d12_x.dll`
 
 ## Phase 4: Xbox One compatibility
 

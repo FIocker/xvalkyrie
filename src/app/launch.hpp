@@ -20,5 +20,9 @@ struct LaunchResult {
     std::string detail;
     std::optional<Target> target = {}; // console the imports point to, if any
 };
+// `path` is an executable, an unpacked title directory or its AppxManifest.xml.
 LaunchResult launch_title(const std::filesystem::path &path);
+// The executable `path` stands for: the first application of the manifest for a title
+// directory (looked up in it and in its Mount subdirectory), `path` itself otherwise.
+std::filesystem::path title_executable(const std::filesystem::path &path);
 } // namespace xs

@@ -2,8 +2,10 @@
 #include "compatibility/modules.hpp"
 #include "formats/pe/inspect.hpp"
 #include "loader/image.hpp"
+#include "platform/host/files.hpp"
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include <system_error>
 
 namespace xs::runtime {
 namespace {
@@ -27,6 +29,31 @@ void *Registry::find(std::string_view module, std::string_view symbol) const {
     return entry == entries_.end() ? nullptr : entry->second;
 }
 
+void Registry::forward(std::string_view module, std::string_view host_module) {
+    if (module.empty() || host_module.empty())
+        throw std::invalid_argument("Registry forwards need a module and a host module");
+    if (!forwards_.emplace(lower(module), lower(host_module)).second)
+        throw std::invalid_argument("Duplicate registry forward");
+}
+std::string_view Registry::forwarded(std::string_view module) const {
+    const auto entry = forwards_.find(lower(module));
+    return entry == forwards_.end() ? std::string_view{} : entry->second;
+}
+
+detail::Binding detail::resolve(const Registry &registry, std::string_view module,
+                                std::string_view symbol) {
+    if (auto *const function = registry.find(module, symbol))
+        return {function, "own"};
+    const auto forwarded = registry.forwarded(module);
+    if (forwarded.empty() && !host_policy_allows(module, symbol))
+        return {nullptr, "missing"};
+    if (auto *const function = runtime_override(symbol))
+        return {function, "own"};
+    if (auto *const function = host_export(forwarded.empty() ? module : forwarded, symbol))
+        return {function, "host"};
+    return {nullptr, "missing"};
+}
+
 bool detail::host_policy_allows(std::string_view module, std::string_view symbol) {
     if (symbol.starts_with('#')) // can't check ordinals against the API list
         return false;
@@ -38,11 +65,44 @@ bool detail::host_policy_allows(std::string_view module, std::string_view symbol
            compat::is_game_os_api(symbol);
 }
 
-nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry) {
+bool detail::title_provides(const Registry &registry, const std::filesystem::path &directory,
+                            std::string_view module, std::string_view symbol) {
+    if (directory.empty() || registry.find(module, symbol) || !registry.forwarded(module).empty())
+        return false;
+    const auto name = lower(module);
+    if (name.empty() || name.find_first_of("\\/:") != std::string::npos)
+        return false;
+    const auto path = directory / name;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error))
+        return false;
+    try {
+        const auto report = pe::inspect(host::read_snapshot(path, 256 * 1024 * 1024));
+        const auto &contents = report.at("directory_contents");
+        if (!(report.at("characteristics").get<std::uint64_t>() & 0x2000) ||
+            !contents.contains("exports"))
+            return false;
+        for (const auto &exported : contents.at("exports").at("symbols")) {
+            if (exported.contains("forwarder"))
+                continue;
+            if (symbol == "#" + std::to_string(exported.at("ordinal").get<std::uint64_t>()))
+                return true;
+            for (const auto &exported_name : exported.at("names"))
+                if (exported_name.get_ref<const std::string &>() == symbol)
+                    return true;
+        }
+    } catch (const std::exception &) {
+        // not a DLL we can read: nothing it could provide
+    }
+    return false;
+}
+
+nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
+                         const std::filesystem::path &directory) {
     using json = nlohmann::json;
     const auto contents = pe::inspect(file).at("directory_contents");
     auto imports = json::array(), opaque = json::array(), delayed = json::array();
-    std::size_t own = 0, host = 0, missing = 0;
+    std::size_t own = 0, host = 0, title = 0, missing = 0;
     if (contents.contains("imports")) {
         for (const auto &entry : contents.at("imports")) {
             const auto &module = entry.at("module").get_ref<const std::string &>();
@@ -52,17 +112,14 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             }
             for (const auto &item : entry.at("symbols")) {
                 const auto symbol = loader::import_label(item);
-                const char *origin = "missing";
-                if (registry.find(module, symbol) || detail::runtime_override(module, symbol)) {
-                    origin = "own";
-                    ++own;
-                } else if (detail::host_policy_allows(module, symbol) &&
-                           detail::host_export(module, symbol)) {
-                    origin = "host";
-                    ++host;
-                } else {
-                    ++missing;
-                }
+                const std::string_view origin =
+                    detail::title_provides(registry, directory, module, symbol)
+                        ? "title"
+                        : detail::resolve(registry, module, symbol).origin;
+                ++(origin == "own"     ? own
+                   : origin == "host"  ? host
+                   : origin == "title" ? title
+                                       : missing);
                 imports.push_back({{"module", module}, {"symbol", symbol}, {"origin", origin}});
             }
         }
@@ -74,6 +131,7 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             {"imports", std::move(imports)},
             {"own", own},
             {"host", host},
+            {"title", title},
             {"missing", missing},
             {"modules_without_symbols", std::move(opaque)},
             {"delay_load_modules", std::move(delayed)}};

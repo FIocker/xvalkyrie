@@ -1,27 +1,57 @@
 #include "formats/pe/inspect.hpp"
 #include "loader/image.hpp"
+#include "platform/host/files.hpp"
 #include "runtime/common/runtime.hpp"
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <functional>
+#include <initializer_list>
+#include <map>
+#include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include <windows.h>
 
 // One guest per process, running on its own thread. Same ABI as the host,
 // so an import is just a function pointer.
 namespace xs::runtime {
+namespace detail {
+bool mute_process_audio();
+}
+using detail::mute_process_audio;
 namespace {
+// A DLL shipped with the title, loaded from its folder the same way as the executable.
+struct TitleModule {
+    std::string name; // lowercase file name
+    std::unique_ptr<loader::MappedImage> image;
+    std::uint64_t base = 0, size = 0, entry = 0;
+    std::map<std::string, std::uint64_t> exports; // "Name" or "#ordinal" -> address
+    PRUNTIME_FUNCTION functions = nullptr;
+    DWORD function_count = 0;
+};
 struct Guest {
     std::uint64_t base = 0, size = 0;
     std::wstring path;
+    std::filesystem::path directory;
+    std::deque<TitleModule> modules;  // dependencies before what needs them
     std::vector<std::string> missing; // "module!symbol", indexed by stub number
     std::uint8_t *stubs = nullptr;
+    // --trace: one thunk per imported function, right after the stubs
+    std::vector<std::string> traced; // "module!symbol", indexed by thunk number
+    std::unique_ptr<std::atomic<std::uint64_t>[]> calls;
+    std::atomic<std::uint64_t> sequence{0};
+    std::array<std::atomic<std::uint32_t>, 64> recent{}; // thunk numbers, by sequence
 };
 Guest *guest = nullptr;
-constexpr std::size_t stub_size = 32, stub_limit = 65536;
+constexpr std::size_t stub_size = 32, stub_limit = 16384, trace_size = 128, trace_limit = 16384;
 
 bool is_guest(const void *address) {
     const auto value = reinterpret_cast<std::uint64_t>(address);
@@ -103,9 +133,11 @@ const Override overrides[] = {{"GetModuleHandleW", erase(get_module_handle_w)},
                               {"GetModuleFileNameA", erase(get_module_file_name_a)},
                               {"_CxxThrowException", erase(cxx_throw_exception)}};
 
+void report_recent_calls();
 [[noreturn]] void unimplemented(std::uint32_t index) {
     std::fprintf(stderr, "xscarlet: title called unimplemented import %s\n",
                  guest->missing.at(index).c_str());
+    report_recent_calls();
     std::fflush(nullptr);
     ExitProcess(exit_unimplemented_import);
 }
@@ -129,48 +161,246 @@ std::uint64_t make_stub(const std::string &name) {
     return reinterpret_cast<std::uint64_t>(code);
 }
 
+// Called by a trace thunk before it jumps to the import. Must not change what the guest
+// can observe, which here means the last error.
+void trace_call(std::uint32_t index) {
+    const auto error = GetLastError();
+    guest->recent[guest->sequence++ % guest->recent.size()] = index;
+    if (!guest->calls[index]++) {
+        std::fprintf(stderr, "xscarlet: [%lu] %s\n", GetCurrentThreadId(),
+                     guest->traced[index].c_str());
+        std::fflush(stderr);
+    }
+    SetLastError(error);
+}
+// Saves the four argument registers of both kinds, calls trace_call(index) and jumps to
+// the import with everything as the guest left it.
+std::uint64_t make_trace(const std::string &name, void *target) {
+    MEMORY_BASIC_INFORMATION memory{};
+    const auto executable =
+        PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    // imported data must keep its address
+    if (!VirtualQuery(target, &memory, sizeof memory) || !(memory.Protect & executable) ||
+        guest->traced.size() == trace_limit)
+        return reinterpret_cast<std::uint64_t>(target);
+    const auto index = static_cast<std::uint32_t>(guest->traced.size());
+    guest->traced.push_back(name);
+    auto *code = guest->stubs + stub_size * stub_limit + index * trace_size;
+    const auto emit = [&](std::initializer_list<std::uint8_t> bytes) {
+        code = std::copy(bytes.begin(), bytes.end(), code);
+    };
+    const auto value = [&](const void *data, std::size_t size) {
+        std::memcpy(code, data, size);
+        code += size;
+    };
+    const auto logger = reinterpret_cast<std::uint64_t>(&trace_call);
+    const auto destination = reinterpret_cast<std::uint64_t>(target);
+    emit({0x51, 0x52, 0x41, 0x50, 0x41, 0x51}); // push rcx, rdx, r8, r9
+    emit({0x48, 0x83, 0xec, 0x68});             // sub rsp, 0x68
+    for (std::uint8_t i = 0; i < 4; ++i)        // movdqu [rsp+0x20+16*i], xmm<i>
+        emit({0xf3, 0x0f, 0x7f, static_cast<std::uint8_t>(0x44 + 8 * i), 0x24,
+              static_cast<std::uint8_t>(0x20 + 16 * i)});
+    emit({0xb9}); // mov ecx, index
+    value(&index, 4);
+    emit({0x48, 0xb8}); // mov rax, &trace_call
+    value(&logger, 8);
+    emit({0xff, 0xd0});                  // call rax
+    for (std::uint8_t i = 0; i < 4; ++i) // movdqu xmm<i>, [rsp+0x20+16*i]
+        emit({0xf3, 0x0f, 0x6f, static_cast<std::uint8_t>(0x44 + 8 * i), 0x24,
+              static_cast<std::uint8_t>(0x20 + 16 * i)});
+    emit({0x48, 0x83, 0xc4, 0x68});             // add rsp, 0x68
+    emit({0x41, 0x59, 0x41, 0x58, 0x5a, 0x59}); // pop r9, r8, rdx, rcx
+    emit({0x48, 0xb8});                         // mov rax, target
+    value(&destination, 8);
+    emit({0xff, 0xe0}); // jmp rax
+    return reinterpret_cast<std::uint64_t>(guest->stubs + stub_size * stub_limit +
+                                           index * trace_size);
+}
+void report_recent_calls() {
+    if (guest->traced.empty())
+        return;
+    const auto end = guest->sequence.load(), size = std::uint64_t{guest->recent.size()};
+    std::fprintf(stderr, "xscarlet: last imports called, oldest first:\n");
+    for (auto i = end > size ? end - size : 0; i < end; ++i)
+        std::fprintf(stderr, "xscarlet:   %s\n", guest->traced[guest->recent[i % size]].c_str());
+}
+
+std::string lower(std::string_view text) {
+    std::string result(text);
+    for (auto &c : result)
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c + 32);
+    return result;
+}
+const TitleModule *module_at(const void *address) {
+    const auto value = reinterpret_cast<std::uint64_t>(address);
+    for (const auto &module : guest->modules)
+        if (value >= module.base && value - module.base < module.size)
+            return &module;
+    return nullptr;
+}
+using Resolver = std::function<std::optional<std::uint64_t>(std::string_view, std::string_view)>;
+// The title's own DLL of this name, loading it on first use. Null if the title has none.
+const TitleModule *title_module(std::string_view file_name, const Resolver &resolve) {
+    const auto name = lower(file_name);
+    if (name.empty() || name.find_first_of("\\/:") != std::string::npos)
+        return nullptr;
+    for (const auto &module : guest->modules)
+        if (module.name == name)
+            return &module;
+    const auto path = guest->directory / name;
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error))
+        return nullptr;
+    const auto file = host::read_snapshot(path, 256 * 1024 * 1024);
+    const auto pe = pe::inspect(file);
+    const auto &contents = pe.at("directory_contents");
+    if (!(pe.at("characteristics").get<std::uint64_t>() & 0x2000))
+        throw std::runtime_error(name + " is not a DLL");
+    if (contents.contains("tls"))
+        throw std::runtime_error("Unsupported: " + name + " declares static thread-local storage");
+    loader::MapOptions options;
+    options.executable = true;
+    options.resolve = resolve;
+    TitleModule module;
+    module.name = name;
+    module.image = std::make_unique<loader::MappedImage>(file, options);
+    const auto &layout = module.image->report();
+    module.base = module.image->guest_base();
+    module.size = layout.at("size_of_image");
+    if (pe.at("entry_rva").get<std::uint64_t>())
+        module.entry = layout.at("entry_va");
+    if (contents.contains("exports"))
+        for (const auto &symbol : contents.at("exports").at("symbols")) {
+            if (symbol.contains("forwarder"))
+                continue;
+            const auto address = module.base + symbol.at("rva").get<std::uint64_t>();
+            module.exports["#" + std::to_string(symbol.at("ordinal").get<std::uint64_t>())] =
+                address;
+            for (const auto &exported : symbol.at("names"))
+                module.exports[exported.get<std::string>()] = address;
+        }
+    if (contents.contains("exceptions")) {
+        const auto &directory = pe.at("directory_descriptors").at(3);
+        module.functions = reinterpret_cast<PRUNTIME_FUNCTION>(
+            module.base + directory.at("rva").get<std::uint64_t>());
+        module.function_count = static_cast<DWORD>(directory.at("size").get<std::uint64_t>() / 12);
+        if (!RtlAddFunctionTable(module.functions, module.function_count, module.base))
+            throw std::runtime_error("Cannot register the exception table of " + name);
+    }
+    guest->modules.push_back(std::move(module));
+    return &guest->modules.back();
+}
+
 #ifdef _MSC_VER
+// Decorated name of the first type an MSVC C++ exception can be caught as, e.g.
+// ".?AVbad_alloc@std@@". Reads the throw information the compiler emitted.
+void report_cxx_type(const EXCEPTION_RECORD *record) {
+    if (record->ExceptionCode != 0xE06D7363 || record->NumberParameters < 4)
+        return;
+    __try {
+        const auto *info = reinterpret_cast<const std::uint8_t *>(record->ExceptionInformation[2]);
+        const auto *base = reinterpret_cast<const std::uint8_t *>(record->ExceptionInformation[3]);
+        if (!info || !base)
+            return;
+        const auto rva = [](const std::uint8_t *at) {
+            std::uint32_t value;
+            std::memcpy(&value, at, 4);
+            return value;
+        };
+        const auto *types = base + rva(info + 12);
+        if (!rva(types))
+            return;
+        const auto *type = base + rva(types + 4);
+        const auto *name = reinterpret_cast<const char *>(base + rva(type + 4) + 16);
+        std::fprintf(stderr, "xscarlet: C++ exception of type %.200s\n", name);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+// Not an unwind: every stack slot that holds an address inside the guest image, nearest
+// first. Most are return addresses, some are stale or plain pointers.
+void report_guest_stack(const CONTEXT *context) {
+    __try {
+        const auto *slot =
+            reinterpret_cast<const std::uint64_t *>(context->Rsp & ~std::uint64_t{7});
+        const auto *limit = reinterpret_cast<const std::uint64_t *>(
+            reinterpret_cast<const NT_TIB *>(NtCurrentTeb())->StackBase);
+        std::fprintf(stderr, "xscarlet: guest addresses on the stack:");
+        for (int found = 0; slot < limit && found < 24; ++slot) {
+            if (!is_guest(reinterpret_cast<const void *>(*slot)))
+                continue;
+            std::fprintf(stderr, " image+0x%llx",
+                         static_cast<unsigned long long>(*slot - guest->base));
+            ++found;
+        }
+        std::fprintf(stderr, "\n");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
 int report_fault(EXCEPTION_POINTERS *info) {
     const auto *record = info->ExceptionRecord;
     const auto address = reinterpret_cast<std::uint64_t>(record->ExceptionAddress);
     if (is_guest(record->ExceptionAddress))
         std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at image+0x%llx\n",
                      record->ExceptionCode, static_cast<unsigned long long>(address - guest->base));
+    else if (const auto *module = module_at(record->ExceptionAddress))
+        std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at %s+0x%llx\n",
+                     record->ExceptionCode, module->name.c_str(),
+                     static_cast<unsigned long long>(address - module->base));
     else
         std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at host address 0x%llx\n",
                      record->ExceptionCode, static_cast<unsigned long long>(address));
+    report_cxx_type(record);
+    report_guest_stack(info->ContextRecord);
+    report_recent_calls();
     std::fflush(nullptr);
+    // Unwinding a guest in an unknown state can block or fault again.
+    TerminateProcess(GetCurrentProcess(), exit_guest_fault);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
-DWORD WINAPI guest_thread(void *entry) {
+struct Start {
+    void *entry;
+    // DllMain of every title DLL, in load order, and what to pass it
+    std::vector<std::pair<void *, void *>> libraries;
+};
+DWORD run_guest(const Start &start) {
+    for (const auto &[entry, base] : start.libraries)
+        reinterpret_cast<BOOL(WINAPI *)(void *, DWORD, void *)>(entry)(base, DLL_PROCESS_ATTACH,
+                                                                       nullptr);
+    return reinterpret_cast<DWORD (*)()>(start.entry)();
+}
+DWORD WINAPI guest_thread(void *start) {
 #ifdef _MSC_VER
     __try {
-        return reinterpret_cast<DWORD (*)()>(entry)();
+        return run_guest(*static_cast<const Start *>(start));
     } __except (report_fault(GetExceptionInformation())) {
         return exit_guest_fault;
     }
 #else
-    return reinterpret_cast<DWORD (*)()>(entry)();
+    return run_guest(*static_cast<const Start *>(start));
 #endif
 }
 struct Stubs {
     Stubs() {
-        memory = static_cast<std::uint8_t *>(VirtualAlloc(
-            nullptr, stub_size * stub_limit, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        memory = static_cast<std::uint8_t *>(
+            VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         if (!memory)
             throw std::runtime_error("Cannot allocate import stubs");
     }
     ~Stubs() { VirtualFree(memory, 0, MEM_RELEASE); }
+    static constexpr std::size_t size = stub_size * stub_limit + trace_size * trace_limit;
     std::uint8_t *memory;
 };
 } // namespace
 
 bool execution_supported() { return true; }
 
-void *detail::runtime_override(std::string_view module, std::string_view symbol) {
-    if (!host_policy_allows(module, symbol))
-        return nullptr;
+std::uint64_t detail::guest_offset(const void *address) {
+    return guest && is_guest(address) ? reinterpret_cast<std::uint64_t>(address) - guest->base : 0;
+}
+
+void *detail::runtime_override(std::string_view symbol) {
     for (const auto &entry : overrides)
         if (entry.symbol == symbol)
             return entry.function;
@@ -186,11 +416,16 @@ void *detail::host_export(std::string_view module, std::string_view symbol) {
     const auto library = LoadLibraryExW(name.c_str(), nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!library)
         return nullptr;
-    return reinterpret_cast<void *>(GetProcAddress(library, std::string(symbol).c_str()));
+    if (!symbol.starts_with('#'))
+        return reinterpret_cast<void *>(GetProcAddress(library, std::string(symbol).c_str()));
+    const auto ordinal = std::strtoul(std::string(symbol.substr(1)).c_str(), nullptr, 10);
+    if (!ordinal || ordinal > 0xffff)
+        return nullptr;
+    return reinterpret_cast<void *>(GetProcAddress(library, MAKEINTRESOURCEA(ordinal)));
 }
 
 std::uint32_t execute(const std::filesystem::path &path, std::span<const std::uint8_t> file,
-                      const Registry &registry, bool allow_missing) {
+                      const Registry &registry, const ExecuteOptions &execution) {
     if (guest)
         throw std::logic_error("A guest image is already running in this process");
     const auto pe = pe::inspect(file);
@@ -204,10 +439,20 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     if (contents.contains("delay_imports"))
         throw std::runtime_error("Unsupported: the image declares delay-load imports");
 
+    // XS_MUTE does the same as the option, for runs started from the window
+    if ((execution.mute || std::getenv("XS_MUTE")) && !mute_process_audio())
+        std::fprintf(stderr, "xscarlet: could not mute the audio of this process\n");
+
     Stubs stubs;
     Guest state;
     state.path = std::filesystem::absolute(path).wstring();
+    state.directory = std::filesystem::absolute(path).parent_path();
+    // a title finds its files relative to its own folder, wherever xscarlet was started
+    if (!SetCurrentDirectoryW(state.directory.c_str()))
+        throw std::runtime_error("Cannot enter the title's folder");
     state.stubs = stubs.memory;
+    if (execution.trace)
+        state.calls = std::make_unique<std::atomic<std::uint64_t>[]>(trace_limit);
     guest = &state;
     struct Reset {
         ~Reset() { guest = nullptr; }
@@ -215,22 +460,29 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
 
     loader::MapOptions options;
     options.executable = true;
-    options.resolve = [&](std::string_view module,
-                          std::string_view symbol) -> std::optional<std::uint64_t> {
-        void *function = registry.find(module, symbol);
+    Resolver resolve;
+    resolve = [&](std::string_view module,
+                  std::string_view symbol) -> std::optional<std::uint64_t> {
+        const auto name = std::string(module) + "!" + std::string(symbol);
+        // a DLL the title brings wins over the host's, but not over ours
+        if (!registry.find(module, symbol) && registry.forwarded(module).empty()) {
+            if (const auto *library = title_module(module, resolve)) {
+                const auto exported = library->exports.find(std::string(symbol));
+                return exported == library->exports.end() ? make_stub(name) : exported->second;
+            }
+        }
+        auto *const function = detail::resolve(registry, module, symbol).function;
         if (!function)
-            function = detail::runtime_override(module, symbol);
-        if (!function && detail::host_policy_allows(module, symbol))
-            function = detail::host_export(module, symbol);
-        if (function)
-            return reinterpret_cast<std::uint64_t>(function);
-        return make_stub(std::string(module) + "!" + std::string(symbol));
+            return make_stub(name);
+        return execution.trace ? make_trace(name, function)
+                               : reinterpret_cast<std::uint64_t>(function);
     };
+    options.resolve = resolve;
     const loader::MappedImage image(file, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())
         throw std::runtime_error("Unsupported: the image has a bound import table");
-    if (!allow_missing && !state.missing.empty()) {
+    if (!execution.allow_missing && !state.missing.empty()) {
         std::string text =
             std::to_string(state.missing.size()) + " imports have no implementation:";
         for (std::size_t i = 0; i < std::min<std::size_t>(state.missing.size(), 8); ++i)
@@ -238,7 +490,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         throw std::runtime_error(text + (state.missing.size() > 8 ? " ..." : ""));
     }
     DWORD previous;
-    if (!VirtualProtect(stubs.memory, stub_size * stub_limit, PAGE_EXECUTE_READ, &previous))
+    if (!VirtualProtect(stubs.memory, Stubs::size, PAGE_EXECUTE_READ, &previous))
         throw std::runtime_error("Cannot protect import stubs");
     state.base = image.guest_base();
     state.size = layout.at("size_of_image");
@@ -254,9 +506,15 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     if (count && !RtlAddFunctionTable(functions, static_cast<DWORD>(count), state.base))
         throw std::runtime_error("Cannot register the guest exception table");
 
-    auto *const entry = reinterpret_cast<void *>(layout.at("entry_va").get<std::uint64_t>());
+    Start start{reinterpret_cast<void *>(layout.at("entry_va").get<std::uint64_t>()), {}};
+    for (const auto &module : state.modules) {
+        std::fprintf(stderr, "xscarlet: loaded the title's %s\n", module.name.c_str());
+        if (module.entry)
+            start.libraries.emplace_back(reinterpret_cast<void *>(module.entry),
+                                         reinterpret_cast<void *>(module.base));
+    }
     std::fflush(nullptr);
-    const auto thread = CreateThread(nullptr, 0, guest_thread, entry, 0, nullptr);
+    const auto thread = CreateThread(nullptr, 0, guest_thread, &start, 0, nullptr);
     if (!thread) {
         if (count)
             RtlDeleteFunctionTable(functions);

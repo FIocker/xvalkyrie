@@ -1,4 +1,5 @@
-add_library(xs_graphics STATIC abstraction/clear_pass.cpp)
+add_library(xs_graphics STATIC abstraction/clear_pass.cpp backend.cpp)
+target_include_directories(xs_graphics PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(xs_graphics PRIVATE xs_options)
 if(XS_VULKAN)
   find_package(Vulkan REQUIRED)

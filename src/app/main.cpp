@@ -1,39 +1,50 @@
+#include "app/config.hpp"
 #include "app/launch.hpp"
 #include "app/version.hpp"
 #include "compatibility/assessment.hpp"
+#include "formats/appx/manifest.hpp"
 #include "formats/gdk/game_config.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "frontend/desktop.hpp"
+#include "graphics/backend.hpp"
 #include "loader/image.hpp"
 #include "platform/host/files.hpp"
+#include "runtime/common/window.hpp"
 #include "runtime/console.hpp"
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
+std::vector<std::uint8_t> read_title(const std::filesystem::path &path) {
+    return xs::host::read_snapshot(xs::title_executable(path), 256 * 1024 * 1024);
+}
 nlohmann::json inspect_file(const std::filesystem::path &path) {
-    const auto bytes = xs::host::read_snapshot(path, 256 * 1024 * 1024);
-    return xs::pe::inspect(bytes);
+    return xs::pe::inspect(read_title(path));
 }
 nlohmann::json config_report(const std::filesystem::path &path) {
     return xs::gdk::inspect_config(xs::host::read_snapshot(path, xs::gdk::config_limit));
 }
 constexpr std::string_view usage =
-    "Usage: xscarlet [FILE]\n"
+    "Usage: xscarlet [TITLE]\n"
     "Targets: Xbox One (Durango), Xbox Series X|S (Scarlett)\n\n"
-    "Opens the XScarlet window, loading FILE if one is given.\n\n"
+    "Opens the XScarlet window, loading TITLE if one is given. TITLE and every FILE below\n"
+    "are an executable, or an unpacked title: its directory or its AppxManifest.xml.\n\n"
     "Optional verification:\n"
     "  xscarlet inspect FILE | inspect-config MicrosoftGame.config\n"
+    "  xscarlet inspect-manifest AppxManifest.xml\n"
     "  xscarlet assess FILE [--config MicrosoftGame.config --entry NAME]\n"
     "  xscarlet map FILE [--base HEX]     lay out the image; never runs it\n"
     "  xscarlet inspect-package FILE      identify an XVD/XVC header; never opens it\n"
     "  xscarlet bind FILE                 show where each import would bind; never runs it\n\n"
     "Developer (Windows host), RUNS THE FILE'S CODE regardless of its target:\n"
-    "  xscarlet exec FILE [--allow-missing]\n";
+    "  xscarlet exec FILE [--allow-missing] [--trace] [--mute] [--backend d3d11|vulkan]\n"
+    "Backends: d3d11 uses the host's Direct3D 11 (Windows only); vulkan cannot render titles "
+    "yet.\n";
 } // namespace
 
 #ifdef _WIN32
@@ -42,6 +53,7 @@ int wmain(int argc, wchar_t **argv) {
 int main(int argc, char **argv) {
 #endif
     try {
+        xs::load_input_settings();
         const std::filesystem::path command =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
         if (argc == 3 && command == "inspect") {
@@ -65,6 +77,11 @@ int main(int argc, char **argv) {
             std::cout << report.dump(2) << '\n';
             return 0;
         }
+        if (argc == 3 && command == "inspect-manifest") {
+            const auto bytes = xs::host::read_snapshot(argv[2], xs::appx::manifest_limit);
+            std::cout << xs::appx::inspect_manifest(bytes).dump(2) << '\n';
+            return 0;
+        }
         if (argc == 3 && command == "inspect-package") {
             const auto prefix = xs::host::read_prefix(argv[2], xs::xvd::header_size);
             std::cout << xs::xvd::identify(prefix.bytes, prefix.file_size).dump(2) << '\n';
@@ -80,21 +97,41 @@ int main(int argc, char **argv) {
                 if (used != text.size())
                     throw std::invalid_argument("--base expects a hexadecimal guest address");
             }
-            const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
+            const auto bytes = read_title(argv[2]);
             std::cout << xs::loader::MappedImage(bytes, options).report().dump(2) << '\n';
             return 0;
         }
         if (argc == 3 && command == "bind") {
-            const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
-            std::cout << xs::runtime::bind_plan(bytes, xs::runtime::title_registry(bytes)).dump(2)
+            const auto bytes = read_title(argv[2]);
+            std::cout << xs::runtime::bind_plan(
+                             bytes, xs::runtime::title_registry(bytes),
+                             std::filesystem::absolute(xs::title_executable(argv[2])).parent_path())
+                             .dump(2)
                       << '\n';
             return 0;
         }
-        if (command == "exec" &&
-            (argc == 3 || (argc == 4 && std::filesystem::path(argv[3]) == "--allow-missing"))) {
-            const auto bytes = xs::host::read_snapshot(argv[2], 256 * 1024 * 1024);
+        if (command == "exec" && argc >= 3) {
+            xs::runtime::ExecuteOptions options;
+            for (int i = 3; i < argc; ++i) {
+                const std::filesystem::path flag(argv[i]);
+                if (flag == "--allow-missing")
+                    options.allow_missing = true;
+                else if (flag == "--trace")
+                    options.trace = true;
+                else if (flag == "--mute")
+                    options.mute = true;
+                else if (flag == "--backend" && i + 1 < argc) {
+                    const auto backend =
+                        xs::graphics::parse_backend(std::filesystem::path(argv[++i]).string());
+                    if (!backend)
+                        throw std::invalid_argument("exec: --backend expects d3d11 or vulkan");
+                    xs::graphics::select_backend(*backend);
+                } else
+                    throw std::invalid_argument("exec: unknown option");
+            }
+            const auto bytes = read_title(argv[2]);
             return static_cast<int>(xs::runtime::execute(
-                argv[2], bytes, xs::runtime::title_registry(bytes), argc == 4));
+                xs::title_executable(argv[2]), bytes, xs::runtime::title_registry(bytes), options));
         }
         if (argc == 2 && command == "--help") {
             std::cout << usage;
@@ -116,9 +153,14 @@ int main(int argc, char **argv) {
             return title;
         };
         hooks.run = [](const std::filesystem::path &path) {
-            const auto bytes = xs::host::read_snapshot(path, 256 * 1024 * 1024);
-            return xs::runtime::execute(path, bytes, xs::runtime::title_registry(bytes), false);
+            const auto file = xs::title_executable(path);
+            const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
+            return xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes));
         };
+        hooks.input_changed = xs::save_input_settings;
+        hooks.host = xs::runtime::set_title_parent;
+        hooks.area = xs::runtime::set_title_area;
+        hooks.showing = xs::runtime::title_window_shown;
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);
     } catch (const std::exception &e) {

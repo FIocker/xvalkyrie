@@ -1,8 +1,10 @@
 """Runs the test guests through `xscarlet exec` (Windows only)."""
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 exe, raw, crt = sys.argv[1:]
 UNIMPLEMENTED, FAULT = 0xE0585301, 0xE0585302
@@ -12,6 +14,15 @@ def run(*args, mode=""):
     env = dict(os.environ, XS_GUEST_MODE=mode)
     return subprocess.run([exe, *args], capture_output=True, text=True, env=env, timeout=30)
 
+
+# Next to its DLL the import is the title's own: the DLL gets loaded and called.
+local = run("exec", raw, mode="m")
+assert local.returncode == 1 and "loaded the title's xs_guest_absent.dll" in local.stderr, local
+assert run("exec", raw).returncode == 42
+
+# The rest runs a copy without the DLL, where that import has nothing behind it.
+directory = tempfile.TemporaryDirectory()
+raw = shutil.copy(raw, directory.name)
 
 plan = json.loads(run("bind", raw).stdout)
 origins = {f'{i["module"].lower()}!{i["symbol"]}': i["origin"] for i in plan["imports"]}

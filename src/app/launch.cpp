@@ -1,5 +1,6 @@
 #include "app/launch.hpp"
 #include "compatibility/modules.hpp"
+#include "formats/appx/manifest.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "loader/image.hpp"
@@ -26,9 +27,42 @@ std::string names(const nlohmann::json &profile, std::string_view prefix) {
     }
     return text;
 }
+constexpr char manifest_name[] = "AppxManifest.xml";
+std::filesystem::path find_manifest(const std::filesystem::path &path) {
+    if (!std::filesystem::is_directory(path))
+        return path.filename() == manifest_name ? path : std::filesystem::path{};
+    for (const auto &candidate : {path / manifest_name, path / "Mount" / manifest_name})
+        if (std::filesystem::is_regular_file(candidate))
+            return candidate;
+    throw std::runtime_error("No AppxManifest.xml in this directory or its Mount subdirectory");
+}
+// Empty unless `path` leads to a package manifest.
+nlohmann::json read_manifest(const std::filesystem::path &path, std::filesystem::path &directory) {
+    const auto manifest = find_manifest(path);
+    if (manifest.empty())
+        return nullptr;
+    directory = manifest.parent_path();
+    return appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+}
+std::filesystem::path executable_of(const nlohmann::json &manifest,
+                                    const std::filesystem::path &directory) {
+    const auto &name =
+        manifest.at("applications")[0].at("executable").get_ref<const std::string &>();
+    const std::filesystem::path relative(std::u8string(name.begin(), name.end()));
+    if (name.find_first_of(":\\/") != std::string::npos || name == "." || name == "..")
+        throw std::runtime_error("Package manifest executable is not a plain file name");
+    return directory / relative;
+}
 } // namespace
 
-LaunchResult launch_title(const std::filesystem::path &path) {
+std::filesystem::path title_executable(const std::filesystem::path &path) {
+    std::filesystem::path directory;
+    const auto manifest = read_manifest(path, directory);
+    return manifest.is_null() ? path : executable_of(manifest, directory);
+}
+
+namespace {
+LaunchResult launch_file(const std::filesystem::path &path) {
     const auto utf8 = path.u8string();
     LaunchResult result{{utf8.begin(), utf8.end()}, LaunchStatus::unreadable, {}};
     try {
@@ -87,17 +121,18 @@ LaunchResult launch_title(const std::filesystem::path &path) {
             options.guest_base = report.at("image_base").get<std::uint64_t>();
         const loader::MappedImage image(bytes, options);
         const auto &map = image.report();
-        const auto plan = runtime::bind_plan(bytes, runtime::console_registry(*result.target));
+        const auto plan = runtime::bind_plan(bytes, runtime::console_registry(*result.target),
+                                             std::filesystem::absolute(path).parent_path());
         const auto missing = plan.at("missing").get<std::size_t>();
         result.detail =
-            "Imports " + modules + ", which Microsoft's tooling treats as an " + console +
-            " build. Mapped " + hex(map.at("size_of_image")) + " bytes at " +
-            hex(map.at("guest_base")) + " with " +
+            "Imports " + modules + ", which belong to an " + console + " build. Mapped " +
+            hex(map.at("size_of_image")) + " bytes at " + hex(map.at("guest_base")) + " with " +
             std::to_string(map.at("relocation").at("dir64_fixups").get<std::uint64_t>()) +
             " relocations. Of " + std::to_string(plan.at("imports").size()) + " imports in " +
             std::to_string(profile.at("modules").size()) + " modules, " +
             std::to_string(plan.at("own").get<std::size_t>()) + " bind to XScarlet, " +
-            std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs and " +
+            std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs, " +
+            std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs and " +
             std::to_string(missing) + " have no implementation";
         if (!missing && runtime::execution_supported() && plan.at("imports").size()) {
             result.status = LaunchStatus::runnable;
@@ -115,6 +150,31 @@ LaunchResult launch_title(const std::filesystem::path &path) {
         result.detail += std::string(listed ? (missing > listed ? ", ...)" : ")") : "") +
                          ", so the entry point was not called. The " + console +
                          " runtime is not implemented. No guest code ran.";
+    } catch (const std::exception &e) {
+        result.detail = e.what();
+    }
+    return result;
+}
+} // namespace
+
+LaunchResult launch_title(const std::filesystem::path &path) {
+    const auto utf8 = path.u8string();
+    LaunchResult result{{utf8.begin(), utf8.end()}, LaunchStatus::unreadable, {}};
+    try {
+        std::filesystem::path directory;
+        const auto manifest = read_manifest(path, directory);
+        if (manifest.is_null())
+            return launch_file(path);
+        const auto label = [](const nlohmann::json &value) {
+            return value.is_string() ? value.get<std::string>() : std::string("?");
+        };
+        const auto &application = manifest.at("applications")[0];
+        const auto file = std::move(result.file);
+        result = launch_file(executable_of(manifest, directory));
+        result.file = file;
+        result.detail = label(manifest.at("display_name")) + " " + label(manifest.at("version")) +
+                        ", executable " + label(application.at("executable")) + ". " +
+                        result.detail;
     } catch (const std::exception &e) {
         result.detail = e.what();
     }

@@ -133,12 +133,26 @@ def module_profile(modules, delayed=()):
     return data + blob
 
 
+def library():
+    """The directories fixture marked as a DLL: ordinal 5 is exported as Alias and Value."""
+    data = fixture()
+    struct.pack_into("<H", data, 132 + 18, 0x2022)
+    return data
+
+
 VARIANTS = {
+    "library": library,
+    # imports from library.dll: two names it exports, one it does not, one ordinal
+    "library-user": lambda: module_profile([("Library.dll", ["Alias", "Value", "Absent", 5])]),
     "directories": fixture,
     "scarlett-modules": lambda: module_profile([(m, []) for m in PUBLISHED_SCARLETT_MODULES]),
     # made up: the Xbox One Direct3D module next to an ordinary system DLL
     "durango-modules": lambda: module_profile(
-        [("KERNEL32.dll", ["VirtualAlloc"]), ("d3d12_x.dll", [])]),
+        [("KERNEL32.dll", ["VirtualAlloc"]), ("d3d12_x.dll", ["D3D12XboxCreateDevice"])]),
+    # made up: modules of an ERA title, one import each way the Xbox One runtime handles them
+    "era-modules": lambda: module_profile(
+        [("kernelx.dll", ["VirtualAlloc", "XMemAllocDefault"]), ("EtwPlus.dll", ["EtxRegister"]),
+         ("WS2_32.dll", [1]), ("d3d11_x.dll", ["D3D11CreateDevice", "D3D11XCreateDeviceX"])]),
     # made up imports to test delay-load parsing and the API list
     "delay": lambda: module_profile(
         [("KERNEL32.dll", ["VirtualAlloc", "WinExec"])],

@@ -18,7 +18,9 @@ This is a hobby project and it is at a very early stage.
 
 ## Status
 
-**It does not run any game yet.** Don't expect it to for a good while.
+**It does not run games.** One Xbox One title used as the test program gets as
+far as drawing its splash screens and main menu on Windows, with no input, no
+saves and nobody signed in. Don't expect more for a good while.
 
 What exists today:
 
@@ -27,6 +29,7 @@ What exists today:
 - Image loader: sections, relocations, import binding
 - Windows runtime that can load and run small test programs through our own
   import resolver, with a stub that tells you which import is missing
+- Unpacked Xbox One (ERA) title folders: reads `AppxManifest.xml` and finds the executable
 - Read-only XVD/XVC package header identification
 - A tiny offscreen Vulkan backend used for testing
 
@@ -83,25 +86,42 @@ Extra CMake options:
 ```
 xscarlet                           open the window; load a title with File > Open File
 xscarlet <file>                    open the window and try to launch a title
+xscarlet <folder>                  same, for an unpacked title (folder with AppxManifest.xml)
+xscarlet inspect-manifest <file>   read an AppxManifest.xml
 xscarlet inspect <file>            dump PE headers and directories as JSON
 xscarlet assess <file>             classify imports and guess the build target
 xscarlet map <file> [--base HEX]   load the image in memory and print the layout
 xscarlet bind <file>               show which imports we can resolve
 xscarlet inspect-package <file>    print XVD/XVC header fields
 xscarlet inspect-config <file>     read a MicrosoftGame.config
-xscarlet exec <file>               run an executable through the runtime (Windows)
+xscarlet exec <file> [--allow-missing] [--trace] [--mute] [--backend d3d11|vulkan]
+                                   run it through the runtime (Windows)
 ```
 
+Options > Input sets how the title's gamepad is driven: from the window's key
+events ("Window"), or read directly from the system ("Direct", Windows only),
+which also uses a gamepad plugged into the host. The key for each control can
+be changed there. Defaults: left stick WASD, right stick arrows, A Space,
+B Backspace, X Q, Y E, Menu Enter, View Tab.
+
+Every command that takes an executable also takes the folder of an unpacked
+Xbox One title or its `AppxManifest.xml`, and uses the executable the manifest
+names. Put your own titles in `samples/`, which git ignores.
+
 The window has a File menu with a native open dialog (Ctrl+O), and you can
-also drop an executable on it. For now it tells you why the title could not
-start, which is always the case. On Linux the dialog comes from
+also drop an executable or a title folder on it. A title that can start runs
+inside the window, after a loading screen; otherwise the window says why not. On Linux the dialog comes from
 xdg-desktop-portal. `xscarlet --version` prints the version and commit that
 the window shows.
 
 `exec` is a developer command. It runs the file's code inside the xscarlet
 process with no sandbox at all, so only use it with things you built yourself.
 Add `--allow-missing` to start even if some imports are not implemented; the
-process exits naming the import as soon as one of them gets called.
+process exits naming the import as soon as one of them gets called. `--trace`
+prints the first call of every imported function, and the last ones before a
+fault. `--mute` silences the title. `--backend` picks what Direct3D calls end up on: `d3d11` is the host's
+Direct3D 11 (Windows only, the default there), `vulkan` exists on every host
+but cannot render a title yet.
 
 ## How it works
 

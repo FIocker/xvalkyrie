@@ -1,7 +1,7 @@
 add_library(xs_host_test_module MODULE host_test_module.cpp)
 add_executable(xs_tests tests.cpp pe_directories.cpp host_runtime.cpp evidence.cpp clear_pass.cpp
-  import_profile.cpp loader_image.cpp xvd.cpp runtime.cpp)
-target_link_libraries(xs_tests PRIVATE xs_options xs_launch xs_pe xs_core xs_catch xs_host xs_game_config xs_compat xs_graphics xs_xvd xs_loader xs_runtime)
+  import_profile.cpp loader_image.cpp xvd.cpp runtime.cpp title.cpp input.cpp)
+target_link_libraries(xs_tests PRIVATE xs_input xs_runtime_durango xs_options xs_launch xs_appx xs_pe xs_core xs_catch xs_host xs_game_config xs_compat xs_graphics xs_xvd xs_loader xs_runtime)
 add_dependencies(xs_tests xs_host_test_module)
 target_compile_definitions(xs_tests PRIVATE "XS_TEST_MODULE=\"$<TARGET_FILE:xs_host_test_module>\"")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/host-input.bin" CONTENT "host runtime")
@@ -10,7 +10,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(fixture "${CMAKE_CURRENT_BINARY_DIR}/synthetic.pe")
 add_test(NAME fixture COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/corpus/generate.py" "${fixture}")
 set_tests_properties(fixture PROPERTIES FIXTURES_SETUP pe_file)
-foreach(variant durango-modules scarlett-modules delay)
+foreach(variant durango-modules era-modules scarlett-modules delay library library-user)
   add_test(NAME fixture_${variant} COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/corpus/generate.py"
     "${CMAKE_CURRENT_BINARY_DIR}/${variant}.pe" ${variant})
   set_tests_properties(fixture_${variant} PROPERTIES FIXTURES_SETUP pe_file)

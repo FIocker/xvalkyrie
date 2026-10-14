@@ -2,11 +2,18 @@
 #include "app/launch.hpp"
 #include "app/version.hpp"
 #include "frontend/file_dialog.hpp"
+#include "input/input.hpp"
 #include <GLFW/glfw3.h>
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <future>
 #include <glad/gl.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -70,6 +77,88 @@ std::string utf8(const std::filesystem::path &path) {
     return {text.begin(), text.end()};
 }
 
+// GLFW key -> Windows virtual-key code, which is what input bindings are in. 0 if none.
+int virtual_key(int key) {
+    if ((key >= GLFW_KEY_0 && key <= GLFW_KEY_9) || (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) ||
+        key == GLFW_KEY_SPACE)
+        return key;
+    if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F12)
+        return 0x70 + key - GLFW_KEY_F1;
+    if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_9)
+        return 0x60 + key - GLFW_KEY_KP_0;
+    switch (key) {
+    case GLFW_KEY_ENTER:
+        return 0x0d;
+    case GLFW_KEY_TAB:
+        return 0x09;
+    case GLFW_KEY_BACKSPACE:
+        return 0x08;
+    case GLFW_KEY_ESCAPE:
+        return 0x1b;
+    case GLFW_KEY_LEFT:
+        return 0x25;
+    case GLFW_KEY_UP:
+        return 0x26;
+    case GLFW_KEY_RIGHT:
+        return 0x27;
+    case GLFW_KEY_DOWN:
+        return 0x28;
+    case GLFW_KEY_INSERT:
+        return 0x2d;
+    case GLFW_KEY_DELETE:
+        return 0x2e;
+    case GLFW_KEY_PAGE_UP:
+        return 0x21;
+    case GLFW_KEY_PAGE_DOWN:
+        return 0x22;
+    case GLFW_KEY_HOME:
+        return 0x24;
+    case GLFW_KEY_END:
+        return 0x23;
+    case GLFW_KEY_LEFT_SHIFT:
+    case GLFW_KEY_RIGHT_SHIFT:
+        return 0x10;
+    case GLFW_KEY_LEFT_CONTROL:
+    case GLFW_KEY_RIGHT_CONTROL:
+        return 0x11;
+    case GLFW_KEY_LEFT_ALT:
+    case GLFW_KEY_RIGHT_ALT:
+        return 0x12;
+    case GLFW_KEY_SEMICOLON:
+        return 0xba;
+    case GLFW_KEY_EQUAL:
+        return 0xbb;
+    case GLFW_KEY_COMMA:
+        return 0xbc;
+    case GLFW_KEY_MINUS:
+        return 0xbd;
+    case GLFW_KEY_PERIOD:
+        return 0xbe;
+    case GLFW_KEY_SLASH:
+        return 0xbf;
+    case GLFW_KEY_GRAVE_ACCENT:
+        return 0xc0;
+    case GLFW_KEY_LEFT_BRACKET:
+        return 0xdb;
+    case GLFW_KEY_BACKSLASH:
+        return 0xdc;
+    case GLFW_KEY_RIGHT_BRACKET:
+        return 0xdd;
+    case GLFW_KEY_APOSTROPHE:
+        return 0xde;
+    default:
+        return 0;
+    }
+}
+
+void *native_window([[maybe_unused]] GLFWwindow *window) {
+#ifdef _WIN32
+    return glfwGetWin32Window(window);
+#else
+    return nullptr;
+#endif
+}
+
 class Desktop {
   public:
     Desktop(GLFWwindow *window, const Interface &ui, const DesktopHooks &hooks)
@@ -89,17 +178,47 @@ class Desktop {
             guest_->thread.detach();
     }
     int exit_code() const { return exit_code_; }
+    // A key of the main window, before the interface sees it. This is the "window"
+    // capture method: the keys go to the title unless the options are open, where the
+    // next key pressed becomes a binding instead.
+    void key(int glfw_key, bool pressed) {
+        const int code = virtual_key(glfw_key);
+        if (!code)
+            return;
+        if (binding_ && pressed) {
+            pressed_ = code;
+            return;
+        }
+        if (!input_open_ || !pressed)
+            input::window_key(code, pressed);
+    }
+    // something on screen moves without input: the loading bar
+    bool animating() const { return loading_.valid() || (guest_ && !showing()); }
     // the native dialog is modal: the window stays open until it is dismissed
     bool dialog_open() const { return dialog_.valid(); }
 
+    // Reading and checking a title takes a while, so it happens off the window thread;
+    // start() picks the result up.
     void open(const std::filesystem::path &path) {
-        if (guest_)
+        if (busy())
             return;
         notice_.clear();
         outcome_.clear();
-        title_ = hooks_.load(path);
+        title_.reset();
         name_ = utf8(path.filename());
         glfwSetWindowTitle(window_, ("XScarlet - " + name_).c_str());
+        path_ = path;
+        loading_ = std::async(std::launch::async, hooks_.load, path);
+    }
+    void start() {
+        const auto path = path_;
+        try {
+            title_ = loading_.get();
+        } catch (const std::exception &e) {
+            notice_ = std::string("Could not load the title: ") + e.what();
+            exit_code_ = 1;
+            return;
+        }
         exit_code_ = title_->status == LaunchStatus::runnable ? 0 : 1;
         if (title_->status != LaunchStatus::runnable)
             return;
@@ -122,13 +241,16 @@ class Desktop {
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, ImGuiInputFlags_RouteGlobal))
             glfwSetWindowShouldClose(window_, true);
         menu();
+        input_options();
         status_bar();
         content();
         about();
     }
 
   private:
-    bool busy() const { return guest_ || dialog_.valid(); }
+    bool busy() const { return guest_ || dialog_.valid() || loading_.valid(); }
+    // the title has frames on screen, in the area left for it
+    bool showing() const { return guest_ && hooks_.showing && hooks_.showing(); }
     void pick() {
         if (!busy())
             dialog_ = pick_title_file(window_);
@@ -149,6 +271,9 @@ class Desktop {
                 notice_ = std::string("Open File failed: ") + e.what();
             }
         }
+        if (loading_.valid() &&
+            loading_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            start();
         if (guest_ && guest_->done) {
             guest_->thread.join();
             try {
@@ -181,6 +306,11 @@ class Desktop {
                 glfwSetWindowShouldClose(window_, true);
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Options")) {
+            if (ImGui::MenuItem("Input..."))
+                input_open_ = true;
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("About XScarlet"))
                 about_requested_ = true;
@@ -191,10 +321,12 @@ class Desktop {
     const char *state() const {
         if (!notice_.empty())
             return notice_.c_str();
+        if (loading_.valid())
+            return "Loading";
         if (!title_)
             return "No title loaded";
         if (guest_)
-            return "Running";
+            return showing() ? "Running" : "Starting";
         if (!outcome_.empty())
             return outcome_.c_str();
         return "Not started";
@@ -226,8 +358,37 @@ class Desktop {
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) / 2);
         ImGui::TextDisabled("%s", text);
     }
+    // What stays on screen from the moment a title is opened until its first frame.
+    void loading_screen(const char *step) {
+        const float line = ImGui::GetTextLineHeightWithSpacing();
+        ImGui::SetCursorPosY((ImGui::GetWindowHeight() - ui_.logo->FontSize - 5 * line) / 2);
+        ImGui::PushFont(ui_.logo);
+        centered("XScarlet");
+        ImGui::PopFont();
+        ImGui::Spacing();
+        centered(name_.c_str());
+        ImGui::Spacing();
+        const float width = std::min(360.f, ImGui::GetWindowWidth() - 64);
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - width) / 2);
+        // how long a title takes to start is not known, so the bar only shows activity
+        ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()), {width, 6}, "");
+        ImGui::Spacing();
+        centered(step);
+    }
     void content() {
         const auto *screen = ImGui::GetMainViewport();
+        if (hooks_.area) {
+            // the largest 16:9 rectangle between the menu and the status bar, centered
+            const auto scale = ImGui::GetIO().DisplayFramebufferScale;
+            const float room_x = screen->WorkSize.x * scale.x,
+                        room_y = (screen->WorkSize.y - ImGui::GetFrameHeight()) * scale.y;
+            const float width = std::min(room_x, room_y * 16 / 9), height = width * 9 / 16;
+            hooks_.area(static_cast<int>(screen->WorkPos.x * scale.x + (room_x - width) / 2),
+                        static_cast<int>(screen->WorkPos.y * scale.y + (room_y - height) / 2),
+                        static_cast<int>(width), static_cast<int>(height));
+        }
+        if (showing())
+            return; // the title draws there
         ImGui::SetNextWindowPos(screen->WorkPos);
         ImGui::SetNextWindowSize(
             {screen->WorkSize.x, screen->WorkSize.y - ImGui::GetFrameHeight()});
@@ -235,7 +396,11 @@ class Desktop {
         ImGui::Begin("Content", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
-        if (title_) {
+        if (loading_.valid()) {
+            loading_screen("Reading the title");
+        } else if (guest_) {
+            loading_screen("Starting the title");
+        } else if (title_) {
             ImGui::PushFont(ui_.heading);
             ImGui::TextUnformatted(name_.c_str());
             ImGui::PopFont();
@@ -252,10 +417,103 @@ class Desktop {
             ImGui::PopFont();
             centered(version);
             ImGui::Spacing();
-            centered("File > Open File... (Ctrl+O), or drop a title executable here");
+            centered("File > Open File... (Ctrl+O), or drop a title executable or folder here");
         }
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+    void changed(const input::Settings &settings) {
+        input::configure(settings);
+        input_notice_.clear();
+        try {
+            if (hooks_.input_changed)
+                hooks_.input_changed();
+        } catch (const std::exception &e) {
+            input_notice_ = std::string("Not saved: ") + e.what();
+        }
+    }
+    // Options > Input: where the gamepad's readings come from and which key is which
+    // control. Changes apply at once.
+    void input_options() {
+        if (!input_open_) {
+            binding_.reset();
+            return;
+        }
+        ImGui::SetNextWindowSize({460, 0}, ImGuiCond_Appearing);
+        const auto center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {.5f, .5f});
+        if (!ImGui::Begin("Input", &input_open_, ImGuiWindowFlags_NoCollapse)) {
+            ImGui::End();
+            return;
+        }
+        auto settings = input::settings();
+        const bool direct = input::direct_capture_available();
+        ImGui::TextUnformatted("Capture method");
+        if (ImGui::RadioButton("Window (software)", settings.capture == input::Capture::window)) {
+            settings.capture = input::Capture::window;
+            changed(settings);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("keyboard, from this window's events");
+        ImGui::BeginDisabled(!direct);
+        if (ImGui::RadioButton("Direct (system)", settings.capture == input::Capture::direct)) {
+            settings.capture = input::Capture::direct;
+            changed(settings);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(direct ? "gamepad (XInput) and keyboard, read from the system"
+                                   : "not available on this host");
+        ImGui::BeginDisabled(settings.capture != input::Capture::direct);
+        if (ImGui::Checkbox("Use the host's gamepad", &settings.host_gamepad))
+            changed(settings);
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        ImGui::Separator();
+        ImGui::TextUnformatted("Keyboard");
+        if (binding_ && pressed_) {
+            if (pressed_ != 0x1b) // Escape leaves the binding as it was
+                settings.keys[*binding_] = pressed_;
+            binding_.reset();
+            pressed_ = 0;
+            changed(settings);
+        }
+        if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_SizingStretchProp,
+                              {0, 14 * ImGui::GetFrameHeightWithSpacing()})) {
+            for (std::size_t index = 0; index < input::control_count; ++index) {
+                ImGui::PushID(static_cast<int>(index));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(input::control_name(static_cast<input::Control>(index)));
+                ImGui::TableNextColumn();
+                const bool waiting = binding_ && *binding_ == index;
+                const auto label =
+                    waiting ? std::string("Press a key...") : input::key_name(settings.keys[index]);
+                if (ImGui::Button(label.c_str(), {140, 0})) {
+                    binding_ = index;
+                    pressed_ = 0;
+                }
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("Clear")) {
+                    settings.keys[index] = 0;
+                    binding_.reset();
+                    changed(settings);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (ImGui::Button("Restore defaults")) {
+            const auto defaults = input::default_settings();
+            settings.keys = defaults.keys;
+            binding_.reset();
+            changed(settings);
+        }
+        if (!input_notice_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", input_notice_.c_str());
+        }
+        ImGui::End();
     }
     void about() {
         if (about_requested_)
@@ -282,9 +540,15 @@ class Desktop {
     std::string outcome_; // how the last run of title_ ended
     std::string notice_;  // frontend problem unrelated to title_
     std::shared_ptr<Guest> guest_;
+    std::future<LaunchResult> loading_;
+    std::filesystem::path path_; // what loading_ is reading
     std::future<std::filesystem::path> dialog_;
     std::filesystem::path dropped_;
     bool about_requested_ = false;
+    bool input_open_ = false;
+    std::optional<std::size_t> binding_; // control waiting for a key
+    int pressed_ = 0;                    // the key it got
+    std::string input_notice_;
     int exit_code_ = 0;
 };
 } // namespace
@@ -306,7 +570,19 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("OpenGL function loading failed");
     glfwSwapInterval(1);
+    // Set before the interface installs its own callbacks, which then call these first.
+    glfwSetKeyCallback(window.get(), [](GLFWwindow *target, int key, int, int action, int) {
+        if (auto *const desktop = static_cast<Desktop *>(glfwGetWindowUserPointer(target));
+            desktop && action != GLFW_REPEAT)
+            desktop->key(key, action == GLFW_PRESS);
+    });
+    glfwSetWindowFocusCallback(window.get(), [](GLFWwindow *, int focused) {
+        if (!focused)
+            input::window_focus_lost();
+    });
     Interface ui(window.get());
+    if (hooks.host)
+        hooks.host(native_window(window.get()));
     Desktop desktop(window.get(), ui, hooks);
     if (!initial.empty())
         desktop.open(initial);
@@ -334,7 +610,7 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window.get());
         // redraw every vblank while in use so menus respond at once, otherwise idle
-        if (!glfwGetWindowAttrib(window.get(), GLFW_FOCUSED) &&
+        if (!desktop.animating() && !glfwGetWindowAttrib(window.get(), GLFW_FOCUSED) &&
             !glfwGetWindowAttrib(window.get(), GLFW_HOVERED))
             glfwWaitEventsTimeout(.1);
     }

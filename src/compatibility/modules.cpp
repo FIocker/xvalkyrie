@@ -31,6 +31,10 @@ const std::regex mfc_release{"((mfcm?[0-9]+u?)|(mfc[0-9]+[a-z]{3}))\\.dll"};
 const std::regex xtf{"xtf[a-z]+\\.dll"};
 const std::regex windows_component{"windows\\.[a-z\\.]+\\.dll"};
 
+// Not in the xbdepends tables, which only cover the GDK. Names from the import tables of
+// Xbox One ERA titles.
+constexpr std::string_view era_d3d = "d3d11_x.dll", era_tracing = "etwplus.dll";
+
 void append(json &list, const std::set<std::string> &names) {
     for (const auto &name : names)
         list.push_back(name);
@@ -85,6 +89,10 @@ ModuleClass classify_module(std::string_view file_name) {
         return {"d3d_scarlett", false, false};
     if (contains(legacy_era, name))
         return {"legacy_era", true, false};
+    if (name == era_d3d)
+        return {"d3d_xbox_one", false, false};
+    if (name == era_tracing)
+        return {"legacy_era", false, false};
     return {"unknown", false, false};
 }
 
