@@ -14,7 +14,8 @@ struct IOperation : IInspectable {
 };
 class Operation final : public IOperation, public IAsyncInfo {
   public:
-    Operation(IUnknown *result, bool action) : result_(result), action_(action) {}
+    Operation(IUnknown *result, bool action, HRESULT error = S_OK)
+        : result_(result), action_(action), error_(error) {}
     // The interface ID of IAsyncOperation<T> depends on T, so anything that is not
     // IAsyncInfo is taken to be the operation itself.
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
@@ -60,15 +61,15 @@ class Operation final : public IOperation, public IAsyncInfo {
         // AsyncOperationCompletedHandler<T>::Invoke(operation, status)
         using Invoke = HRESULT(STDMETHODCALLTYPE *)(IUnknown *, IOperation *, AsyncStatus);
         const auto invoke = reinterpret_cast<Invoke>((*reinterpret_cast<void ***>(handler))[3]);
-        return invoke(handler, this, AsyncStatus::Completed);
+        return invoke(handler, this, status());
     }
     STDMETHODIMP get_Completed(IUnknown **handler) override {
         *handler = nullptr;
         return S_OK;
     }
     STDMETHODIMP GetResults(void **result) override {
-        if (action_)
-            return S_OK;
+        if (FAILED(error_) || action_)
+            return error_;
         *result = result_;
         if (result_)
             result_->AddRef();
@@ -79,11 +80,11 @@ class Operation final : public IOperation, public IAsyncInfo {
         return S_OK;
     }
     STDMETHODIMP get_Status(AsyncStatus *status) override {
-        *status = AsyncStatus::Completed;
+        *status = this->status();
         return S_OK;
     }
     STDMETHODIMP get_ErrorCode(HRESULT *code) override {
-        *code = S_OK;
+        *code = error_;
         return S_OK;
     }
     STDMETHODIMP Cancel() override { return S_OK; }
@@ -93,11 +94,21 @@ class Operation final : public IOperation, public IAsyncInfo {
     std::atomic<ULONG> references_{1};
     IUnknown *result_;
     bool action_;
+    HRESULT error_;
+    AsyncStatus status() const {
+        return FAILED(error_) ? AsyncStatus::Error : AsyncStatus::Completed;
+    }
 };
 } // namespace
 
 void *make_completed_operation(void *result) {
     return static_cast<IOperation *>(new Operation(static_cast<IUnknown *>(result), false));
+}
+void *make_failed_action(long error) {
+    return static_cast<IOperation *>(new Operation(nullptr, true, error));
+}
+void *make_failed_operation(long error) {
+    return static_cast<IOperation *>(new Operation(nullptr, false, error));
 }
 void *make_completed_action() { return static_cast<IOperation *>(new Operation(nullptr, true)); }
 } // namespace xs::runtime::durango::winrt

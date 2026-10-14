@@ -135,7 +135,7 @@ const Override overrides[] = {{"GetModuleHandleW", erase(get_module_handle_w)},
 
 void report_recent_calls();
 [[noreturn]] void unimplemented(std::uint32_t index) {
-    std::fprintf(stderr, "xscarlet: title called unimplemented import %s\n",
+    std::fprintf(stderr, "[Runtime] title called unimplemented import %s\n",
                  guest->missing.at(index).c_str());
     report_recent_calls();
     std::fflush(nullptr);
@@ -167,7 +167,7 @@ void trace_call(std::uint32_t index) {
     const auto error = GetLastError();
     guest->recent[guest->sequence++ % guest->recent.size()] = index;
     if (!guest->calls[index]++) {
-        std::fprintf(stderr, "xscarlet: [%lu] %s\n", GetCurrentThreadId(),
+        std::fprintf(stderr, "[Runtime] [%lu] %s\n", GetCurrentThreadId(),
                      guest->traced[index].c_str());
         std::fflush(stderr);
     }
@@ -220,9 +220,9 @@ void report_recent_calls() {
     if (guest->traced.empty())
         return;
     const auto end = guest->sequence.load(), size = std::uint64_t{guest->recent.size()};
-    std::fprintf(stderr, "xscarlet: last imports called, oldest first:\n");
+    std::fprintf(stderr, "[Runtime] last imports called, oldest first:\n");
     for (auto i = end > size ? end - size : 0; i < end; ++i)
-        std::fprintf(stderr, "xscarlet:   %s\n", guest->traced[guest->recent[i % size]].c_str());
+        std::fprintf(stderr, "[Runtime]   %s\n", guest->traced[guest->recent[i % size]].c_str());
 }
 
 std::string lower(std::string_view text) {
@@ -313,7 +313,7 @@ void report_cxx_type(const EXCEPTION_RECORD *record) {
             return;
         const auto *type = base + rva(types + 4);
         const auto *name = reinterpret_cast<const char *>(base + rva(type + 4) + 16);
-        std::fprintf(stderr, "xscarlet: C++ exception of type %.200s\n", name);
+        std::fprintf(stderr, "[Runtime] C++ exception of type %.200s\n", name);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -325,7 +325,7 @@ void report_guest_stack(const CONTEXT *context) {
             reinterpret_cast<const std::uint64_t *>(context->Rsp & ~std::uint64_t{7});
         const auto *limit = reinterpret_cast<const std::uint64_t *>(
             reinterpret_cast<const NT_TIB *>(NtCurrentTeb())->StackBase);
-        std::fprintf(stderr, "xscarlet: guest addresses on the stack:");
+        std::fprintf(stderr, "[Runtime] guest addresses on the stack:");
         for (int found = 0; slot < limit && found < 24; ++slot) {
             if (!is_guest(reinterpret_cast<const void *>(*slot)))
                 continue;
@@ -341,14 +341,14 @@ int report_fault(EXCEPTION_POINTERS *info) {
     const auto *record = info->ExceptionRecord;
     const auto address = reinterpret_cast<std::uint64_t>(record->ExceptionAddress);
     if (is_guest(record->ExceptionAddress))
-        std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at image+0x%llx\n",
+        std::fprintf(stderr, "[Runtime] guest exception 0x%08lx at image+0x%llx\n",
                      record->ExceptionCode, static_cast<unsigned long long>(address - guest->base));
     else if (const auto *module = module_at(record->ExceptionAddress))
-        std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at %s+0x%llx\n",
+        std::fprintf(stderr, "[Runtime] guest exception 0x%08lx at %s+0x%llx\n",
                      record->ExceptionCode, module->name.c_str(),
                      static_cast<unsigned long long>(address - module->base));
     else
-        std::fprintf(stderr, "xscarlet: guest exception 0x%08lx at host address 0x%llx\n",
+        std::fprintf(stderr, "[Runtime] guest exception 0x%08lx at host address 0x%llx\n",
                      record->ExceptionCode, static_cast<unsigned long long>(address));
     report_cxx_type(record);
     report_guest_stack(info->ContextRecord);
@@ -370,6 +370,17 @@ DWORD run_guest(const Start &start) {
                                                                        nullptr);
     return reinterpret_cast<DWORD (*)()>(start.entry)();
 }
+#ifdef _MSC_VER
+// Threads the title creates itself have no handler of ours around them: this reports
+// their faults the same way before the process ends.
+LONG WINAPI unhandled(EXCEPTION_POINTERS *info) {
+    if (guest) {
+        std::fprintf(stderr, "[Runtime] on thread %lu:\n", GetCurrentThreadId());
+        report_fault(info);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
 DWORD WINAPI guest_thread(void *start) {
 #ifdef _MSC_VER
     __try {
@@ -441,7 +452,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
 
     // XS_MUTE does the same as the option, for runs started from the window
     if ((execution.mute || std::getenv("XS_MUTE")) && !mute_process_audio())
-        std::fprintf(stderr, "xscarlet: could not mute the audio of this process\n");
+        std::fprintf(stderr, "[Runtime] could not mute the audio of this process\n");
 
     Stubs stubs;
     Guest state;
@@ -508,11 +519,14 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
 
     Start start{reinterpret_cast<void *>(layout.at("entry_va").get<std::uint64_t>()), {}};
     for (const auto &module : state.modules) {
-        std::fprintf(stderr, "xscarlet: loaded the title's %s\n", module.name.c_str());
+        std::fprintf(stderr, "[Runtime] loaded the title's %s\n", module.name.c_str());
         if (module.entry)
             start.libraries.emplace_back(reinterpret_cast<void *>(module.entry),
                                          reinterpret_cast<void *>(module.base));
     }
+#ifdef _MSC_VER
+    SetUnhandledExceptionFilter(&unhandled);
+#endif
     std::fflush(nullptr);
     const auto thread = CreateThread(nullptr, 0, guest_thread, &start, 0, nullptr);
     if (!thread) {

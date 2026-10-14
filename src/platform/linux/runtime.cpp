@@ -15,6 +15,11 @@
 #include <unistd.h>
 
 namespace xs::host {
+std::filesystem::path executable_directory() {
+    std::error_code error;
+    const auto path = std::filesystem::read_symlink("/proc/self/exe", error);
+    return error ? std::filesystem::current_path() : path.parent_path();
+}
 namespace {
 [[noreturn]] void fail(const char *operation, int error = errno) {
     throw std::system_error(error, std::generic_category(), operation);

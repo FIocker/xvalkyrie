@@ -5,5 +5,5 @@ if(WIN32)
   target_sources(xs_runtime_durango PRIVATE winrt/placeholder.cpp winrt/inert.cpp winrt/application.cpp winrt/async.cpp winrt/collection.cpp winrt/gamepad.cpp
     d3d11x/device.cpp d3d11x/wrap.cpp d3d11x/layout.cpp d3d11x/frame_dump.cpp)
   target_compile_definitions(xs_runtime_durango PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-  target_link_libraries(xs_runtime_durango PRIVATE runtimeobject d3d11 dxgi)
+  target_link_libraries(xs_runtime_durango PRIVATE runtimeobject d3d11 dxgi shlwapi)
 endif()

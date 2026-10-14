@@ -5,10 +5,16 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <string>
 #include <system_error>
 #include <windows.h>
 
 namespace xs::host {
+std::filesystem::path executable_directory() {
+    std::wstring path(32768, L'\0');
+    path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
+    return std::filesystem::path(path).parent_path();
+}
 namespace {
 [[noreturn]] void fail(const char *operation, DWORD error = GetLastError()) {
     throw std::system_error(static_cast<int>(error), std::system_category(), operation);

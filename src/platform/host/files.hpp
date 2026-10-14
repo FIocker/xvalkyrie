@@ -5,6 +5,8 @@
 #include <vector>
 
 namespace xs::host {
+// folder of the running executable
+std::filesystem::path executable_directory();
 std::vector<std::uint8_t> read_snapshot(const std::filesystem::path &path, std::size_t limit);
 
 // first `count` bytes of a file (or fewer), plus its total size

@@ -80,7 +80,7 @@ std::int32_t XS_GUEST_ABI resource_layout(Computer *self, void *layout) {
     return 0;
 }
 template <int Slot> std::int32_t XS_GUEST_ABI unknown(Computer *) {
-    std::fprintf(stderr, "xscarlet: unimplemented xg_x.dll texture computer method %d\n", Slot);
+    std::fprintf(stderr, "[Runtime] unimplemented xg_x.dll texture computer method %d\n", Slot);
     std::fflush(stderr);
     return static_cast<std::int32_t>(0x80004001); // E_NOTIMPL
 }

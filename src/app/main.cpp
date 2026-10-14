@@ -8,14 +8,17 @@
 #include "formats/xvd/identify.hpp"
 #include "frontend/desktop.hpp"
 #include "graphics/backend.hpp"
+#include "input/input.hpp"
 #include "loader/image.hpp"
 #include "platform/host/files.hpp"
+#include "platform/host/session_log.hpp"
 #include "runtime/common/window.hpp"
 #include "runtime/console.hpp"
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +31,10 @@ nlohmann::json inspect_file(const std::filesystem::path &path) {
 }
 nlohmann::json config_report(const std::filesystem::path &path) {
     return xs::gdk::inspect_config(xs::host::read_snapshot(path, xs::gdk::config_limit));
+}
+std::string text(const std::filesystem::path &path) {
+    const auto utf8 = path.u8string();
+    return {utf8.begin(), utf8.end()};
 }
 constexpr std::string_view usage =
     "Usage: xscarlet [TITLE]\n"
@@ -53,6 +60,25 @@ int wmain(int argc, wchar_t **argv) {
 int main(int argc, char **argv) {
 #endif
     try {
+        if (argc > 1 && std::filesystem::path(argv[1]) == xs::host::helper_option) {
+            std::vector<std::wstring> arguments;
+            for (int index = 2; index < argc; ++index)
+                arguments.push_back(std::filesystem::path(argv[index]).wstring());
+            return xs::host::session_log_helper(arguments);
+        }
+        // Sessions in the window, and runs of a title, leave a log next to the executable.
+        const std::filesystem::path first =
+            argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+        if (argc == 1 || first == "exec" || (argc == 2 && first.native()[0] != '-')) {
+            try {
+                const auto log =
+                    xs::host::start_session_log(xs::host::executable_directory() / "logs");
+                std::cerr << "[Launcher] XScarlet " << xs::version << ", log " << text(log)
+                          << std::endl;
+            } catch (const std::exception &e) {
+                std::cerr << "[Launcher] no session log: " << e.what() << std::endl;
+            }
+        }
         xs::load_input_settings();
         const std::filesystem::path command =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
@@ -147,24 +173,37 @@ int main(int argc, char **argv) {
         }
         xs::DesktopHooks hooks;
         hooks.load = [](const std::filesystem::path &path) {
+            std::cerr << "[Launcher] opening " << text(path) << std::endl;
             auto title = xs::launch_title(path);
-            if (title.status != xs::LaunchStatus::runnable)
-                std::cerr << "XScarlet: " << title.file << ": " << title.detail << std::endl;
+            std::cerr << "[Launcher] "
+                      << (title.status == xs::LaunchStatus::runnable ? "can start: "
+                                                                     : "cannot start: ")
+                      << title.detail << std::endl;
             return title;
         };
         hooks.run = [](const std::filesystem::path &path) {
             const auto file = xs::title_executable(path);
+            std::cerr << "[Launcher] starting " << text(file) << std::endl;
             const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
-            return xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes));
+            const auto code = xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes));
+            std::cerr << "[Launcher] the title ended with code 0x" << std::hex << code << std::dec
+                      << std::endl;
+            return code;
         };
-        hooks.input_changed = xs::save_input_settings;
+        hooks.input_changed = [] {
+            xs::save_input_settings();
+            const auto settings = xs::input::settings();
+            std::cerr << "[Launcher] input: "
+                      << (settings.capture == xs::input::Capture::direct ? "direct" : "window")
+                      << " capture, saved to " << text(xs::config_file()) << std::endl;
+        };
         hooks.host = xs::runtime::set_title_parent;
         hooks.area = xs::runtime::set_title_area;
         hooks.showing = xs::runtime::title_window_shown;
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);
     } catch (const std::exception &e) {
-        std::cerr << "xscarlet: " << e.what() << '\n';
+        std::cerr << "[Launcher] " << e.what() << '\n';
         return 1;
     }
 }

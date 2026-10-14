@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <inspectable.h>
 #include <intrin.h>
+#include <iterator>
+#include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <windows.h>
@@ -82,8 +85,9 @@ bool looks_like_event_add(void *first, void *second) {
 }
 
 template <std::size_t Index>
-HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, void *,
-                                 void *fourth) {
+HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, void *third,
+                                 void *fourth, void *a5, void *a6, void *a7, void *a8, void *a9,
+                                 void *a10, void *a11) {
     if (const auto *known = inert_method(self->name.c_str(), self->iid, Index)) {
         switch (known->kind) {
         case Inert::accept:
@@ -106,12 +110,76 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::lookup:
             *static_cast<void **>(second) = make_placeholder(known->result, inspectable);
             break;
+        case Inert::lookup2:
+            *static_cast<void **>(third) = make_placeholder(known->result, inspectable);
+            break;
+        case Inert::operation2:
+            *static_cast<void **>(second) =
+                make_completed_operation(make_placeholder(known->result, inspectable));
+            break;
+        case Inert::action2:
+            *static_cast<void **>(second) = make_completed_action();
+            break;
+        case Inert::action3:
+            *static_cast<void **>(third) = make_completed_action();
+            break;
+        case Inert::not_stored2: // the connected storage error for a blob that does not exist
+            *static_cast<void **>(second) = make_failed_action(static_cast<long>(0x80830008));
+            break;
+        case Inert::list_operation:
+            *static_cast<void **>(first) = make_completed_operation(make_vector_view({}));
+            break;
+        case Inert::offline: { // "the network is not connected", which is the truth
+            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
+            if (known->argument < 1 || known->argument > std::size(arguments))
+                return E_NOTIMPL;
+            *static_cast<void **>(arguments[known->argument - 1]) =
+                make_failed_operation(HRESULT_FROM_WIN32(ERROR_NETWORK_UNREACHABLE));
+            break;
+        }
+        case Inert::action_at: {
+            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
+            if (known->argument < 1 || known->argument > std::size(arguments))
+                return E_NOTIMPL;
+            *static_cast<void **>(arguments[known->argument - 1]) = make_completed_action();
+            break;
+        }
+        case Inert::operation_at: {
+            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
+            if (known->argument < 1 || known->argument > std::size(arguments))
+                return E_NOTIMPL;
+            *static_cast<void **>(arguments[known->argument - 1]) =
+                make_completed_operation(make_placeholder(known->result, inspectable));
+            break;
+        }
         case Inert::operation:
             *static_cast<void **>(first) =
                 make_completed_operation(make_placeholder(known->result, inspectable));
             break;
         case Inert::action:
             *static_cast<void **>(first) = make_completed_action();
+            break;
+        case Inert::one32:
+            *static_cast<std::uint32_t *>(first) = 1;
+            break;
+        case Inert::one64:
+            *static_cast<std::uint64_t *>(first) = 1;
+            break;
+        case Inert::string:
+            return WindowsCreateString(known->result, static_cast<UINT32>(wcslen(known->result)),
+                                       static_cast<HSTRING *>(first));
+        case Inert::shared:
+            *static_cast<void **>(first) = shared_placeholder(known->result);
+            break;
+        case Inert::shared_list:
+            *static_cast<void **>(first) =
+                make_vector_view({static_cast<IInspectable *>(shared_placeholder(known->result))});
+            break;
+        case Inert::empty_list:
+            *static_cast<void **>(first) = make_vector_view({});
+            break;
+        case Inert::empty_list2:
+            *static_cast<void **>(second) = make_vector_view({});
             break;
         case Inert::one_item:
             *static_cast<void **>(first) = make_vector_view(
@@ -157,7 +225,7 @@ long unknown_method(const wchar_t *type, const char *iid, unsigned method, void 
                     void *second, void *caller) {
     const bool event = looks_like_event_add(first, second);
     std::fprintf(stderr,
-                 "xscarlet: unimplemented WinRT call %ls {%s} method %u from image+0x%llx%s\n",
+                 "[Runtime] unimplemented WinRT call %ls {%s} method %u from image+0x%llx%s\n",
                  type, iid, method, static_cast<unsigned long long>(detail::guest_offset(caller)),
                  event ? " (arguments look like an event registration)" : "");
     std::fflush(stderr);
@@ -170,6 +238,17 @@ long unknown_method(const wchar_t *type, const char *iid, unsigned method, void 
     return E_NOTIMPL;
 }
 
+void *shared_placeholder(const wchar_t *name) {
+    static std::mutex mutex;
+    static std::map<std::wstring, Placeholder *> objects;
+    const std::lock_guard lock(mutex);
+    auto &object = objects[name];
+    if (!object)
+        object = static_cast<Placeholder *>(make_placeholder(name, inspectable));
+    ++object->references;
+    return object;
+}
+
 long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) {
     *object = nullptr;
     if (iid == marshal)
@@ -179,7 +258,7 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
 }
 
 void *make_placeholder(const wchar_t *name, const GUID &iid) {
-    std::fprintf(stderr, "xscarlet: placeholder for %ls {%s}\n", name, text(iid).c_str());
+    std::fprintf(stderr, "[Runtime] placeholder for %ls {%s}\n", name, text(iid).c_str());
     std::fflush(stderr);
     return new Placeholder{(iid == activation_factory ? factory_vtable : vtable).data(), 1, name,
                            iid};

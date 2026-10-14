@@ -104,6 +104,11 @@ which also uses a gamepad plugged into the host. The key for each control can
 be changed there. Defaults: left stick WASD, right stick arrows, A Space,
 B Backspace, X Q, Y E, Menu Enter, View Tab.
 
+Each session of the window, and each `exec`, writes everything it prints to
+`logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable. Lines from the window
+start with `[Launcher]`, lines from running a title with `[Runtime]`. That
+file is what to attach when reporting a problem.
+
 Every command that takes an executable also takes the folder of an unpacked
 Xbox One title or its `AppxManifest.xml`, and uses the executable the manifest
 names. Put your own titles in `samples/`, which git ignores.

@@ -43,7 +43,7 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
     if (SUCCEEDED(result))
         *swap_chain =
             static_cast<IDXGISwapChain1 *>(d3d11x::wrap(*swap_chain, d3d11x::Kind::swap_chain));
-    std::fprintf(stderr, "xscarlet: swap chain %ux%u format %u for the title window: 0x%08lx\n",
+    std::fprintf(stderr, "[Runtime] swap chain %ux%u format %u for the title window: 0x%08lx\n",
                  description->Width, description->Height,
                  static_cast<unsigned>(description->Format), static_cast<unsigned long>(result));
     std::fflush(stderr);
@@ -105,7 +105,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *context = nullptr;
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
-        std::fprintf(stderr, "xscarlet: the %s backend cannot render titles yet\n",
+        std::fprintf(stderr, "[Runtime] the %s backend cannot render titles yet\n",
                      std::string(graphics::backend_name(backend)).c_str());
         std::fflush(stderr);
         return DXGI_ERROR_UNSUPPORTED;
@@ -123,7 +123,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         if (SUCCEEDED(result))
             d3d11x::watch_debug_messages(host);
         else
-            std::fprintf(stderr, "xscarlet: no Direct3D debug layer on this host (0x%08lx)\n",
+            std::fprintf(stderr, "[Runtime] no Direct3D debug layer on this host (0x%08lx)\n",
                          static_cast<unsigned long>(result));
     }
     if (FAILED(result))
@@ -134,7 +134,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         result = host->QueryInterface(&latest);
         host->Release();
     }
-    std::fprintf(stderr, "xscarlet: Direct3D 11 device on the host (flags 0x%x): 0x%08lx\n", flags,
+    std::fprintf(stderr, "[Runtime] Direct3D 11 device on the host (flags 0x%x): 0x%08lx\n", flags,
                  static_cast<unsigned long>(result));
     std::fflush(stderr);
     if (FAILED(result)) {

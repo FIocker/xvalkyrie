@@ -9,4 +9,8 @@ namespace xs::runtime::durango::winrt {
 void *make_completed_operation(void *result);
 // The same for IAsyncAction, which has no result.
 void *make_completed_action();
+// An IAsyncAction that has already failed with this HRESULT.
+void *make_failed_action(long error);
+// An IAsyncOperation<T> that has already failed with this HRESULT.
+void *make_failed_operation(long error);
 } // namespace xs::runtime::durango::winrt

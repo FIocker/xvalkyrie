@@ -73,9 +73,9 @@ class Gamepad final : public Object<IGamepad> {
         // once each: that the title reads the gamepad, and that it has seen a button
         static std::atomic<bool> read{false}, pressed{false};
         if (!read.exchange(true))
-            std::fprintf(stderr, "xscarlet: the title reads the gamepad\n");
+            std::fprintf(stderr, "[Runtime] the title reads the gamepad\n");
         if (state.buttons && !pressed.exchange(true))
-            std::fprintf(stderr, "xscarlet: first gamepad button reached the title (0x%x)\n",
+            std::fprintf(stderr, "[Runtime] first gamepad button reached the title (0x%x)\n",
                          state.buttons);
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);

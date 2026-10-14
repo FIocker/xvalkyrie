@@ -76,7 +76,7 @@ void frame_presented(void *host_swap_chain) {
     static std::atomic<long> frames{0};
     const auto frame = ++frames;
     if (frame == 1 || frame == 10 || frame == 100 || frame == 1000) {
-        std::fprintf(stderr, "xscarlet: %ld frame%s presented\n", frame, frame == 1 ? "" : "s");
+        std::fprintf(stderr, "[Runtime] %ld frame%s presented\n", frame, frame == 1 ? "" : "s");
         std::fflush(stderr);
     }
     if (!path)
@@ -88,7 +88,7 @@ void frame_presented(void *host_swap_chain) {
     if (frame != wanted)
         return;
     const bool written = write_bitmap(path, static_cast<IDXGISwapChain *>(host_swap_chain));
-    std::fprintf(stderr, "xscarlet: frame %ld %s %s\n", frame,
+    std::fprintf(stderr, "[Runtime] frame %ld %s %s\n", frame,
                  written ? "written to" : "could not be written to", path);
     std::fflush(stderr);
 }

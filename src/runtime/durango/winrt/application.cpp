@@ -279,7 +279,7 @@ class View : public Class<View, ICoreApplicationView> {
 };
 
 void step(const char *text) {
-    std::fprintf(stderr, "xscarlet: %s\n", text);
+    std::fprintf(stderr, "[Runtime] %s\n", text);
     std::fflush(stderr);
 }
 

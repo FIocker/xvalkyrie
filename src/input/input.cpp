@@ -241,8 +241,9 @@ bool direct_capture_available() { return detail::direct_available(); }
 
 namespace {
 GamepadState read();
-// XS_INPUT_PRESS=<control id>@<seconds>: holds that control for half a second, that long
-// after the first reading. For checking that input reaches a title without a person.
+// XS_INPUT_PRESS=<control id>@<seconds>[,<control id>@<seconds>...]: holds each control
+// for half a second, that long after the first reading. For checking that input reaches a
+// title, and for walking through its menus, without a person.
 GamepadState scripted() {
     using Clock = std::chrono::steady_clock;
     static const char *const script = std::getenv("XS_INPUT_PRESS");
@@ -250,19 +251,24 @@ GamepadState scripted() {
     if (!script)
         return state;
     static const auto start = Clock::now();
-    const std::string_view text = script;
-    const auto at = text.find('@');
-    if (at == std::string_view::npos)
-        return state;
-    const double when = std::atof(std::string(text.substr(at + 1)).c_str());
     const double now = std::chrono::duration<double>(Clock::now() - start).count();
-    if (now < when || now > when + .5)
-        return state;
-    Settings one;
-    for (std::size_t index = 0; index < control_count; ++index)
-        if (text.substr(0, at) == controls[index].id)
-            one.keys[index] = 1;
-    return from_keys(one, [](int key) { return key == 1; });
+    Settings held;
+    std::string_view rest = script;
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        const auto step = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+        const auto at = step.find('@');
+        if (at == std::string_view::npos)
+            continue;
+        const double when = std::atof(std::string(step.substr(at + 1)).c_str());
+        if (now < when || now > when + .5)
+            continue;
+        for (std::size_t index = 0; index < control_count; ++index)
+            if (step.substr(0, at) == controls[index].id)
+                held.keys[index] = 1;
+    }
+    return from_keys(held, [](int key) { return key == 1; });
 }
 } // namespace
 

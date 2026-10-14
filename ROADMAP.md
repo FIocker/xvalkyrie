@@ -43,7 +43,6 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [x] `etwplus.dll` as no-ops
 - [x] `exec --trace`: first call of every import, last calls and C++ exception type on a fault
 - [x] The entry point runs up to the first WinRT class that is missing
-- [ ] Title-local DLLs loaded from the title folder
 - [x] `msvcr110.dll`, `msvcp110.dll`, `vccorlib110.dll` from the host (needs the Visual C++ 2012 redistributable)
 - [x] Activation factories: our classes first, a short list of host namespaces, placeholders for the rest
 - [x] Placeholders that report the class, interface, method number and caller of every call nobody implements
@@ -51,7 +50,16 @@ The test program is an unpacked ERA title kept outside the repository, in
   store license, users, network status, downloadable content, party)
 - [x] `CoreApplication::Run`, `CoreApplicationView`, `CoreWindow` and `CoreDispatcher` with a host window
 - [x] The title's view is created, initialized, loaded, activated and run, up to `D3D11CreateDevice`
-- [ ] A signed-in user and connected storage instead of the inert versions
+- [x] A signed-in user: one `Windows.Xbox.System.User`, the same object everywhere (user
+  list, the gamepad's user, the storage space's user), signed in, not a guest, with an id
+  and the gamer tag "Player"
+- [x] Xbox Live, multiplayer session, presence and chat answer enough for the title to go
+  from its main menu to the next screen; nothing goes online
+- [x] Session logs: everything xscarlet and the title print also goes to
+  `logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable; lines start with `[Launcher]` or
+  `[Runtime]`
+- [ ] Choose the gamer tag in the options
+- [ ] Connected storage that stores: reads say "no such blob", writes succeed and are dropped
 - [x] The title draws inside the xscarlet window (16:9 between the menu and the status
   bar); `exec` still gives it a window of its own
 - [x] Opening a title does not block the window: it is read on a worker thread, with a
@@ -61,7 +69,6 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [x] Finished async operations and actions (`winrt/async.cpp`)
 - [x] `CoreWindow` in the console layout (bounds, dispatcher, activate; the rest unknown)
 - [x] Audio engine: `xaudio2_9.dll` from the host, with the console's creation function
-- [ ] Connected storage (save games): inert for now, nothing is saved
 - [x] The title's window messages are handled on another thread than the title's: moving
   or resizing the window does not stop it, and a busy title does not freeze the window
 - [x] Input (`src/input`): one gamepad for the title, fed by the keyboard or by the host's
@@ -108,9 +115,9 @@ ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
 Filesystem, audio, input and the runtime services.
 
 - [x] XVD/XVC header identification (read-only, layout from third-party research)
-- [ ] Filesystem and storage paths
-- [ ] Audio
-- [ ] Input
+- [ ] Filesystem and storage paths; save games on disk
+- [ ] Audio: the engine starts on the host's XAudio2; menu music does not stop in game
+- [ ] Input: one gamepad from keyboard or XInput works; vibration, more gamepads, mouse
 - [ ] Runtime services (Gaming Runtime, users, app lifecycle)
 - [ ] More test programs, regression tracking
 

@@ -170,3 +170,19 @@ title's calls have shown so far:
   in the title.
 - It also asks the gamepad for a controller interface (`7400624f-...`) and
   reads two properties from the first one; both are answered with nothing.
+
+## The signed-in user
+
+What the title asks of `Windows.Xbox.System.User` once a button is pressed in
+the main menu, by method of its default interface: 9 an object with the
+display info (whose methods 6 and 9 are strings, the gamer tag among them), 10
+a boolean that has to be false and 11 one that has to be true for the title to
+go on (guest, signed in), 15 a string (the user id). The user list comes from
+methods 6 and 9 of the statics, the gamepad gives its user through method 8 of
+`9776ff56-...`, and the storage space through its method 6: the title compares
+these, so they have to be the same object.
+
+After that it creates a `Microsoft.Xbox.Services.XboxLiveContext` for the user,
+sets presence, asks connected storage for a container and a blob, and writes a
+multiplayer session. Those classes come from DLLs shipped with the title; here
+they are inert rows in `winrt/inert.cpp` like the system ones.

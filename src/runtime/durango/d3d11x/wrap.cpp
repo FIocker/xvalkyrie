@@ -62,7 +62,7 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
     if (method.action != Method::forward) {
         if (first_call(*info->layout, in_object, index)) {
             std::fprintf(stderr,
-                         "xscarlet: unimplemented Direct3D call: %s %s %zu from image+0x%llx, "
+                         "[Runtime] unimplemented Direct3D call: %s %s %zu from image+0x%llx, "
                          "arguments %llx %llx %llx\n",
                          info->layout->name, where, position,
                          static_cast<unsigned long long>(detail::guest_offset(caller)),
@@ -73,7 +73,7 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
     }
     if (trace() && first_call(*info->layout, in_object, index)) {
         std::fprintf(stderr,
-                     "xscarlet: Direct3D %s %s %zu -> host slot %u, from image+0x%llx, "
+                     "[Runtime] Direct3D %s %s %zu -> host slot %u, from image+0x%llx, "
                      "arguments %llx %llx %llx %llx\n",
                      info->layout->name, where, position, method.host,
                      static_cast<unsigned long long>(detail::guest_offset(caller)), arguments[0],
@@ -112,7 +112,7 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
     // which is the first argument: show it.
     if (FAILED(static_cast<HRESULT>(result)) && method.fixes[0].type != Fix::none &&
         (method.fixes[0].type == Fix::out_checked || method.fixes[1].type == Fix::out_checked)) {
-        std::fprintf(stderr, "xscarlet: Direct3D %s %s %zu failed: 0x%08lx, from image+0x%llx",
+        std::fprintf(stderr, "[Runtime] Direct3D %s %s %zu failed: 0x%08lx, from image+0x%llx",
                      info->layout->name, where, position, static_cast<unsigned long>(result),
                      static_cast<unsigned long long>(detail::guest_offset(caller)));
         MEMORY_BASIC_INFORMATION memory{};
@@ -170,7 +170,7 @@ HRESULT STDMETHODCALLTYPE query(void *self, REFIID iid, void **object) {
          iid == __uuidof(IDXGIObject)))
         return device_dxgi(info->host, iid, object);
     const auto result = info->host->QueryInterface(iid, object);
-    std::fprintf(stderr, "xscarlet: Direct3D %s asked for interface %08lx-%04x-%04x: 0x%08lx%s\n",
+    std::fprintf(stderr, "[Runtime] Direct3D %s asked for interface %08lx-%04x-%04x: 0x%08lx%s\n",
                  info->layout->name, iid.Data1, iid.Data2, iid.Data3,
                  static_cast<unsigned long>(result),
                  SUCCEEDED(result) ? " (the host's object, desktop layout)" : "");
@@ -248,7 +248,7 @@ void report_debug_messages(const char *object, const char *where, std::size_t po
         messages->GetMessage(index, nullptr, &size);
         auto *const message = static_cast<D3D11_MESSAGE *>(std::malloc(size));
         if (message && SUCCEEDED(messages->GetMessage(index, message, &size)))
-            std::fprintf(stderr, "xscarlet: Direct3D debug layer after %s %s %zu: %.*s\n", object,
+            std::fprintf(stderr, "[Runtime] Direct3D debug layer after %s %s %zu: %.*s\n", object,
                          where, position, static_cast<int>(message->DescriptionByteLength),
                          message->pDescription);
         std::free(message);

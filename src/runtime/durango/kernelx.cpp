@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <shlwapi.h>
 #include <string>
 #include <windows.h>
 
@@ -24,7 +25,7 @@ void WINAPI xmem_free(void *address, ULONGLONG) {
 HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
     const auto module = LoadLibraryExW(name, file, flags);
     const auto error = GetLastError();
-    std::fprintf(stderr, "xscarlet: LoadLibraryEx(%ls) -> %p\n", name ? name : L"(null)",
+    std::fprintf(stderr, "[Runtime] LoadLibraryEx(%ls) -> %p\n", name ? name : L"(null)",
                  static_cast<void *>(module));
     std::fflush(stderr);
     SetLastError(error);
@@ -39,7 +40,7 @@ HRESULT __cdecl create_xaudio2(void **engine, UINT32, UINT32, void *) {
     const auto create =
         library ? reinterpret_cast<Create>(GetProcAddress(library, "XAudio2Create")) : nullptr;
     const auto result = create ? create(engine, 0, 1) : E_NOTIMPL;
-    std::fprintf(stderr, "xscarlet: XAudio2 engine on the host: 0x%08lx\n",
+    std::fprintf(stderr, "[Runtime] XAudio2 engine on the host: 0x%08lx\n",
                  static_cast<unsigned long>(result));
     std::fflush(stderr);
     return result;
@@ -51,16 +52,42 @@ FARPROC WINAPI get_proc_address(HMODULE module, const char *name) {
     const auto function = GetProcAddress(module, name);
     const auto error = GetLastError();
     const bool ordinal = reinterpret_cast<std::uintptr_t>(name) < 0x10000;
-    std::fprintf(stderr, "xscarlet: GetProcAddress(%s%s) -> %p\n", ordinal ? "#" : name,
+    std::fprintf(stderr, "[Runtime] GetProcAddress(%s%s) -> %p\n", ordinal ? "#" : name,
                  ordinal ? std::to_string(reinterpret_cast<std::uintptr_t>(name)).c_str() : "",
                  reinterpret_cast<void *>(function));
     std::fflush(stderr);
     SetLastError(error);
     return function;
 }
+// Music is streamed from one file per track, so the files a title opens tell which track it
+// starts and when. Worth a line each: there are few of them.
+void note_music(const wchar_t *name, HANDLE file) {
+    if (!name || !StrStrIW(name, L".binka"))
+        return;
+    const auto error = GetLastError();
+    std::fprintf(stderr, "[Runtime] music: opens %ls%s\n", name,
+                 file == INVALID_HANDLE_VALUE ? " (failed)" : "");
+    std::fflush(stderr);
+    SetLastError(error);
+}
+HANDLE WINAPI create_file_w(const wchar_t *name, DWORD access, DWORD share,
+                            SECURITY_ATTRIBUTES *security, DWORD creation, DWORD flags,
+                            HANDLE model) {
+    const auto file = CreateFileW(name, access, share, security, creation, flags, model);
+    note_music(name, file);
+    return file;
+}
+HANDLE WINAPI create_file2(const wchar_t *name, DWORD access, DWORD share, DWORD creation,
+                           CREATEFILE2_EXTENDED_PARAMETERS *parameters) {
+    const auto file = CreateFile2(name, access, share, creation, parameters);
+    note_music(name, file);
+    return file;
+}
 } // namespace
 
 void install_kernelx(Registry &registry) {
+    registry.add("kernelx.dll", "CreateFileW", reinterpret_cast<void *>(&create_file_w));
+    registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
     for (const auto *name : {"XMemAllocDefault", "XMemAlloc"})

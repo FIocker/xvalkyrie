@@ -89,7 +89,7 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
                             ->CreateTexture2D(&host, initial, texture ? &created : nullptr);
     if (FAILED(result)) {
         std::fprintf(stderr,
-                     "xscarlet: CreateTexture2D %ux%u mips %u array %u format %u usage %u bind "
+                     "[Runtime] CreateTexture2D %ux%u mips %u array %u format %u usage %u bind "
                      "0x%x cpu 0x%x misc 0x%x: 0x%08lx\n",
                      host.Width, host.Height, host.MipLevels, host.ArraySize,
                      static_cast<unsigned>(host.Format), static_cast<unsigned>(host.Usage),
@@ -148,7 +148,7 @@ HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
         window->show();
         static std::atomic<int> frames{0};
         if (++frames == 120) { // once it has had time to appear
-            std::fprintf(stderr, "xscarlet: title surface %s\n", window->describe().c_str());
+            std::fprintf(stderr, "[Runtime] title surface %s\n", window->describe().c_str());
             std::fflush(stderr);
         }
     }
