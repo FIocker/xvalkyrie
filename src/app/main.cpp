@@ -71,8 +71,7 @@ int main(int argc, char **argv) {
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
         if (argc == 1 || first == "exec" || (argc == 2 && first.native()[0] != '-')) {
             try {
-                const auto log =
-                    xs::host::start_session_log(xs::host::executable_directory() / "logs");
+                const auto log = xs::host::start_session_log(xs::config_directory() / "logs");
                 std::cerr << "[Launcher] XScarlet " << xs::version << ", log " << text(log)
                           << std::endl;
             } catch (const std::exception &e) {
@@ -171,7 +170,16 @@ int main(int argc, char **argv) {
             std::cerr << usage;
             return 2;
         }
+        if (!std::filesystem::exists(xs::config_file())) {
+            try {
+                xs::save_input_settings(); // create config.ini, migrating old settings.json
+            } catch (const std::exception &e) {
+                std::cerr << "[Launcher] could not create config.ini: " << e.what() << '\n';
+            }
+        }
         xs::DesktopHooks hooks;
+        hooks.libraries = xs::load_library_settings();
+        hooks.libraries_changed = xs::save_library_settings;
         hooks.load = [](const std::filesystem::path &path) {
             std::cerr << "[Launcher] opening " << text(path) << std::endl;
             auto title = xs::launch_title(path);

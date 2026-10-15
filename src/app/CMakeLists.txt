@@ -1,4 +1,4 @@
-add_library(xs_launch launch.cpp config.cpp)
+add_library(xs_launch launch.cpp config.cpp library.cpp)
 target_link_libraries(xs_launch PUBLIC xs_input PRIVATE xs_options xs_host xs_appx xs_pe xs_compat xs_xvd xs_loader xs_runtime)
 add_executable(xscarlet main.cpp)
 target_link_libraries(xscarlet PRIVATE xs_graphics xs_options xs_version xs_launch xs_frontend xs_appx xs_pe xs_host xs_game_config xs_compat xs_xvd xs_loader xs_runtime)

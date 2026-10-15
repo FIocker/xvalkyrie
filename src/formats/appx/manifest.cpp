@@ -43,10 +43,26 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
     if (applications.empty())
         throw std::runtime_error("Package manifest has no applications");
     const auto prerequisites = root.child("Prerequisites");
+    auto logo = text(root.child("Properties").child("Logo"));
+    if (logo.is_null()) {
+        for (auto application : root.child("Applications").children("Application")) {
+            for (auto child : application.children()) {
+                const auto square = child.attribute("Square150x150Logo");
+                const auto small = child.attribute("Square44x44Logo");
+                if (square || small) {
+                    logo = square ? json(square.value()) : json(small.value());
+                    break;
+                }
+            }
+            if (!logo.is_null())
+                break;
+        }
+    }
     return {{"name", attribute(identity, "Name")},
             {"version", attribute(identity, "Version")},
             {"architecture", attribute(identity, "ProcessorArchitecture")},
             {"display_name", text(root.child("Properties").child("DisplayName"))},
+            {"logo", std::move(logo)},
             {"os_name", text(prerequisites.child("mx:OSName"))},
             {"environment", text(prerequisites.child("mx:ApplicationEnvironment"))},
             {"applications", std::move(applications)}};

@@ -1,4 +1,5 @@
 #pragma once
+#include "app/config.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -21,6 +22,8 @@ struct DesktopHooks {
     // The input settings were changed in Options > Input and are already in effect; this
     // is where they get saved. May throw.
     std::function<void()> input_changed;
+    LibrarySettings libraries;
+    std::function<void(const LibrarySettings &)> libraries_changed;
 };
 // Opens the main window, loading `initial` unless it is empty, and returns once it is closed.
 // The result is the process exit code: that of the last title run, 1 if the last file opened

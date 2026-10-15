@@ -34,5 +34,7 @@ licensed and the license asks for this notice to be kept:
 ## Libraries
 
 Fetched by CMake at configure time, each under its own license: GLFW,
-Dear ImGui, Native File Dialog Extended, spdlog, fmt, nlohmann/json, pugixml
-and Catch2.
+Dear ImGui, Native File Dialog Extended, stb_image (logo decoding), spdlog, fmt,
+nlohmann/json, pugixml and Catch2.
+`stb_image` is fetched from [nothings/stb](https://github.com/nothings/stb)
+at commit `5736b15f7ea0ffb08dd38af21067c314d6a3aae9` (MIT/public domain).

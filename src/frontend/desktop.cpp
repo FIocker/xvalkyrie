@@ -1,7 +1,9 @@
 #include "frontend/desktop.hpp"
 #include "app/launch.hpp"
+#include "app/library.hpp"
 #include "app/version.hpp"
 #include "frontend/file_dialog.hpp"
+#include "frontend/logo.hpp"
 #include "input/input.hpp"
 #include <GLFW/glfw3.h>
 #ifdef _WIN32
@@ -162,7 +164,7 @@ void *native_window([[maybe_unused]] GLFWwindow *window) {
 class Desktop {
   public:
     Desktop(GLFWwindow *window, const Interface &ui, const DesktopHooks &hooks)
-        : window_(window), ui_(ui), hooks_(hooks) {
+        : window_(window), ui_(ui), hooks_(hooks), libraries_(hooks.libraries) {
         glfwSetWindowUserPointer(window, this);
         glfwSetDropCallback(window, [](GLFWwindow *target, int count, const char **paths) {
             if (count > 0) {
@@ -171,6 +173,7 @@ class Desktop {
                     std::filesystem::path(std::u8string(text.begin(), text.end()));
             }
         });
+        refresh_library();
     }
     ~Desktop() {
         // A guest that is still running cannot be stopped; it ends with the process.
@@ -193,7 +196,9 @@ class Desktop {
             input::window_key(code, pressed);
     }
     // something on screen moves without input: the loading bar
-    bool animating() const { return loading_.valid() || (guest_ && !showing()); }
+    bool animating() const {
+        return loading_.valid() || discovery_.valid() || (guest_ && !showing());
+    }
     // the native dialog is modal: the window stays open until it is dismissed
     bool dialog_open() const { return dialog_.valid(); }
 
@@ -206,6 +211,10 @@ class Desktop {
         outcome_.clear();
         title_.reset();
         name_ = utf8(path.filename());
+        if (const auto it = std::find_if(titles_.begin(), titles_.end(),
+                                         [&](const auto &title) { return title.path == path; });
+            it != titles_.end())
+            name_ = it->name;
         glfwSetWindowTitle(window_, ("XScarlet - " + name_).c_str());
         path_ = path;
         loading_ = std::async(std::launch::async, hooks_.load, path);
@@ -242,6 +251,7 @@ class Desktop {
             glfwSetWindowShouldClose(window_, true);
         menu();
         input_options();
+        library_options();
         status_bar();
         content();
         about();
@@ -249,11 +259,38 @@ class Desktop {
 
   private:
     bool busy() const { return guest_ || dialog_.valid() || loading_.valid(); }
+    enum class Dialog { file, folder, add_library, replace_library };
     // the title has frames on screen, in the area left for it
     bool showing() const { return guest_ && hooks_.showing && hooks_.showing(); }
     void pick() {
-        if (!busy())
+        if (!busy()) {
+            dialog_kind_ = Dialog::file;
             dialog_ = pick_title_file(window_);
+        }
+    }
+    void pick_folder(Dialog kind, std::size_t index = 0) {
+        if (!busy()) {
+            dialog_kind_ = kind;
+            replace_index_ = index;
+            dialog_ = pick_title_folder(window_);
+        }
+    }
+    void refresh_library() {
+        if (discovery_.valid()) {
+            refresh_pending_ = true;
+            return;
+        }
+        discovery_ = std::async(std::launch::async, discover_library, libraries_.directories);
+    }
+    void save_libraries() {
+        try {
+            if (hooks_.libraries_changed)
+                hooks_.libraries_changed(libraries_);
+            library_notice_.clear();
+        } catch (const std::exception &e) {
+            library_notice_ = std::string("Not saved: ") + e.what();
+        }
+        refresh_library();
     }
     void close_title() {
         title_.reset();
@@ -265,10 +302,37 @@ class Desktop {
         if (dialog_.valid() &&
             dialog_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             try {
-                if (const auto path = dialog_.get(); !path.empty())
-                    open(path);
+                const auto path = dialog_.get();
+                if (!path.empty()) {
+                    if (dialog_kind_ == Dialog::file || dialog_kind_ == Dialog::folder) {
+                        open(path);
+                    } else if (std::filesystem::is_directory(path)) {
+                        const auto normalized = std::filesystem::weakly_canonical(path);
+                        if (dialog_kind_ == Dialog::replace_library &&
+                            replace_index_ < libraries_.directories.size())
+                            libraries_.directories[replace_index_] = normalized;
+                        else if (dialog_kind_ == Dialog::add_library &&
+                                 std::find(libraries_.directories.begin(),
+                                           libraries_.directories.end(),
+                                           normalized) == libraries_.directories.end())
+                            libraries_.directories.push_back(normalized);
+                        save_libraries();
+                    }
+                }
             } catch (const std::exception &e) {
-                notice_ = std::string("Open File failed: ") + e.what();
+                notice_ = std::string("Folder dialog failed: ") + e.what();
+            }
+        }
+        if (discovery_.valid() &&
+            discovery_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                titles_ = discovery_.get();
+            } catch (const std::exception &e) {
+                library_notice_ = std::string("Scan failed: ") + e.what();
+            }
+            if (refresh_pending_) {
+                refresh_pending_ = false;
+                refresh_library();
             }
         }
         if (loading_.valid() &&
@@ -299,6 +363,8 @@ class Desktop {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open File...", "Ctrl+O", false, !busy()))
                 pick();
+            if (ImGui::MenuItem("Open Folder...", nullptr, false, !busy()))
+                pick_folder(Dialog::folder);
             if (ImGui::MenuItem("Close", nullptr, false, title_ && !busy()))
                 close_title();
             ImGui::Separator();
@@ -309,6 +375,8 @@ class Desktop {
         if (ImGui::BeginMenu("Options")) {
             if (ImGui::MenuItem("Input..."))
                 input_open_ = true;
+            if (ImGui::MenuItem("Game Libraries..."))
+                library_open_ = true;
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
@@ -401,6 +469,9 @@ class Desktop {
         } else if (guest_) {
             loading_screen("Starting the title");
         } else if (title_) {
+            if (ImGui::SmallButton("Back to library"))
+                close_title();
+            ImGui::Separator();
             ImGui::PushFont(ui_.heading);
             ImGui::TextUnformatted(name_.c_str());
             ImGui::PopFont();
@@ -410,17 +481,153 @@ class Desktop {
             ImGui::Spacing();
             ImGui::TextWrapped("%s", title_->detail.c_str());
         } else {
-            const float line = ImGui::GetTextLineHeightWithSpacing();
-            ImGui::SetCursorPosY((ImGui::GetWindowHeight() - ui_.logo->FontSize - 3 * line) / 2);
-            ImGui::PushFont(ui_.logo);
-            centered("XScarlet");
-            ImGui::PopFont();
-            centered(version);
-            ImGui::Spacing();
-            centered("File > Open File... (Ctrl+O), or drop a title executable or folder here");
+            library_content();
         }
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+    void library_content() {
+        ImGui::PushFont(ui_.heading);
+        ImGui::TextUnformatted("Your games");
+        ImGui::PopFont();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu titles", titles_.size());
+        ImGui::SameLine(ImGui::GetWindowWidth() - 160);
+        if (ImGui::SmallButton("Rescan"))
+            refresh_library();
+        ImGui::SameLine();
+        if (ImGui::SmallButton(libraries_.grid ? "List" : "Grid")) {
+            libraries_.grid = !libraries_.grid;
+            save_libraries();
+        }
+        ImGui::Separator();
+        if (discovery_.valid())
+            ImGui::TextDisabled("Discovering games...");
+        if (!library_notice_.empty())
+            ImGui::TextWrapped("%s", library_notice_.c_str());
+        if (titles_.empty() && !discovery_.valid()) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("No titles found. Add a folder in Options > Game Libraries, "
+                               "or open an unpacked title with File > Open Folder.");
+            return;
+        }
+        const float tile = 178.f;
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        const int columns =
+            libraries_.grid
+                ? std::max(
+                      1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) / (tile + gap)))
+                : 1;
+        if (ImGui::BeginChild("Games", {0, 0})) {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>((titles_.size() + columns - 1) / columns),
+                          (libraries_.grid ? 228.f : 44.f) + gap);
+            while (clipper.Step())
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                    for (int column = 0; column < columns; ++column) {
+                        const auto i = static_cast<std::size_t>(row * columns + column);
+                        if (i >= titles_.size())
+                            break;
+                        const auto &title = titles_[i];
+                        ImGui::PushID(static_cast<int>(i));
+                        const char *platform = title.target == Target::durango ? "Xbox One"
+                                               : title.target == Target::scarlett
+                                                   ? "Series X|S"
+                                                   : "Unknown target";
+                        if (libraries_.grid) {
+                            if (column)
+                                ImGui::SameLine();
+                            ImGui::BeginGroup();
+                            ImGui::BeginChild("tile", {tile, 228}, ImGuiChildFlags_Borders);
+                            const auto &image =
+                                title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
+                            if (image.texture) {
+                                const auto scale =
+                                    std::min(152.f / image.width, 130.f / image.height);
+                                ImGui::Image(static_cast<ImTextureID>(image.texture),
+                                             {image.width * scale, image.height * scale});
+                            } else {
+                                ImGui::Dummy({0, 130});
+                            }
+                            ImGui::TextWrapped("%s", title.name.c_str());
+                            ImGui::TextDisabled("%s%s", platform,
+                                                title.package ? " - package" : "");
+                            ImGui::EndChild();
+                            if (ImGui::IsItemClicked() && !busy())
+                                open(title.path);
+                            ImGui::EndGroup();
+                        } else {
+                            const auto &image =
+                                title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
+                            if (image.texture) {
+                                const auto scale =
+                                    std::min(44.f / image.width, 44.f / image.height);
+                                ImGui::Image(static_cast<ImTextureID>(image.texture),
+                                             {image.width * scale, image.height * scale});
+                            } else {
+                                ImGui::Dummy({44, 44});
+                            }
+                            if (ImGui::IsItemClicked() && !busy())
+                                open(title.path);
+                            ImGui::SameLine();
+                            const auto label = title.name + "  |  " + platform +
+                                               (title.package ? "  |  Package (unsupported)" : "") +
+                                               "  |  " + title.version;
+                            if (ImGui::Selectable(label.c_str(), false, 0, {0, 44}) && !busy())
+                                open(title.path);
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip(
+                                "%s\n%s\n%s", title.name.c_str(), utf8(title.path).c_str(),
+                                title.executable.empty() ? "Package cannot be mounted"
+                                                         : utf8(title.executable).c_str());
+                        ImGui::PopID();
+                    }
+        }
+        ImGui::EndChild();
+    }
+    void library_options() {
+        if (!library_open_)
+            return;
+        ImGui::SetNextWindowSize({620, 360}, ImGuiCond_Appearing);
+        if (!ImGui::Begin("Game Libraries", &library_open_)) {
+            ImGui::End();
+            return;
+        }
+        ImGui::TextWrapped("Choose folders containing unpacked games or XVD/XVC packages. "
+                           "Packages are listed but cannot be launched yet.");
+        if (ImGui::Button("Add folder...", {120, 0}))
+            pick_folder(Dialog::add_library);
+        ImGui::SameLine();
+        if (ImGui::Button("Rescan"))
+            refresh_library();
+        if (ImGui::RadioButton("Grid", libraries_.grid)) {
+            libraries_.grid = true;
+            save_libraries();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("List", !libraries_.grid)) {
+            libraries_.grid = false;
+            save_libraries();
+        }
+        ImGui::Separator();
+        for (std::size_t i = 0; i < libraries_.directories.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TextWrapped("%s", utf8(libraries_.directories[i]).c_str());
+            if (ImGui::SmallButton("Change..."))
+                pick_folder(Dialog::replace_library, i);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) {
+                libraries_.directories.erase(libraries_.directories.begin() +
+                                             static_cast<std::ptrdiff_t>(i));
+                save_libraries();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+        ImGui::End();
     }
     void changed(const input::Settings &settings) {
         input::configure(settings);
@@ -543,7 +750,17 @@ class Desktop {
     std::future<LaunchResult> loading_;
     std::filesystem::path path_; // what loading_ is reading
     std::future<std::filesystem::path> dialog_;
+    Dialog dialog_kind_ = Dialog::file;
+    std::size_t replace_index_ = 0;
     std::filesystem::path dropped_;
+    LibrarySettings libraries_;
+    std::vector<LibraryTitle> titles_;
+    std::future<std::vector<LibraryTitle>> discovery_;
+    bool refresh_pending_ = false;
+    bool library_open_ = false;
+    std::string library_notice_;
+    Logos logos_;
+    LogoImage empty_logo_;
     bool about_requested_ = false;
     bool input_open_ = false;
     std::optional<std::size_t> binding_; // control waiting for a key

@@ -9,4 +9,5 @@ namespace xs {
 // The future yields an empty path if the user cancelled and throws if no dialog could be shown.
 // Call from the thread that owns `owner`.
 std::future<std::filesystem::path> pick_title_file(GLFWwindow *owner);
+std::future<std::filesystem::path> pick_title_folder(GLFWwindow *owner);
 } // namespace xs

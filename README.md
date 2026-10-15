@@ -49,17 +49,20 @@ Series comes after those.
 ## Building
 
 You need CMake 3.25+, a C++20 compiler and Python 3. Dependencies are fetched
-by CMake on the first configure.
+by CMake on the first configure. Both scripts build Release by default; pass
+`Debug` for a debug build and `--test` to run CTest. Set `JOBS` to control
+parallel builds (default: 4).
 
 ### Windows (Visual Studio 2022)
 
+Install the "Desktop development with C++" workload, then from the repository:
+
 ```bat
-git clone https://github.com/sammwyy/xscarlet
-cd xscarlet
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+build.cmd --test
 ```
+
+The executable is `build\win\Release\xscarlet.exe`. Use `build.cmd Debug --test`
+for a debug build.
 
 ### Linux
 
@@ -67,10 +70,11 @@ Linux can build the tools and run the tests, but it cannot execute anything.
 
 ```sh
 sudo apt install build-essential cmake ninja-build python3 xorg-dev libgl-dev libdbus-1-dev
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
+./build.sh --test
 ```
+
+The executable is `build/Release/xscarlet`. Use `./build.sh Debug --test` for a
+debug build. The scripts can also be run from outside the repository directory.
 
 Extra CMake options:
 
@@ -104,7 +108,10 @@ be changed there. Defaults: left stick WASD, right stick arrows, A Space,
 B Backspace, X Q, Y E, Menu Enter, View Tab.
 
 Each session of the window, and each `exec`, writes everything it prints to
-`logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable. Lines from the window
+`logs/yyyy-mm-dd_hh-mm-ss.log` under the per-user `xscarlet` configuration directory
+(`%APPDATA%/xscarlet` on Windows, `$XDG_CONFIG_HOME/xscarlet` or
+`~/.config/xscarlet` on Linux). Controls, game library folders and grid/list
+preference live in `config.ini` there. Lines from the window
 start with `[Launcher]`, lines from running a title with `[Runtime]`. That
 file is what to attach when reporting a problem.
 
@@ -112,7 +119,11 @@ Every command that takes an executable also takes the folder of an unpacked
 Xbox One title or its `AppxManifest.xml`, and uses the executable the manifest
 names. Put your own titles in `samples/`, which git ignores.
 
-The window has a File menu with a native open dialog (Ctrl+O), and you can
+The window has a File menu with native dialogs for files (Ctrl+O) and folders,
+and Options > Game Libraries lets you add, change, remove and rescan game roots.
+The start screen lists discovered unpacked titles with their name and logo (if
+available) in grid or list view. XVD/XVC packages appear in the library but
+cannot be mounted or played yet. You can
 also drop an executable or a title folder on it. A title that can start runs
 inside the window, after a loading screen; otherwise the window says why not. On Linux the dialog comes from
 xdg-desktop-portal. `xscarlet --version` prints the version and commit that

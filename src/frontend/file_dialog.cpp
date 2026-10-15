@@ -45,4 +45,22 @@ std::future<std::filesystem::path> pick_title_file(GLFWwindow *owner) {
         return std::filesystem::path(std::u8string(text.begin(), text.end()));
     });
 }
+std::future<std::filesystem::path> pick_title_folder(GLFWwindow *owner) {
+    nfdwindowhandle_t parent{};
+    NFD_GetNativeWindowFromGLFWWindow(owner, &parent);
+    return std::async(std::launch::async, [parent] {
+        Session session;
+        nfdpickfolderu8args_t args{};
+        args.parentWindow = parent;
+        nfdu8char_t *selected = nullptr;
+        const auto result = NFD_PickFolderU8_With(&selected, &args);
+        if (result == NFD_CANCEL)
+            return std::filesystem::path{};
+        if (result != NFD_OKAY)
+            throw dialog_error();
+        const std::string text = selected;
+        NFD_FreePathU8(selected);
+        return std::filesystem::path(std::u8string(text.begin(), text.end()));
+    });
+}
 } // namespace xs
