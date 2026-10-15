@@ -77,7 +77,6 @@ Extra CMake options:
 | Option | What it does |
 |---|---|
 | `-DXS_VULKAN=ON` | Builds the offscreen Vulkan test (needs the Vulkan SDK) |
-| `-DXS_GRAPHICS_TEST=ON` | Desktop window test on X11 (needs `xdotool`, run under `xvfb-run`) |
 | `-DXS_SANITIZE=ON` | ASan + UBSan on GCC/Clang |
 | `-DBUILD_TESTING=OFF` | Skips the tests |
 

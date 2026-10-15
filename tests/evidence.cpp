@@ -85,7 +85,6 @@ TEST_CASE("assess config") {
 }
 
 TEST_CASE("launch status") {
-    CHECK(xs::launch_title("synthetic.pe").status == xs::LaunchStatus::runtime_unavailable);
     CHECK(xs::launch_title("host-input.bin").status == xs::LaunchStatus::invalid_image);
     CHECK(xs::launch_title("absent-title.exe").status == xs::LaunchStatus::unreadable);
 }

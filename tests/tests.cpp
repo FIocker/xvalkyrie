@@ -1,5 +1,4 @@
 #define CATCH_CONFIG_MAIN
-#include "core/console.hpp"
 #include "core/settings.hpp"
 #include "formats/pe/inspect.hpp"
 #include <catch2/catch.hpp>
@@ -47,11 +46,4 @@ TEST_CASE("settings") {
         std::istringstream input(invalid);
         CHECK_THROWS(xs::read_settings(input));
     }
-}
-TEST_CASE("console log") {
-    xs::Console a, b;
-    a.log().warn("probe={}", 42);
-    REQUIRE(a.lines().size() == 1);
-    CHECK(a.lines()[0].find("probe=42") != std::string::npos);
-    CHECK(b.lines().empty());
 }

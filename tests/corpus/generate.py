@@ -160,4 +160,11 @@ VARIANTS = {
 }
 
 if __name__ == "__main__":
-    Path(sys.argv[1]).write_bytes(VARIANTS[sys.argv[2] if len(sys.argv) > 2 else "directories"]())
+    if len(sys.argv) == 3 and sys.argv[1] == "--all":
+        directory = Path(sys.argv[2])
+        for name, make in VARIANTS.items():
+            path = directory / ("synthetic.pe" if name == "directories" else name + ".pe")
+            path.write_bytes(make())
+    else:
+        Path(sys.argv[1]).write_bytes(
+            VARIANTS[sys.argv[2] if len(sys.argv) > 2 else "directories"]())

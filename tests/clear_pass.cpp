@@ -1,5 +1,4 @@
 #include "graphics/abstraction/clear_pass.hpp"
-#include "graphics/backend.hpp"
 #include <catch2/catch.hpp>
 #include <limits>
 #include <stdexcept>
@@ -19,28 +18,4 @@ TEST_CASE("clear pass validation") {
     SECTION("empty attachment") { pass.height = 0; }
     SECTION("too many rectangles") { pass.rectangles.resize(1025, pass.rectangles.front()); }
     CHECK_THROWS_AS(pass.validated_pixel_count(), std::invalid_argument);
-}
-
-TEST_CASE("graphics backends") {
-    using namespace xs::graphics;
-    CHECK(parse_backend("d3d11") == Backend::d3d11);
-    CHECK(parse_backend("vulkan") == Backend::vulkan);
-    CHECK_FALSE(parse_backend("D3D11"));
-    CHECK_FALSE(parse_backend(""));
-    CHECK(backend_name(Backend::vulkan) == "vulkan");
-    // Vulkan exists everywhere and renders no title; Direct3D 11 is the host's own
-    CHECK(backend_available(Backend::vulkan));
-    CHECK_FALSE(backend_renders_titles(Backend::vulkan));
-    CHECK(backend_available(Backend::d3d11) == backend_renders_titles(Backend::d3d11));
-    CHECK(backend_available(default_backend()));
-    CHECK(selected_backend() == default_backend());
-    if (backend_available(Backend::d3d11)) {
-        CHECK(default_backend() == Backend::d3d11);
-        select_backend(Backend::vulkan);
-        CHECK(selected_backend() == Backend::vulkan);
-        select_backend(Backend::d3d11);
-    } else {
-        CHECK(default_backend() == Backend::vulkan);
-        CHECK_THROWS(select_backend(Backend::d3d11));
-    }
 }

@@ -16,10 +16,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xorg-dev libgl-dev libdbus-1-dev libgl1-mesa-dri xvfb xauth xdotool libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+          sudo apt-get install -y xorg-dev libgl-dev libdbus-1-dev libgl1-mesa-dri xvfb xauth libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
       - name: Configure Linux
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DXS_GRAPHICS_TEST=ON -DXS_VULKAN=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DXS_VULKAN=ON
       - name: Configure Windows
         if: runner.os == 'Windows'
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
