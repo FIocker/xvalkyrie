@@ -487,19 +487,17 @@ class Desktop {
         ImGui::PopStyleVar();
     }
     void library_content() {
-        ImGui::PushFont(ui_.heading);
-        ImGui::TextUnformatted("Your games");
-        ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::TextDisabled("%zu titles", titles_.size());
-        ImGui::SameLine(ImGui::GetWindowWidth() - 160);
-        if (ImGui::SmallButton("Rescan"))
-            refresh_library();
-        ImGui::SameLine();
-        if (ImGui::SmallButton(libraries_.grid ? "List" : "Grid")) {
-            libraries_.grid = !libraries_.grid;
-            save_libraries();
-        }
+        // The library sits on top of the landing screen; keep the original
+        // pixel-font logo visible in the space beneath the translucent panel.
+        const float height = ImGui::GetContentRegionAvail().y;
+        const float panel_height = titles_.empty() && !discovery_.valid()
+                                       ? std::min(170.f, height * .55f)
+                                       : std::max(130.f, height - ui_.logo->FontSize - 48.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, .85f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(.38f, .32f, .32f, .55f));
+        ImGui::BeginChild("LibraryOverlay", {0, panel_height}, ImGuiChildFlags_Borders);
+        ImGui::TextDisabled("LIBRARY  /  %zu TITLES", titles_.size());
         ImGui::Separator();
         if (discovery_.valid())
             ImGui::TextDisabled("Discovering games...");
@@ -509,82 +507,101 @@ class Desktop {
             ImGui::Spacing();
             ImGui::TextWrapped("No titles found. Add a folder in Options > Game Libraries, "
                                "or open an unpacked title with File > Open Folder.");
-            return;
-        }
-        const float tile = 178.f;
-        const float gap = ImGui::GetStyle().ItemSpacing.x;
-        const int columns =
-            libraries_.grid
-                ? std::max(
-                      1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) / (tile + gap)))
-                : 1;
-        if (ImGui::BeginChild("Games", {0, 0})) {
-            ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>((titles_.size() + columns - 1) / columns),
-                          (libraries_.grid ? 228.f : 44.f) + gap);
-            while (clipper.Step())
-                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
-                    for (int column = 0; column < columns; ++column) {
-                        const auto i = static_cast<std::size_t>(row * columns + column);
-                        if (i >= titles_.size())
-                            break;
-                        const auto &title = titles_[i];
-                        ImGui::PushID(static_cast<int>(i));
-                        const char *platform = title.target == Target::durango ? "Xbox One"
-                                               : title.target == Target::scarlett
-                                                   ? "Series X|S"
-                                                   : "Unknown target";
-                        if (libraries_.grid) {
-                            if (column)
+            ImGui::Spacing();
+            ImGui::TextDisabled("File > Open File... (Ctrl+O), or drop a title here");
+        } else {
+            const float tile = 178.f;
+            const float gap = ImGui::GetStyle().ItemSpacing.x;
+            const int columns =
+                libraries_.grid
+                    ? std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) /
+                                                   (tile + gap)))
+                    : 1;
+            if (ImGui::BeginChild("Games", {0, 0}, ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoBackground)) {
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>((titles_.size() + columns - 1) / columns),
+                              (libraries_.grid ? 228.f : 44.f) + gap);
+                while (clipper.Step())
+                    for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                        for (int column = 0; column < columns; ++column) {
+                            const auto i = static_cast<std::size_t>(row * columns + column);
+                            if (i >= titles_.size())
+                                break;
+                            const auto &title = titles_[i];
+                            ImGui::PushID(static_cast<int>(i));
+                            const char *platform = title.target == Target::durango ? "Xbox One"
+                                                   : title.target == Target::scarlett
+                                                       ? "Series X|S"
+                                                       : "Unknown target";
+                            if (libraries_.grid) {
+                                if (column)
+                                    ImGui::SameLine();
+                                ImGui::BeginGroup();
+                                ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                                                      ImVec4(.09f, .09f, .10f, .9f));
+                                ImGui::BeginChild("tile", {tile, 228}, ImGuiChildFlags_Borders);
+                                const auto &image =
+                                    title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
+                                if (image.texture) {
+                                    const auto scale =
+                                        std::min(152.f / image.width, 130.f / image.height);
+                                    ImGui::Image(static_cast<ImTextureID>(image.texture),
+                                                 {image.width * scale, image.height * scale});
+                                } else {
+                                    ImGui::Dummy({0, 130});
+                                }
+                                ImGui::TextWrapped("%s", title.name.c_str());
+                                ImGui::TextDisabled("%s%s", platform,
+                                                    title.package ? " - package" : "");
+                                ImGui::EndChild();
+                                ImGui::PopStyleColor();
+                                if (ImGui::IsItemClicked() && !busy())
+                                    open(title.path);
+                                ImGui::EndGroup();
+                            } else {
+                                const auto &image =
+                                    title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
+                                if (image.texture) {
+                                    const auto scale =
+                                        std::min(44.f / image.width, 44.f / image.height);
+                                    ImGui::Image(static_cast<ImTextureID>(image.texture),
+                                                 {image.width * scale, image.height * scale});
+                                } else {
+                                    ImGui::Dummy({44, 44});
+                                }
+                                if (ImGui::IsItemClicked() && !busy())
+                                    open(title.path);
                                 ImGui::SameLine();
-                            ImGui::BeginGroup();
-                            ImGui::BeginChild("tile", {tile, 228}, ImGuiChildFlags_Borders);
-                            const auto &image =
-                                title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
-                            if (image.texture) {
-                                const auto scale =
-                                    std::min(152.f / image.width, 130.f / image.height);
-                                ImGui::Image(static_cast<ImTextureID>(image.texture),
-                                             {image.width * scale, image.height * scale});
-                            } else {
-                                ImGui::Dummy({0, 130});
+                                const auto label =
+                                    title.name + "  |  " + platform +
+                                    (title.package ? "  |  Package (unsupported)" : "") + "  |  " +
+                                    title.version;
+                                if (ImGui::Selectable(label.c_str(), false, 0, {0, 44}) && !busy())
+                                    open(title.path);
                             }
-                            ImGui::TextWrapped("%s", title.name.c_str());
-                            ImGui::TextDisabled("%s%s", platform,
-                                                title.package ? " - package" : "");
-                            ImGui::EndChild();
-                            if (ImGui::IsItemClicked() && !busy())
-                                open(title.path);
-                            ImGui::EndGroup();
-                        } else {
-                            const auto &image =
-                                title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
-                            if (image.texture) {
-                                const auto scale =
-                                    std::min(44.f / image.width, 44.f / image.height);
-                                ImGui::Image(static_cast<ImTextureID>(image.texture),
-                                             {image.width * scale, image.height * scale});
-                            } else {
-                                ImGui::Dummy({44, 44});
-                            }
-                            if (ImGui::IsItemClicked() && !busy())
-                                open(title.path);
-                            ImGui::SameLine();
-                            const auto label = title.name + "  |  " + platform +
-                                               (title.package ? "  |  Package (unsupported)" : "") +
-                                               "  |  " + title.version;
-                            if (ImGui::Selectable(label.c_str(), false, 0, {0, 44}) && !busy())
-                                open(title.path);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip(
+                                    "%s\n%s\n%s", title.name.c_str(), utf8(title.path).c_str(),
+                                    title.executable.empty() ? "Package cannot be mounted"
+                                                             : utf8(title.executable).c_str());
+                            ImGui::PopID();
                         }
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip(
-                                "%s\n%s\n%s", title.name.c_str(), utf8(title.path).c_str(),
-                                title.executable.empty() ? "Package cannot be mounted"
-                                                         : utf8(title.executable).c_str());
-                        ImGui::PopID();
-                    }
+            }
+            ImGui::EndChild();
         }
         ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
+        const float remaining = ImGui::GetContentRegionAvail().y;
+        ImGui::SetCursorPosY(
+            ImGui::GetCursorPosY() +
+            std::max(0.f,
+                     (remaining - ui_.logo->FontSize - ImGui::GetTextLineHeightWithSpacing()) / 2));
+        ImGui::PushFont(ui_.logo);
+        centered("XScarlet");
+        ImGui::PopFont();
+        centered(version);
     }
     void library_options() {
         if (!library_open_)
@@ -601,13 +618,9 @@ class Desktop {
         ImGui::SameLine();
         if (ImGui::Button("Rescan"))
             refresh_library();
-        if (ImGui::RadioButton("Grid", libraries_.grid)) {
-            libraries_.grid = true;
-            save_libraries();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("List", !libraries_.grid)) {
-            libraries_.grid = false;
+        int layout = libraries_.grid ? 0 : 1;
+        if (ImGui::Combo("Library view", &layout, "Grid\0List\0")) {
+            libraries_.grid = layout == 0;
             save_libraries();
         }
         ImGui::Separator();
