@@ -1,5 +1,5 @@
-#include "app/config.hpp"
-#include "input/input.hpp"
+#include "launcher/config.hpp"
+#include "backends/input/input.hpp"
 #include <catch2/catch.hpp>
 #include <chrono>
 #include <cstdlib>

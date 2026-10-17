@@ -1,7 +1,7 @@
-#include "platform/host/files.hpp"
-#include "platform/host/memory.hpp"
-#include "platform/host/module.hpp"
-#include "platform/host/threading.hpp"
+#include "host/files.hpp"
+#include "host/memory.hpp"
+#include "host/module.hpp"
+#include "host/threading.hpp"
 #include <bit>
 #include <catch2/catch.hpp>
 #include <fstream>

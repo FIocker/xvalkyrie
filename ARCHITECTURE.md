@@ -5,23 +5,56 @@ directory, each with its own `CMakeLists.txt`. There is a single executable,
 `xscarlet`, that runs both Xbox One and Xbox Series X|S titles: it looks at the
 import table of the title and picks the console runtime to use.
 
+Two words are used with one meaning each. The **host** is the machine xscarlet
+runs on (Windows, Linux). A **console** is what the title was built for:
+Xbox One (`durango`) or Xbox Series X|S (`scarlett`).
+
 ```
 src/
-  core/            settings, log, the Target enum (durango, scarlett)
-  platform/        OS wrappers
+  core/            the Target enum (durango, scarlett), log, settings
+  host/            OS wrappers: memory, files, threads, native modules, session log
+    windows/  linux/
   formats/         pe, gdk (MicrosoftGame.config), appx (AppxManifest.xml), xvd
-  compatibility/   import classification, console target detection
+  analysis/        import classification, console target detection
   loader/          image mapping
-  graphics/        host rendering backends
-  input/           the emulated gamepad: capture methods and bindings
-  runtime/
+  backends/        what a title's output and input end up on, per host technology
+    graphics/      backend selection; d3d11/ (Windows), vulkan/ (every host)
+    audio/         wasapi/ (Windows), null/
+    input/         the emulated gamepad; xinput/ (Windows), null/
+    surface/       the window a title presents into; win32/, null/
+  runtime/         the console side: what a title's imports are bound to
     common/        import registry and resolver, guest execution
-    durango/       Xbox One console modules
-    scarlett/      Xbox Series X|S console modules
+    modules/       console modules both consoles have
+    durango/       Xbox One only
+    scarlett/      Xbox Series X|S only
     console.*      picks durango or scarlett for a title
-  frontend/        window
-  app/             CLI and launch logic
+  launcher/        whether a title can start, game library, saved configuration
+  app/             main.cpp: the CLI
+    ui/            the window
+  tools/           developer executables
 ```
+
+### Layers
+
+A directory only includes from the ones above it in that list, with these
+rules on top:
+
+- `backends/` knows nothing about consoles. No `Target`, no console DLL names,
+  no console object layouts.
+- `runtime/` is the only place that knows what a console DLL looks like. It
+  reaches the host through `host/` and `backends/`, never the other way round.
+  The exceptions are the files that are the host side of running a guest and
+  only build there: `runtime/common/windows/` and the Windows-only parts of
+  `runtime/durango` (see "Windows-only code" below).
+- `runtime/durango` and `runtime/scarlett` do not include each other. What
+  both need goes to `runtime/modules`.
+- `launcher/` has no window and prints nothing. `app/ui` uses `launcher`;
+  `launcher` never includes `app`.
+- A file that only builds on one host sits in a subdirectory named after the
+  technology it uses (`win32/`, `wasapi/`, `xinput/`, `d3d11/`, `vulkan/`),
+  or `windows/` / `linux/` when it is the OS as a whole. `null/` is the
+  implementation for hosts that have none. New code picks the one to build
+  in the `CMakeLists.txt` of the directory rather than with `#ifdef`.
 
 ### Shared
 
@@ -29,17 +62,22 @@ Used for every title, whatever console it was built for.
 
 | Directory | Library | What it does |
 |---|---|---|
-| `core` | `xs_core` | Settings, log and `Target` |
-| `platform` | `xs_host` | OS wrappers: memory, files, threads, TLS, native modules |
+| `core` | `xs_core` | `Target`, log and settings |
+| `host` | `xs_host` | OS wrappers: memory, files, threads, TLS, native modules, session log |
 | `formats/pe` | `xs_pe` | PE32+ parser. Takes bytes, returns a JSON report. Never loads anything. |
 | `formats/gdk` | `xs_game_config` | Reads `MicrosoftGame.config` |
 | `formats/appx` | `xs_appx` | Reads `AppxManifest.xml`, which names the executable of an unpacked ERA title |
 | `formats/xvd` | `xs_xvd` | Reads the header of an XVD/XVC package |
-| `compatibility` | `xs_compat` | Classifies imported DLLs and API names, detects the console target |
+| `analysis` | `xs_analysis` | Classifies imported DLLs and API names, detects the console target |
 | `loader` | `xs_loader` | Maps an image in memory: sections, relocations, import slots |
-| `input` | `xs_input` | The emulated gamepad: capture methods, key bindings |
-| `graphics` | `xs_graphics`, `xs_vulkan` | Clear pass description and the offscreen Vulkan test backend |
+| `backends/graphics` | `xs_graphics` | Which backend is selected, and the clear pass description |
+| `backends/graphics/d3d11` | `xs_graphics_d3d11` | The host's Direct3D 11: device creation, frame dump (Windows) |
+| `backends/graphics/vulkan` | `xs_vulkan` | The offscreen Vulkan test backend |
+| `backends/audio` | `xs_audio` | Sound output; so far only muting the process |
+| `backends/input` | `xs_input` | The emulated gamepad: capture methods, key bindings |
+| `backends/surface` | `xs_surface` | `TitleWindow`, the window a title presents into |
 | `runtime/common` | `xs_runtime_common` | Import registry and resolver, and the code that actually runs a guest (Windows) |
+| `runtime/modules` | `xs_runtime_modules` | Console modules with the same interface on both consoles |
 
 ### Per console
 
@@ -50,6 +88,24 @@ Used for every title, whatever console it was built for.
 
 Each one has a single entry point, `install(Registry &)`, that adds its
 modules to the import registry. The Series one is empty.
+
+The two consoles differ less than the two directories suggest. There are
+three kinds of console module:
+
+- ERA / XDK only, which is Xbox One only: `kernelx.dll`, `d3d11_x.dll`, the
+  WinRT classes, `etwplus.dll`. These live in `runtime/durango`.
+- The same interface on both consoles under two names (`xg_x.dll` /
+  `xg_xs.dll`, later `d3d12_x.dll` / `d3d12_xs.dll` and the Gaming Runtime).
+  These live in `runtime/modules`, with an `install_*(Registry &, name)` that
+  each console calls with the name the DLL has there. Where the two consoles
+  differ inside such a module, it takes the `Target`.
+- Series only: `runtime/scarlett`.
+
+`runtime/modules` so far:
+
+- `xg.cpp`: `xg_x.dll`, which tells titles how a texture is laid out in
+  memory. Installed for Xbox One only until the Series one has been checked
+  against a title.
 
 `runtime/durango` so far:
 
@@ -69,29 +125,47 @@ modules to the import registry. The Series one is empty.
 - `winrt/application.cpp`: real classes, written with WRL against the public
   Windows SDK headers: `CoreApplication`, `CoreApplicationView`, `CoreWindow`
   and `CoreDispatcher`. `CoreApplication::Run` drives the title's view on the
-  calling thread, and the window is a `TitleWindow` from `runtime/common`.
+  calling thread, and the window is a `TitleWindow` from `backends/surface`.
 
 ### Executable
 
 | Directory | Library | What it does |
 |---|---|---|
 | `runtime` | `xs_runtime` | `console_registry(Target)`: the registry of one console |
-| `frontend` | `xs_frontend` | GLFW + ImGui main window, native file dialog |
-| `app` | `xscarlet` | CLI and launch logic |
+| `launcher` | `xs_launcher` | `launch_title`, the game library, `config.ini` |
+| `app/ui` | `xs_ui` | GLFW + ImGui main window, native file dialog |
+| `app` | `xscarlet` | CLI |
 
 ### Where new code goes
 
-- Works the same on both consoles (the D3D12 to Vulkan translation, audio
-  output, input, file access): a shared library, next to `graphics`.
-- A console DLL (`d3d12_x.dll`, `d3d12_xs.dll`): its exports go in that
-  console's runtime and call into the shared libraries.
-- A module both consoles have with the same interface: register it from
-  `console_registry` in `runtime/console.cpp` so that both get it.
+- A new way to produce pictures, sound or input on a host (Vulkan, Direct3D
+  12, another audio API): `backends/<kind>/<technology>/`.
+- Works the same on both consoles and is not a console DLL (a translation
+  layer, file access): a shared library next to `loader`, or under `backends/`
+  if it is about the host.
+- A console DLL only one console has: that console's runtime.
+- A console DLL both have: `runtime/modules`, installed by each console.
 - Console runtimes do not include each other.
+
+### Windows-only code
+
+Titles are Windows programs, and today a title only runs on Windows, where
+most of what it imports is handed to the real system DLLs. That is why these
+are full of Windows headers and are only built there:
+
+- `runtime/common/windows/`: running the guest, and the COM forwarder.
+- `runtime/durango/winrt/` and `runtime/durango/d3d11x/`: they give the title
+  host COM objects, wrapped or as they are.
+
+The line through Direct3D is drawn at the API, not below it: `d3d11x` turns
+console Direct3D 11.X calls into desktop Direct3D 11 calls on an
+`ID3D11Device`, and `backends/graphics/d3d11` is where that device comes from.
+A backend for another host is therefore something that provides Direct3D 11
+(or 12) interfaces there, not a second copy of `d3d11x`.
 
 ## Target detection
 
-`compat::import_profile` classifies every imported DLL with the tables of
+`analysis::import_profile` classifies every imported DLL with the tables of
 Microsoft's `xbdepends` tool. `d3d12_x.dll`, `dxcompiler_x.dll`, `xg_x.dll`
 and the ERA modules `kernelx.dll`, `d3d11_x.dll` and `etwplus.dll` mean Xbox
 One (`Target::durango`). The last two are not in the `xbdepends` tables, which
@@ -159,7 +233,7 @@ nothing to pump for that reason.
 
 ## Input
 
-`src/input` is the one place a console runtime asks what the gamepad reads
+`src/backends/input` is the one place a console runtime asks what the gamepad reads
 (`input::poll()`), and it does not depend on the window or on the runtime.
 Where the reading comes from is the capture method:
 
@@ -173,7 +247,7 @@ Where the reading comes from is the capture method:
 
 Bindings are Windows virtual-key codes on every host. Options > Input in the
 window changes the method and the bindings, which apply at once and are saved
-by `app/config` to `settings.json` in the per-user configuration folder.
+by `launcher/config` to `config.ini` in the per-user configuration folder.
 `runtime/durango/winrt/gamepad.cpp` is the console side: one
 `Windows.Xbox.Input.Gamepad`, always connected, whose raw reading is
 `input::poll()`.
@@ -206,7 +280,7 @@ isolation of any kind.
 
 ## Graphics
 
-`graphics/backend` names the two backends a console Direct3D module can sit on
+`backends/graphics/backend` names the two backends a console Direct3D module can sit on
 and holds the one selected for the process (`exec --backend`):
 
 - `d3d11`, the host's Direct3D 11. Windows only, default there.
@@ -234,7 +308,8 @@ layout, so the title never gets a host object:
 - The device context is special: titles call most of its methods through
   function pointers stored inside the object, not through the vtable, so the
   context object carries that table too.
-- `device.cpp`: `D3D11CreateDevice` and the way to the swap chain. The DXGI
+- `device.cpp`: `D3D11CreateDevice` and the way to the swap chain. The host
+  device itself is created by `backends/graphics/d3d11`. The DXGI
   device, adapter and factory are the same as on the desktop and go through
   a `Forwarder` (`runtime/common/windows/com_forward`), a COM object that
   sends every method to the host except the ones it is told to answer;
@@ -252,15 +327,15 @@ first call of every Direct3D method with its arguments and caller,
 messages after the call that caused them, `XS_FRAME_DUMP=file.bmp` (with
 `XS_FRAME_DUMP_AT=n`) writes the n-th presented frame to a file.
 
-`runtime/durango/xg.cpp` is `xg_x.dll`, which tells titles how a texture is
+`runtime/modules/xg.cpp` is `xg_x.dll`, which tells titles how a texture is
 laid out in memory. There is one layout here, the plain one.
 
-The window (`xs_frontend`) uses OpenGL through GLFW for its own interface and
-gets everything else from `app` as callbacks, so it does not link against the
-runtime. Opening a title reads and checks it on a worker thread while the
+The window (`xs_ui`) uses OpenGL through GLFW for its own interface and
+gets everything else from `app/main.cpp` as callbacks, so it does not link
+against the runtime. Opening a title reads and checks it on a worker thread while the
 window shows a loading screen, then runs it on a guest thread. The title does
-not draw through the frontend: `runtime/common/window` creates a child window
-(the title surface) inside the main one, the frontend tells it which rectangle
+not draw through the interface: `backends/surface` creates a child window
+(the title surface) inside the main one, the interface tells it which rectangle
 is free, and the title's swap chain presents straight into it. The surface is
 shown at the title's first frame, which is also when the loading screen goes
 away. With `exec` there is no main window and the title gets one of its own.

@@ -1,5 +1,5 @@
 #pragma once
-#include "platform/host/memory.hpp"
+#include "host/memory.hpp"
 #include <cstdint>
 #include <functional>
 #include <nlohmann/json.hpp>

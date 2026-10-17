@@ -1,13 +1,13 @@
-#include "app/launch.hpp"
-#include "compatibility/assessment.hpp"
+#include "analysis/assessment.hpp"
 #include "formats/gdk/game_config.hpp"
+#include "launcher/launch.hpp"
 #include <catch2/catch.hpp>
 #include <nlohmann/json.hpp>
 
 namespace {
 using json = nlohmann::json;
-using xs::compat::assess;
-using xs::compat::compare_declaration;
+using xs::analysis::assess;
+using xs::analysis::compare_declaration;
 json config(std::string_view text) {
     return xs::gdk::inspect_config(
         {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});

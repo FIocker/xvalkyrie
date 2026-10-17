@@ -1,5 +1,6 @@
 #include "runtime/durango/d3d11x/layout.hpp"
-#include "runtime/common/window.hpp"
+#include "backends/graphics/d3d11/host.hpp"
+#include "backends/surface/surface.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <atomic>
 #include <cstdint>
@@ -142,7 +143,7 @@ Layout device() {
 
 HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
     auto *const host = static_cast<IDXGISwapChain *>(unwrap(self));
-    frame_presented(host);
+    graphics::d3d11::frame_presented(host);
     const auto result = host->Present(interval, flags);
     if (auto *const window = winrt::current_title_window()) {
         window->show();

@@ -1,5 +1,5 @@
 #include "runtime/durango/winrt/application.hpp"
-#include "runtime/common/window.hpp"
+#include "backends/surface/surface.hpp"
 #include "runtime/durango/winrt/object.hpp"
 #include <atomic>
 #include <cstdint>
@@ -14,6 +14,7 @@
 #include <wrl/wrappers/corewrappers.h>
 
 namespace xs::runtime::durango::winrt {
+using xs::surface::TitleWindow;
 namespace {
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::EventSource;

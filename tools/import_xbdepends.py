@@ -1,4 +1,4 @@
-"""Regenerates src/compatibility/xbdepends_data.hpp from the xbdepends sample (MIT)
+"""Regenerates src/analysis/xbdepends_data.hpp from the xbdepends sample (MIT)
 in microsoft/Xbox-GDK-Samples. Files are fetched at a pinned commit and hash checked.
 
 usage: import_xbdepends.py OUTPUT [DIR_WITH_LOCAL_COPIES]
@@ -52,7 +52,7 @@ def main():
         "#include <array>",
         "#include <string_view>",
         "",
-        "namespace xs::compat::data {",
+        "namespace xs::analysis::data {",
     ]
     for upstream, (name, lower) in TABLES.items():
         body = re.search(r"const char\* " + upstream + r"\[\] =\s*\{(.*?)\};", text, re.S)
@@ -63,7 +63,7 @@ def main():
         lines.append(f"inline constexpr std::array<std::string_view, {len(values)}> {name}{{")
         lines += [f'    "{v}",' for v in values]
         lines.append("};")
-    lines.append("} // namespace xs::compat::data")
+    lines.append("} // namespace xs::analysis::data")
     out.write_text("\n".join(lines) + "\n")
 
 

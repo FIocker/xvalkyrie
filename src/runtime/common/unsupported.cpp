@@ -1,11 +1,7 @@
 #include "runtime/common/runtime.hpp"
-#include "runtime/common/window.hpp"
 #include <stdexcept>
 
 namespace xs::runtime {
-void set_title_parent(void *) {}
-void set_title_area(int, int, int, int) {}
-bool title_window_shown() { return false; }
 bool execution_supported() { return false; }
 std::uint64_t detail::guest_offset(const void *) { return 0; }
 void *detail::runtime_override(std::string_view) { return nullptr; }

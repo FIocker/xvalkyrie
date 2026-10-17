@@ -1,6 +1,6 @@
-#include "app/launch.hpp"
-#include "app/library.hpp"
 #include "formats/appx/manifest.hpp"
+#include "launcher/launch.hpp"
+#include "launcher/library.hpp"
 #include <algorithm>
 #include <catch2/catch.hpp>
 #include <chrono>

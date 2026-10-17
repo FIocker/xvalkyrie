@@ -1,7 +1,7 @@
 add_library(xs_host_test_module MODULE host_test_module.cpp)
 add_executable(xs_tests tests.cpp pe_directories.cpp host_runtime.cpp evidence.cpp clear_pass.cpp
   import_profile.cpp loader_image.cpp xvd.cpp runtime.cpp title.cpp input.cpp config.cpp)
-target_link_libraries(xs_tests PRIVATE xs_input xs_runtime_durango xs_options xs_launch xs_appx xs_pe xs_core xs_catch xs_host xs_game_config xs_compat xs_graphics xs_xvd xs_loader xs_runtime)
+target_link_libraries(xs_tests PRIVATE xs_input xs_runtime_durango xs_runtime_modules xs_options xs_launcher xs_appx xs_pe xs_core xs_catch xs_host xs_game_config xs_analysis xs_graphics xs_xvd xs_loader xs_runtime)
 add_dependencies(xs_tests xs_host_test_module)
 target_compile_definitions(xs_tests PRIVATE "XS_TEST_MODULE=\"$<TARGET_FILE:xs_host_test_module>\"")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/host-input.bin" CONTENT "host runtime")

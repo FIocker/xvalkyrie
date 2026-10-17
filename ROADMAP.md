@@ -71,7 +71,7 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [x] Audio engine: `xaudio2_9.dll` from the host, with the console's creation function
 - [x] The title's window messages are handled on another thread than the title's: moving
   or resizing the window does not stop it, and a busy title does not freeze the window
-- [x] Input (`src/input`): one gamepad for the title, fed by the keyboard or by the host's
+- [x] Input (`src/backends/input`): one gamepad for the title, fed by the keyboard or by the host's
   gamepad. Two capture methods, chosen in Options > Input together with the key bindings:
   from the window's events, or read directly from the system (XInput and the keyboard
   state, Windows only). Saved in the per-user `settings.json`
@@ -91,7 +91,7 @@ Two backends behind the console Direct3D modules, chosen with `--backend`:
 
 ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
 
-- [x] Backend selection (`graphics/backend`)
+- [x] Backend selection (`backends/graphics/backend`)
 - [x] Offscreen Vulkan clear + readback test (host only, not connected to anything)
 - [x] `D3D11CreateDevice` from `d3d11_x.dll` on the host's Direct3D 11
 - [x] Swap chain for the title's `CoreWindow`, created on the host window

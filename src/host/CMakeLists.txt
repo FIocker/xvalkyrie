@@ -1,0 +1,6 @@
+add_library(xs_host STATIC common.cpp session_log.cpp ${xs_host_os}/host.cpp)
+target_include_directories(xs_host PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(xs_host PRIVATE xs_options ${CMAKE_DL_LIBS} PUBLIC Threads::Threads)
+if(WIN32)
+  target_compile_definitions(xs_host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()

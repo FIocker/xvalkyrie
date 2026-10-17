@@ -1,6 +1,7 @@
+#include "backends/audio/audio.hpp"
 #include "formats/pe/inspect.hpp"
+#include "host/files.hpp"
 #include "loader/image.hpp"
-#include "platform/host/files.hpp"
 #include "runtime/common/runtime.hpp"
 #include <algorithm>
 #include <array>
@@ -23,10 +24,6 @@
 // One guest per process, running on its own thread. Same ABI as the host,
 // so an import is just a function pointer.
 namespace xs::runtime {
-namespace detail {
-bool mute_process_audio();
-}
-using detail::mute_process_audio;
 namespace {
 // A DLL shipped with the title, loaded from its folder the same way as the executable.
 struct TitleModule {
@@ -451,7 +448,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         throw std::runtime_error("Unsupported: the image declares delay-load imports");
 
     // XS_MUTE does the same as the option, for runs started from the window
-    if ((execution.mute || std::getenv("XS_MUTE")) && !mute_process_audio())
+    if ((execution.mute || std::getenv("XS_MUTE")) && !audio::mute_process())
         std::fprintf(stderr, "[Runtime] could not mute the audio of this process\n");
 
     Stubs stubs;

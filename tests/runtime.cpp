@@ -1,5 +1,5 @@
 #include "runtime/console.hpp"
-#include "runtime/durango/xg.hpp"
+#include "runtime/modules/xg.hpp"
 #include <catch2/catch.hpp>
 #include <filesystem>
 #include <fstream>
@@ -109,8 +109,8 @@ TEST_CASE("bind plan") {
 }
 
 TEST_CASE("texture layout") {
-    using xs::runtime::durango::format_size;
-    using xs::runtime::durango::texture_bytes;
+    using xs::runtime::modules::format_size;
+    using xs::runtime::modules::texture_bytes;
     CHECK(format_size(28).bytes == 4); // R8G8B8A8_UNORM
     CHECK(format_size(10).bytes == 8); // R16G16B16A16_FLOAT
     CHECK(format_size(45).bytes == 4); // D24_UNORM_S8_UINT

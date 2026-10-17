@@ -48,4 +48,4 @@ jobs:
           cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DXS_SANITIZE=ON
           cmake --build build --parallel 2
           ctest --test-dir build --output-on-failure
-          clang-tidy-18 -p build -checks='-*,clang-analyzer-core.*,bugprone-narrowing-conversions' -warnings-as-errors='*' src/formats/pe/*.cpp src/formats/gdk/*.cpp src/formats/xvd/*.cpp src/loader/*.cpp src/runtime/*.cpp src/runtime/durango/*.cpp src/runtime/scarlett/*.cpp src/compatibility/*.cpp src/core/settings.cpp src/platform/host/runtime.cpp src/platform/linux/runtime.cpp
+          clang-tidy-18 -p build -checks='-*,clang-analyzer-core.*,bugprone-narrowing-conversions' -warnings-as-errors='*' src/formats/pe/*.cpp src/formats/gdk/*.cpp src/formats/xvd/*.cpp src/loader/*.cpp src/runtime/*.cpp src/runtime/durango/*.cpp src/runtime/scarlett/*.cpp src/runtime/modules/*.cpp src/analysis/*.cpp src/core/settings.cpp src/host/common.cpp src/host/linux/host.cpp

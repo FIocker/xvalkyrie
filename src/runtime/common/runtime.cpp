@@ -1,8 +1,8 @@
 #include "runtime/common/runtime.hpp"
-#include "compatibility/modules.hpp"
+#include "analysis/modules.hpp"
 #include "formats/pe/inspect.hpp"
+#include "host/files.hpp"
 #include "loader/image.hpp"
-#include "platform/host/files.hpp"
 #include <algorithm>
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -57,12 +57,12 @@ detail::Binding detail::resolve(const Registry &registry, std::string_view modul
 bool detail::host_policy_allows(std::string_view module, std::string_view symbol) {
     if (symbol.starts_with('#')) // can't check ordinals against the API list
         return false;
-    const auto kind = compat::classify_module(module);
+    const auto kind = analysis::classify_module(module);
     const std::string_view category = kind.category;
     if (category == "crt" || category == "os_crt")
         return true;
     return (category == "api_set" || category == "core_os" || category == "win32_legacy") &&
-           compat::is_game_os_api(symbol);
+           analysis::is_game_os_api(symbol);
 }
 
 bool detail::title_provides(const Registry &registry, const std::filesystem::path &directory,

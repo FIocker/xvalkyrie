@@ -2,7 +2,7 @@
 #include <string_view>
 
 struct IInspectable;
-namespace xs::runtime {
+namespace xs::surface {
 class TitleWindow;
 }
 
@@ -12,5 +12,5 @@ namespace xs::runtime::durango::winrt {
 // with a CoreWindow backed by a host window; Windows.UI.Core.CoreWindow hands that window out.
 IInspectable *application_class(std::wstring_view name);
 // host window of the CoreWindow, null before CoreApplication::Run
-TitleWindow *current_title_window();
+surface::TitleWindow *current_title_window();
 } // namespace xs::runtime::durango::winrt

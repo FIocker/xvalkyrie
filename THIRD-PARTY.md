@@ -2,11 +2,11 @@
 
 ## xbdepends tables (Microsoft, MIT)
 
-`src/compatibility/xbdepends_data.hpp` is generated from the DLL and API name
+`src/analysis/xbdepends_data.hpp` is generated from the DLL and API name
 tables of the `xbdepends` sample in
 [microsoft/Xbox-GDK-Samples](https://github.com/microsoft/Xbox-GDK-Samples)
 (commit `b1e77b6ac10f95b07296025fda171ca2ddc42dbe`). The file name patterns in
-`src/compatibility/modules.cpp` come from the same tool. That sample is MIT
+`src/analysis/modules.cpp` come from the same tool. That sample is MIT
 licensed and the license asks for this notice to be kept:
 
     MIT License

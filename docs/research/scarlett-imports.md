@@ -32,7 +32,7 @@ description of what a title links against.
 ## How XScarlet uses it
 
 `tools/import_xbdepends.py` downloads the three source files at a pinned
-commit, checks their hashes and generates `src/compatibility/xbdepends_data.hpp`.
+commit, checks their hashes and generates `src/analysis/xbdepends_data.hpp`.
 `xscarlet assess` and `xscarlet bind` use those tables, and the runtime uses
 the API list to decide which calls may be forwarded to Windows.
 

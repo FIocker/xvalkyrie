@@ -1,6 +1,6 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/durango/xg.hpp"
+#include "runtime/modules/xg.hpp"
 #include <cstdint>
 #include <initializer_list>
 
@@ -17,7 +17,7 @@ void install(Registry &registry) {
     registry.forward("combase.dll", "combase.dll");
     registry.forward("ws2_32.dll", "ws2_32.dll");
     install_kernelx(registry);
-    install_xg(registry);
+    modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);
 #ifdef _WIN32
     install_d3d11x(registry);

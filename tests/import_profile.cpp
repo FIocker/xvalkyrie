@@ -1,7 +1,7 @@
-#include "app/launch.hpp"
-#include "compatibility/assessment.hpp"
-#include "compatibility/modules.hpp"
+#include "analysis/assessment.hpp"
+#include "analysis/modules.hpp"
 #include "formats/pe/inspect.hpp"
+#include "launcher/launch.hpp"
 #include <catch2/catch.hpp>
 #include <fstream>
 #include <iterator>
@@ -11,7 +11,7 @@
 
 namespace {
 using json = nlohmann::json;
-using xs::compat::classify_module;
+using xs::analysis::classify_module;
 std::vector<std::uint8_t> file(const char *name) {
     std::ifstream input(name, std::ios::binary);
     std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
@@ -22,7 +22,8 @@ json profile_of(std::vector<std::string> modules) {
     auto imports = json::array();
     for (auto &module : modules)
         imports.push_back({{"module", std::move(module)}, {"symbols", json::array()}});
-    return xs::compat::import_profile({{"directory_contents", {{"imports", std::move(imports)}}}});
+    return xs::analysis::import_profile(
+        {{"directory_contents", {{"imports", std::move(imports)}}}});
 }
 } // namespace
 
@@ -44,16 +45,16 @@ TEST_CASE("module classification") {
     // must match the whole name, not a substring
     for (auto name : {"d3d12_xs.dll.bak", "notd3d12_xs.dll", "d3d12_xs", "", "api-ms-win-core.dll"})
         CHECK(classify_module(name).category == "unknown");
-    CHECK(xs::compat::is_game_os_api("VirtualAlloc"));
-    CHECK(xs::compat::is_game_os_api("DStorageGetFactory"));
-    CHECK_FALSE(xs::compat::is_game_os_api("virtualalloc"));
-    CHECK_FALSE(xs::compat::is_game_os_api("WinExec"));
+    CHECK(xs::analysis::is_game_os_api("VirtualAlloc"));
+    CHECK(xs::analysis::is_game_os_api("DStorageGetFactory"));
+    CHECK_FALSE(xs::analysis::is_game_os_api("virtualalloc"));
+    CHECK_FALSE(xs::analysis::is_game_os_api("WinExec"));
 }
 
 TEST_CASE("series template module list") {
     const auto report = xs::pe::inspect(file("scarlett-modules.pe"));
     CHECK(report.at("subsystem") == 2); // Windows GUI, as in the published tool output
-    const auto profile = xs::compat::import_profile(report);
+    const auto profile = xs::analysis::import_profile(report);
     CHECK(profile.at("target_indication") == "scarlett");
     std::map<std::string, int> categories;
     for (const auto &module : profile.at("modules"))
@@ -64,7 +65,7 @@ TEST_CASE("series template module list") {
     REQUIRE(profile.at("findings").size() == 1);
     CHECK(profile["findings"][0]["finding"] == "development-only module");
     CHECK(profile["findings"][0]["names"].size() == 3);
-    const auto assessment = xs::compat::assess(report);
+    const auto assessment = xs::analysis::assess(report);
     CHECK(assessment.at("console_target_verified") == false);
     CHECK(assessment.at("execution_supported") == false);
 }
@@ -75,7 +76,7 @@ TEST_CASE("target detection") {
     CHECK(profile_of({"kernelx.dll"})["target_indication"] == "xbox_one"); // ERA
     CHECK(profile_of({"dxgi.dll", "d3d9.dll"})["target_indication"] == "pc");
     CHECK(profile_of({"d3d12_xs.dll", "d3d12_x.dll"})["target_indication"] == "mixed");
-    using xs::compat::console_target;
+    using xs::analysis::console_target;
     CHECK(console_target(profile_of({"d3d12_x.dll"})) == xs::Target::durango);
     CHECK(console_target(profile_of({"xg_xs.dll"})) == xs::Target::scarlett);
     CHECK_FALSE(console_target(profile_of({"D3D12.dll"})));
@@ -93,7 +94,7 @@ TEST_CASE("delay imports") {
     CHECK(delayed[0].at("module") == "dxcompiler_xs.dll");
     CHECK(delayed[0].at("symbols")[0].at("ordinal") == 1);
     CHECK(delayed[1].at("symbols")[0].at("name") == "Probe");
-    const auto assessment = xs::compat::assess(report);
+    const auto assessment = xs::analysis::assess(report);
     const auto &profile = assessment.at("import_profile");
     CHECK(profile.at("target_indication") == "scarlett");
     CHECK(profile.at("modules")[1].at("delay_load") == true);

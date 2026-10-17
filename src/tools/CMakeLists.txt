@@ -1,0 +1,5 @@
+if(XS_VULKAN)
+  add_executable(xscarlet-vk-check vulkan_check.cpp)
+  target_link_libraries(xscarlet-vk-check PRIVATE xs_options xs_vulkan nlohmann_json::nlohmann_json)
+  set_target_properties(xscarlet-vk-check PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+endif()

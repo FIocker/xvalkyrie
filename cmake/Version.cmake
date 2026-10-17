@@ -1,4 +1,4 @@
-# Script mode: writes OUTPUT with the version string shown by the frontend and --version.
+# Script mode: writes OUTPUT with the version string shown by the window and --version.
 # Needs -DSOURCE_DIR, -DOUTPUT and -DVERSION. Runs on every build so the commit stays current.
 set(commit "")
 set(tag "")

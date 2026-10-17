@@ -1,6 +1,7 @@
-#include "graphics/backend.hpp"
+#include "backends/graphics/backend.hpp"
+#include "backends/graphics/d3d11/host.hpp"
+#include "backends/surface/surface.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/common/window.hpp"
 #include "runtime/common/windows/com_forward.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
@@ -114,26 +115,13 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
     const UINT host_flags =
         flags & (D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_BGRA_SUPPORT |
                  D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS);
-    ID3D11Device *host = nullptr;
-    auto result = E_FAIL;
-    if (std::getenv("XS_D3D_DEBUG")) {
-        result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                                   host_flags | D3D11_CREATE_DEVICE_DEBUG, levels, level_count,
-                                   D3D11_SDK_VERSION, &host, level, context);
-        if (SUCCEEDED(result))
-            d3d11x::watch_debug_messages(host);
-        else
-            std::fprintf(stderr, "[Runtime] no Direct3D debug layer on this host (0x%08lx)\n",
-                         static_cast<unsigned long>(result));
-    }
-    if (FAILED(result))
-        result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, host_flags, levels,
-                                   level_count, D3D11_SDK_VERSION, &host, level, context);
     ID3D11Device1 *latest = nullptr;
-    if (SUCCEEDED(result)) {
-        result = host->QueryInterface(&latest);
-        host->Release();
-    }
+    bool debug_layer = false;
+    const auto result =
+        graphics::d3d11::create_device(host_flags, std::getenv("XS_D3D_DEBUG") != nullptr, levels,
+                                       level_count, &latest, level, context, debug_layer);
+    if (debug_layer)
+        d3d11x::watch_debug_messages(latest);
     std::fprintf(stderr, "[Runtime] Direct3D 11 device on the host (flags 0x%x): 0x%08lx\n", flags,
                  static_cast<unsigned long>(result));
     std::fflush(stderr);

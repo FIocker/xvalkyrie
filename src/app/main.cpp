@@ -1,18 +1,18 @@
-#include "app/config.hpp"
-#include "app/launch.hpp"
+#include "analysis/assessment.hpp"
+#include "app/ui/desktop.hpp"
 #include "app/version.hpp"
-#include "compatibility/assessment.hpp"
+#include "backends/graphics/backend.hpp"
+#include "backends/input/input.hpp"
+#include "backends/surface/surface.hpp"
 #include "formats/appx/manifest.hpp"
 #include "formats/gdk/game_config.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
-#include "frontend/desktop.hpp"
-#include "graphics/backend.hpp"
-#include "input/input.hpp"
+#include "host/files.hpp"
+#include "host/session_log.hpp"
+#include "launcher/config.hpp"
+#include "launcher/launch.hpp"
 #include "loader/image.hpp"
-#include "platform/host/files.hpp"
-#include "platform/host/session_log.hpp"
-#include "runtime/common/window.hpp"
 #include "runtime/console.hpp"
 #include <filesystem>
 #include <iostream>
@@ -93,10 +93,10 @@ int main(int argc, char **argv) {
             (argc == 3 || (argc == 7 && std::filesystem::path(argv[3]) == "--config" &&
                            std::filesystem::path(argv[5]) == "--entry"))) {
             const auto pe = inspect_file(argv[2]);
-            auto report = xs::compat::assess(pe);
+            auto report = xs::analysis::assess(pe);
             if (argc == 7) {
                 const auto entry = std::filesystem::path(argv[6]).u8string();
-                report["config_evidence"] = xs::compat::compare_declaration(
+                report["config_evidence"] = xs::analysis::compare_declaration(
                     pe, config_report(argv[4]), std::string(entry.begin(), entry.end()));
             }
             std::cout << report.dump(2) << '\n';
@@ -205,9 +205,9 @@ int main(int argc, char **argv) {
                       << (settings.capture == xs::input::Capture::direct ? "direct" : "window")
                       << " capture, saved to " << text(xs::config_file()) << std::endl;
         };
-        hooks.host = xs::runtime::set_title_parent;
-        hooks.area = xs::runtime::set_title_area;
-        hooks.showing = xs::runtime::title_window_shown;
+        hooks.host = xs::surface::set_title_parent;
+        hooks.area = xs::surface::set_title_area;
+        hooks.showing = xs::surface::title_window_shown;
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);
     } catch (const std::exception &e) {

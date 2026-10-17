@@ -37,6 +37,4 @@ bool kind_of(const GUID &iid, Kind &kind);
 // names the method that just ran. Does nothing without the debug layer.
 void report_debug_messages(const char *object, const char *where, std::size_t position);
 void watch_debug_messages(void *host_device);
-// called with the host swap chain right before each Present
-void frame_presented(void *host_swap_chain);
 } // namespace xs::runtime::durango::d3d11x
