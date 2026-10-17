@@ -38,3 +38,7 @@ Dear ImGui, Native File Dialog Extended, stb_image (logo decoding), spdlog, fmt,
 nlohmann/json, pugixml and Catch2.
 `stb_image` is fetched from [nothings/stb](https://github.com/nothings/stb)
 at commit `5736b15f7ea0ffb08dd38af21067c314d6a3aae9` (MIT/public domain).
+
+The interface font is Roboto Medium (Apache License 2.0, Google), taken from
+`misc/fonts` of Dear ImGui and built into the executable. The logo uses
+ProggyClean (MIT, Tristan Grimmer), Dear ImGui's built-in font.

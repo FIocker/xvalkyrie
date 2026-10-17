@@ -68,6 +68,9 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
                 info.at("version").is_string() ? info.at("version").get<std::string>() : "";
             if (info.at("logo").is_string())
                 title.logo = logo_asset(manifest.parent_path(), info.at("logo").get<std::string>());
+            if (info.at("splash").is_string())
+                title.splash =
+                    logo_asset(manifest.parent_path(), info.at("splash").get<std::string>());
             const auto pe = pe::inspect(host::read_snapshot(file, 256 * 1024 * 1024));
             title.target = analysis::console_target(analysis::import_profile(pe));
             return title;
@@ -100,6 +103,23 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
 
 std::optional<LibraryTitle> discover_title(const std::filesystem::path &path) {
     return inspect(path);
+}
+std::filesystem::path title_splash(const std::filesystem::path &path) {
+    try {
+        const auto directory = std::filesystem::is_directory(path) ? path : path.parent_path();
+        auto manifest = directory / "AppxManifest.xml";
+        if (!std::filesystem::is_regular_file(manifest))
+            manifest = directory / "Mount" / "AppxManifest.xml";
+        if (!std::filesystem::is_regular_file(manifest))
+            return {};
+        const auto info =
+            appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+        return info.at("splash").is_string()
+                   ? logo_asset(manifest.parent_path(), info.at("splash").get<std::string>())
+                   : std::filesystem::path{};
+    } catch (const std::exception &) {
+        return {};
+    }
 }
 std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::path> &roots) {
     std::vector<LibraryTitle> titles;

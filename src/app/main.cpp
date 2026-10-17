@@ -208,6 +208,7 @@ int main(int argc, char **argv) {
         hooks.host = xs::surface::set_title_parent;
         hooks.area = xs::surface::set_title_area;
         hooks.showing = xs::surface::title_window_shown;
+        hooks.frames = xs::graphics::frames_presented;
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);
     } catch (const std::exception &e) {

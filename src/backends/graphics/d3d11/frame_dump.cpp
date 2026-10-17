@@ -1,3 +1,4 @@
+#include "backends/graphics/backend.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include <atomic>
 #include <cstdio>
@@ -75,6 +76,7 @@ void frame_presented(IDXGISwapChain *swap_chain) {
     static const char *const path = std::getenv("XS_FRAME_DUMP");
     static std::atomic<long> frames{0};
     const auto frame = ++frames;
+    frame_counted();
     if (frame == 1 || frame == 10 || frame == 100 || frame == 1000) {
         std::fprintf(stderr, "[Runtime] %ld frame%s presented\n", frame, frame == 1 ? "" : "s");
         std::fflush(stderr);

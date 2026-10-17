@@ -121,9 +121,11 @@ names. Put your own titles in `samples/`, which git ignores.
 
 The window has a File menu with native dialogs for files (Ctrl+O) and folders,
 and Options > Game Libraries lets you add, change, remove and rescan game roots.
-The start screen keeps the pixel-font XScarlet logo beneath a translucent
-library panel. It lists unpacked titles with their name and logo (if available);
-choose grid or list in Options > Game Libraries. XVD/XVC packages appear but
+The start screen is the game library over a backdrop with the pixel-art
+XScarlet logo. It shows unpacked titles with their name, logo (if available)
+and console; switch between grid and list, or search by name, in the line
+above them. A click selects a title, a double click or Enter starts it.
+XVD/XVC packages appear but
 cannot be mounted or played yet. You can
 also drop an executable or a title folder on it. A title that can start runs
 inside the window, after a loading screen; otherwise the window says why not. On Linux the dialog comes from

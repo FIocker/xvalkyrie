@@ -1,6 +1,10 @@
 #include "app/ui/desktop.hpp"
 #include "app/ui/file_dialog.hpp"
+#include "app/ui/keys.hpp"
 #include "app/ui/logo.hpp"
+#include "app/ui/settings.hpp"
+#include "app/ui/theme.hpp"
+#include "app/ui/widgets.hpp"
 #include "app/version.hpp"
 #include "backends/input/input.hpp"
 #include "launcher/launch.hpp"
@@ -12,7 +16,10 @@
 #endif
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cfloat>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <future>
@@ -24,7 +31,10 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace xs {
 namespace {
@@ -51,22 +61,15 @@ struct Interface {
         auto &io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        io.Fonts->AddFontDefault();
-        // the built-in font is a 13px pixel font, so whole multiples stay sharp
-        ImFontConfig large;
-        large.SizePixels = 26;
-        heading = io.Fonts->AddFontDefault(&large);
-        large.SizePixels = 78;
-        logo = io.Fonts->AddFontDefault(&large);
-        ImGui::GetStyle().WindowRounding = 0;
+        fonts = ui::load_fonts();
+        ui::apply_style();
     }
     ~Interface() {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
     }
-    ImFont *heading = nullptr;
-    ImFont *logo = nullptr;
+    ui::Fonts fonts;
 };
 struct Guest {
     std::thread thread;
@@ -77,80 +80,6 @@ struct Guest {
 std::string utf8(const std::filesystem::path &path) {
     const auto text = path.u8string();
     return {text.begin(), text.end()};
-}
-
-// GLFW key -> Windows virtual-key code, which is what input bindings are in. 0 if none.
-int virtual_key(int key) {
-    if ((key >= GLFW_KEY_0 && key <= GLFW_KEY_9) || (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) ||
-        key == GLFW_KEY_SPACE)
-        return key;
-    if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F12)
-        return 0x70 + key - GLFW_KEY_F1;
-    if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_9)
-        return 0x60 + key - GLFW_KEY_KP_0;
-    switch (key) {
-    case GLFW_KEY_ENTER:
-        return 0x0d;
-    case GLFW_KEY_TAB:
-        return 0x09;
-    case GLFW_KEY_BACKSPACE:
-        return 0x08;
-    case GLFW_KEY_ESCAPE:
-        return 0x1b;
-    case GLFW_KEY_LEFT:
-        return 0x25;
-    case GLFW_KEY_UP:
-        return 0x26;
-    case GLFW_KEY_RIGHT:
-        return 0x27;
-    case GLFW_KEY_DOWN:
-        return 0x28;
-    case GLFW_KEY_INSERT:
-        return 0x2d;
-    case GLFW_KEY_DELETE:
-        return 0x2e;
-    case GLFW_KEY_PAGE_UP:
-        return 0x21;
-    case GLFW_KEY_PAGE_DOWN:
-        return 0x22;
-    case GLFW_KEY_HOME:
-        return 0x24;
-    case GLFW_KEY_END:
-        return 0x23;
-    case GLFW_KEY_LEFT_SHIFT:
-    case GLFW_KEY_RIGHT_SHIFT:
-        return 0x10;
-    case GLFW_KEY_LEFT_CONTROL:
-    case GLFW_KEY_RIGHT_CONTROL:
-        return 0x11;
-    case GLFW_KEY_LEFT_ALT:
-    case GLFW_KEY_RIGHT_ALT:
-        return 0x12;
-    case GLFW_KEY_SEMICOLON:
-        return 0xba;
-    case GLFW_KEY_EQUAL:
-        return 0xbb;
-    case GLFW_KEY_COMMA:
-        return 0xbc;
-    case GLFW_KEY_MINUS:
-        return 0xbd;
-    case GLFW_KEY_PERIOD:
-        return 0xbe;
-    case GLFW_KEY_SLASH:
-        return 0xbf;
-    case GLFW_KEY_GRAVE_ACCENT:
-        return 0xc0;
-    case GLFW_KEY_LEFT_BRACKET:
-        return 0xdb;
-    case GLFW_KEY_BACKSLASH:
-        return 0xdc;
-    case GLFW_KEY_RIGHT_BRACKET:
-        return 0xdd;
-    case GLFW_KEY_APOSTROPHE:
-        return 0xde;
-    default:
-        return 0;
-    }
 }
 
 void *native_window([[maybe_unused]] GLFWwindow *window) {
@@ -173,6 +102,13 @@ class Desktop {
                     std::filesystem::path(std::u8string(text.begin(), text.end()));
             }
         });
+        settings_host_.add_folder = [this] { pick_folder(Dialog::add_library); };
+        settings_host_.change_folder = [this](std::size_t index) {
+            pick_folder(Dialog::replace_library, index);
+        };
+        settings_host_.rescan = [this] { refresh_library(); };
+        settings_host_.libraries_saved = [this](bool rescan) { save_libraries(rescan); };
+        settings_host_.input_saved = hooks.input_changed;
         refresh_library();
     }
     ~Desktop() {
@@ -185,14 +121,14 @@ class Desktop {
     // capture method: the keys go to the title unless the options are open, where the
     // next key pressed becomes a binding instead.
     void key(int glfw_key, bool pressed) {
-        const int code = virtual_key(glfw_key);
+        const int code = ui::virtual_key(glfw_key);
         if (!code)
             return;
-        if (binding_ && pressed) {
-            pressed_ = code;
+        if (settings_.wants_key() && pressed) {
+            settings_.key(code);
             return;
         }
-        if (!input_open_ || !pressed)
+        if (!settings_.input_shown() || !pressed)
             input::window_key(code, pressed);
     }
     // something on screen moves without input: the loading bar
@@ -213,8 +149,12 @@ class Desktop {
         name_ = utf8(path.filename());
         if (const auto it = std::find_if(titles_.begin(), titles_.end(),
                                          [&](const auto &title) { return title.path == path; });
-            it != titles_.end())
+            it != titles_.end()) {
             name_ = it->name;
+            splash_ = it->splash;
+        } else {
+            splash_ = title_splash(path);
+        }
         glfwSetWindowTitle(window_, ("XScarlet - " + name_).c_str());
         path_ = path;
         loading_ = std::async(std::launch::async, hooks_.load, path);
@@ -250,11 +190,11 @@ class Desktop {
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, ImGuiInputFlags_RouteGlobal))
             glfwSetWindowShouldClose(window_, true);
         menu();
-        input_options();
-        library_options();
+        measure();
         status_bar();
         content();
-        about();
+        settings_.draw(ui_.fonts, settings_host_,
+                       {libraries_, titles_.size(), discovery_.valid(), library_notice_});
     }
 
   private:
@@ -282,7 +222,7 @@ class Desktop {
         }
         discovery_ = std::async(std::launch::async, discover_library, libraries_.directories);
     }
-    void save_libraries() {
+    void save_libraries(bool rescan = true) {
         try {
             if (hooks_.libraries_changed)
                 hooks_.libraries_changed(libraries_);
@@ -290,7 +230,8 @@ class Desktop {
         } catch (const std::exception &e) {
             library_notice_ = std::string("Not saved: ") + e.what();
         }
-        refresh_library();
+        if (rescan)
+            refresh_library();
     }
     void close_title() {
         title_.reset();
@@ -346,9 +287,11 @@ class Desktop {
                 char code[16];
                 std::snprintf(code, sizeof code, "0x%x", guest_->code);
                 outcome_ = std::string("Exited with code ") + code;
+                ended_badly_ = false;
                 exit_code_ = static_cast<int>(guest_->code);
             } catch (const std::exception &e) {
                 outcome_ = std::string("Stopped: ") + e.what();
+                ended_badly_ = true;
                 exit_code_ = 1;
             }
             guest_.reset();
@@ -374,17 +317,33 @@ class Desktop {
         }
         if (ImGui::BeginMenu("Options")) {
             if (ImGui::MenuItem("Input..."))
-                input_open_ = true;
+                settings_.show(ui::Settings::Page::input);
             if (ImGui::MenuItem("Game Libraries..."))
-                library_open_ = true;
+                settings_.show(ui::Settings::Page::libraries);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("About XScarlet"))
-                about_requested_ = true;
+                settings_.show(ui::Settings::Page::about);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
+    }
+    // The frame rate of the title on screen, from how many frames it presented over the
+    // last half second or so. None while there is no title or nothing to go by yet.
+    void measure() {
+        if (!hooks_.frames || !showing()) {
+            sample_.reset();
+            rate_.reset();
+            return;
+        }
+        const Sample now{ImGui::GetTime(), hooks_.frames()};
+        if (!sample_)
+            sample_ = now;
+        else if (now.time - sample_->time >= .5) {
+            rate_ = static_cast<double>(now.frames - sample_->frames) / (now.time - sample_->time);
+            sample_ = now;
+        }
     }
     const char *state() const {
         if (!notice_.empty())
@@ -392,7 +351,7 @@ class Desktop {
         if (loading_.valid())
             return "Loading";
         if (!title_)
-            return "No title loaded";
+            return "Ready";
         if (guest_)
             return showing() ? "Running" : "Starting";
         if (!outcome_.empty())
@@ -411,45 +370,328 @@ class Desktop {
         ImGui::Begin("Status", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus);
-        if (title_)
-            ImGui::Text("%s  |  %s", name_.c_str(), state());
+        if (title_ || loading_.valid())
+            ImGui::Text("%s  -  %s", name_.c_str(), state());
         else
             ImGui::TextUnformatted(state());
-        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(version).x -
-                        ImGui::GetStyle().FramePadding.x);
+        // from the right: the version, then what the keys do on this screen
+        const auto &style = ImGui::GetStyle();
+        const auto origin = ImGui::GetWindowPos();
+        float right = origin.x + ImGui::GetWindowWidth() - style.FramePadding.x -
+                      ImGui::CalcTextSize(version).x;
+        ImGui::SameLine(right - origin.x);
         ImGui::TextDisabled("%s", version);
+        if (rate_) {
+            char text[32];
+            std::snprintf(text, sizeof text, "%.0f FPS", *rate_);
+            right -= 18 + ImGui::CalcTextSize(text).x;
+            ImGui::SameLine(right - origin.x);
+            ImGui::TextUnformatted(text);
+        }
+        if (library_shown() && notice_.empty()) {
+            const float y = origin.y + (height - ui_.fonts.small->FontSize - 4) / 2;
+            for (const auto &[key, action] :
+                 {std::pair{"Ctrl+O", "Open file"}, std::pair{"Enter", "Play"},
+                  std::pair{"Arrows", "Select"}}) {
+                right -= 18 + ui::key_hint(nullptr, ui_.fonts, {}, key, action);
+                ui::key_hint(ImGui::GetWindowDrawList(), ui_.fonts, {right, y}, key, action);
+            }
+        }
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
     }
-    static void centered(const char *text) {
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) / 2);
-        ImGui::TextDisabled("%s", text);
+    // ---- the library
+    static const ui::Badge &platform(const LibraryTitle &title) {
+        return title.target == Target::durango    ? ui::badges::xbox_one
+               : title.target == Target::scarlett ? ui::badges::series
+                                                  : ui::badges::unknown;
     }
-    // What stays on screen from the moment a title is opened until its first frame.
+    const LogoImage &logo(const LibraryTitle &title) {
+        return title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
+    }
+    // the badges of a title and its version, in a line starting at `at` and no longer than
+    // `width`
+    void badges(ImDrawList *list, ImVec2 at, float width, const LibraryTitle &title) const {
+        const float end = at.x + width;
+        at.x += ui::badge(list, ui_.fonts, at, platform(title)) + 6;
+        if (title.package)
+            at.x += ui::badge(list, ui_.fonts, at, ui::badges::package) + 6;
+        auto *const font = ui_.fonts.small;
+        const auto size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, title.version.c_str());
+        if (at.x + 2 + size.x <= end)
+            list->AddText(font, font->FontSize, {at.x + 2, at.y + (ui::badge_height - size.y) / 2},
+                          ui::color::muted, title.version.c_str());
+    }
+    // The logo of a title scaled to fit inside the rectangle, or its initial where there
+    // is none. `rounding` is that of the rectangle's corners in `corners`.
+    void cover(ImDrawList *list, const LibraryTitle &title, ImVec2 min, ImVec2 max, float rounding,
+               ImDrawFlags corners) {
+        list->AddRectFilled(min, max, IM_COL32(10, 10, 13, 255), rounding, corners);
+        const float width = max.x - min.x, height = max.y - min.y;
+        const auto &image = logo(title);
+        if (image.texture) {
+            const float scale = std::min(width / static_cast<float>(image.width),
+                                         height / static_cast<float>(image.height));
+            const float w = static_cast<float>(image.width) * scale,
+                        h = static_cast<float>(image.height) * scale;
+            const ImVec2 from{min.x + (width - w) / 2, min.y + (height - h) / 2};
+            // only an image that reaches the corners has to be rounded with them
+            const bool fills = w > width - 1 && h > height - 1;
+            list->AddImageRounded(static_cast<ImTextureID>(image.texture), from,
+                                  {from.x + w, from.y + h}, {0, 0}, {1, 1}, IM_COL32_WHITE,
+                                  fills ? rounding : 0, corners);
+        } else {
+            auto *const font = height >= 80 ? ui_.fonts.display : ui_.fonts.body;
+            const auto *const begin = title.name.c_str();
+            const char *end = begin + (title.name.empty() ? 0 : 1);
+            while (*end && (static_cast<unsigned char>(*end) & 0xc0) == 0x80)
+                ++end;
+            const auto size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, begin, end);
+            list->AddText(font, font->FontSize,
+                          {min.x + (width - size.x) / 2, min.y + (height - size.y) / 2},
+                          IM_COL32(255, 255, 255, 46), begin, end);
+        }
+        if (title.package)
+            list->AddRectFilled(min, max, IM_COL32(10, 10, 13, 150), rounding, corners);
+    }
+    // What the item just submitted for a title does: a click or the keyboard focus selects
+    // it, a double click or Enter starts it.
+    void interact(const LibraryTitle &title) {
+        if (ImGui::IsItemFocused() || ImGui::IsItemClicked())
+            selected_ = title.path;
+        const bool entered = ImGui::IsItemFocused() && (ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+                                                        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
+        const bool twice =
+            ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        if ((entered || twice) && !busy())
+            open(title.path);
+    }
+    // The console's way of showing where the focus is: a ring a little outside the item.
+    // `focus` goes from 0 (none) to 1.
+    static void focus_ring(ImDrawList *list, ImVec2 min, ImVec2 max, float rounding, float focus) {
+        if (focus <= 0)
+            return;
+        list->AddRect({min.x - 8, min.y - 8}, {max.x + 8, max.y + 8},
+                      ui::color::fade(ui::color::scarlet, .22f * focus), rounding + 8, 0, 4);
+        list->AddRect({min.x - 4, min.y - 4}, {max.x + 4, max.y + 4},
+                      ui::color::fade(ui::color::scarlet, focus), rounding + 4, 0, 2.5f);
+    }
+    // room an item needs around it for its ring and for growing when it is selected
+    static constexpr float ring_room = 14;
+    static ImU32 panel(bool lit) {
+        return lit ? IM_COL32(46, 46, 56, 240) : IM_COL32(24, 24, 30, 205);
+    }
+    static ImU32 outline(bool hovered) {
+        return hovered ? IM_COL32(255, 255, 255, 70) : IM_COL32(255, 255, 255, 20);
+    }
+    // a library entry as a card: square cover, name, badges
+    static constexpr float card_text = 68;
+    void card(const LibraryTitle &title, float width) {
+        constexpr float rounding = 6, inset = 12;
+        ImVec2 min = ImGui::GetCursorScreenPos(), max{min.x + width, min.y + width + card_text};
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, 0);
+        ImGui::InvisibleButton("card", {width, width + card_text});
+        ImGui::PopStyleColor();
+        interact(title);
+        const bool hovered = ImGui::IsItemHovered(), selected = title.path == selected_;
+        // the selected card comes forward a little
+        const float focus = ui::animate(ImGui::GetItemID(), selected ? 1.f : 0.f);
+        const float grow = 3 * focus;
+        min = {min.x - grow, min.y - grow};
+        max = {max.x + grow, max.y + grow};
+        const float side = max.x - min.x;
+        auto *const list = ImGui::GetWindowDrawList();
+        list->AddRectFilled(min, max, panel(hovered || selected), rounding);
+        cover(list, title, min, {max.x, min.y + side}, rounding, ImDrawFlags_RoundCornersTop);
+        list->AddText({min.x + inset, min.y + side + 11},
+                      title.package ? ui::color::muted : ui::color::text,
+                      ui::fitted(title.name, side - 2 * inset).c_str());
+        badges(list, {min.x + inset, min.y + side + 20 + ImGui::GetFontSize()}, side - 2 * inset,
+               title);
+        list->AddRect(min, max, outline(hovered), rounding);
+        focus_ring(list, min, max, rounding, focus);
+    }
+    // a library entry as a row: thumbnail, name, badges
+    static constexpr float row_height = 56;
+    void row(const LibraryTitle &title, float width) {
+        constexpr float rounding = 6, thumbnail = 40;
+        const ImVec2 min = ImGui::GetCursorScreenPos(), max{min.x + width, min.y + row_height};
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, 0);
+        ImGui::InvisibleButton("row", {width, row_height});
+        ImGui::PopStyleColor();
+        interact(title);
+        const bool hovered = ImGui::IsItemHovered(), selected = title.path == selected_;
+        const float focus = ui::animate(ImGui::GetItemID(), selected ? 1.f : 0.f);
+        auto *const list = ImGui::GetWindowDrawList();
+        list->AddRectFilled(min, max, panel(hovered || selected), rounding);
+        const float pad = (row_height - thumbnail) / 2;
+        cover(list, title, {min.x + pad, min.y + pad},
+              {min.x + pad + thumbnail, min.y + pad + thumbnail}, 4, 0);
+        const float left = min.x + 2 * pad + thumbnail, room = max.x - 16 - left;
+        list->AddText({left, min.y + 9}, title.package ? ui::color::muted : ui::color::text,
+                      ui::fitted(title.name, room).c_str());
+        badges(list, {left, min.y + 30}, room, title);
+        list->AddRect(min, max, outline(hovered), rounding);
+        focus_ring(list, min, max, rounding, focus);
+    }
+    // `image` scaled to cover the rectangle, cut where it does not fit
+    static void fill(ImDrawList *list, const LogoImage &image, ImVec2 min, ImVec2 max, ImU32 tint) {
+        const float room = (max.x - min.x) / (max.y - min.y),
+                    picture = static_cast<float>(image.width) / static_cast<float>(image.height);
+        ImVec2 from{0, 0}, to{1, 1};
+        if (picture > room)
+            from.x = (1 - room / picture) / 2, to.x = 1 - from.x;
+        else
+            from.y = (1 - picture / room) / 2, to.y = 1 - from.y;
+        list->AddImage(static_cast<ImTextureID>(image.texture), min, max, from, to, tint);
+    }
+    // The splash picture of the opened title behind a screen about it, under `shade` of
+    // black (0 to 1) so that what is written on it can be read. False if it has none.
+    bool title_background(float shade) {
+        const auto &image = splash_.empty() ? empty_logo_ : logos_.get(splash_);
+        if (!image.texture)
+            return false;
+        auto *const list = ImGui::GetWindowDrawList();
+        const ImVec2 min = ImGui::GetWindowPos(),
+                     max{min.x + ImGui::GetWindowWidth(), min.y + ImGui::GetWindowHeight()};
+        fill(list, image, min, max, IM_COL32_WHITE);
+        const auto black = [](float alpha) {
+            return IM_COL32(6, 6, 9, static_cast<int>(255 * alpha));
+        };
+        list->AddRectFilled(min, max, black(shade));
+        // darker towards the bottom, where the text is
+        const float middle = min.y + (max.y - min.y) * .45f;
+        list->AddRectFilledMultiColor({min.x, middle}, max, black(0), black(0), black(.8f),
+                                      black(.8f));
+        return true;
+    }
+    // What stays on screen from the moment a title is opened until its first frame: its
+    // splash picture with the name and the progress at the bottom, or the logo in the
+    // middle for a title without one.
     void loading_screen(const char *step) {
-        const float line = ImGui::GetTextLineHeightWithSpacing();
-        ImGui::SetCursorPosY((ImGui::GetWindowHeight() - ui_.logo->FontSize - 5 * line) / 2);
-        ImGui::PushFont(ui_.logo);
-        centered("XScarlet");
-        ImGui::PopFont();
-        ImGui::Spacing();
-        centered(name_.c_str());
-        ImGui::Spacing();
-        const float width = std::min(360.f, ImGui::GetWindowWidth() - 64);
-        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - width) / 2);
+        const ImVec2 origin = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        auto *const list = ImGui::GetWindowDrawList();
+        const float center = origin.x + size.x / 2;
+        auto *const heading = ui_.fonts.heading;
+        float y;
+        if (title_background(.35f)) {
+            y = origin.y + size.y - heading->FontSize - 98;
+        } else {
+            const float mark = std::clamp(size.x * .1f, 52.f, 104.f);
+            const auto extent = ui::wordmark_size(ui_.fonts, mark);
+            y = origin.y + (size.y - extent.y - 110) / 2;
+            ui::wordmark(list, ui_.fonts, {center - extent.x / 2, y}, mark);
+            y += extent.y + 22;
+        }
+        ui::centered_text(list, heading, center, y, ui::color::text, name_.c_str());
+        y += heading->FontSize + 22;
         // how long a title takes to start is not known, so the bar only shows activity
-        ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()), {width, 6}, "");
-        ImGui::Spacing();
-        centered(step);
+        const float width = std::min(360.f, size.x - 64), left = center - width / 2;
+        const float phase = static_cast<float>(std::fmod(ImGui::GetTime() * .8, 1.0));
+        const float head = left + (phase * 1.35f - .35f) * width;
+        list->AddRectFilled({left, y}, {left + width, y + 4}, IM_COL32(255, 255, 255, 40), 2);
+        list->PushClipRect({left, y}, {left + width, y + 4}, true);
+        list->AddRectFilled({head, y}, {head + width * .35f, y + 4}, ui::color::scarlet, 2);
+        list->PopClipRect();
+        y += 4 + 16;
+        ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted, step);
+    }
+    // what went wrong with the opened title, in a few words
+    const char *problem() const {
+        switch (title_->status) {
+        case LaunchStatus::unreadable:
+            return "This file could not be read";
+        case LaunchStatus::invalid_image:
+            return "This is not an executable";
+        case LaunchStatus::wrong_machine:
+            return "This is not an x64 executable";
+        case LaunchStatus::package_unsupported:
+            return "Packages cannot be opened yet";
+        case LaunchStatus::other_target:
+            return "This is not an Xbox title";
+        case LaunchStatus::runtime_unavailable:
+            return "This title cannot start yet";
+        case LaunchStatus::runnable:
+            break;
+        }
+        return ended_badly_ ? "The title stopped" : "The title ended";
+    }
+    // A title that was opened and is not running: a sign, what happened in a few words,
+    // the whole story, and the way back.
+    void title_screen() {
+        const bool failed = title_->status != LaunchStatus::runnable || ended_badly_;
+        title_background(.8f);
+        // a title that ran says how it ended before anything else
+        const auto story = outcome_.empty() ? title_->detail : outcome_ + ". " + title_->detail;
+        constexpr float sign = 32, pad = 18;
+        const ImVec2 origin = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        const float width = std::min(600.f, size.x - 48), center = origin.x + size.x / 2;
+        const float text = ImGui::CalcTextSize(story.c_str(), nullptr, false, width - 2 * pad).y;
+        const float box = std::min(text + 2 * pad, std::max(80.f, size.y - 330));
+        auto *const heading = ui_.fonts.heading;
+        const float height = 2 * sign + 20 + heading->FontSize + 8 + ui_.fonts.small->FontSize +
+                             22 + box + 22 + ImGui::GetFrameHeight();
+        float y = origin.y + std::max(24.f, (size.y - height) / 2);
+        auto *const list = ImGui::GetWindowDrawList();
+
+        const ImU32 ink = failed ? ui::color::scarlet : IM_COL32(134, 226, 134, 255);
+        const ImVec2 middle{center, y + sign};
+        list->AddCircleFilled(middle, sign, ui::color::fade(ink, .16f), 48);
+        list->AddCircle(middle, sign, ink, 48, 2.5f);
+        if (failed) { // an exclamation mark
+            list->AddRectFilled({center - 2.5f, middle.y - 15}, {center + 2.5f, middle.y + 5}, ink,
+                                2.5f);
+            list->AddCircleFilled({center, middle.y + 13}, 3.2f, ink, 16);
+        } else { // a check mark
+            const ImVec2 points[] = {{center - 13, middle.y + 1},
+                                     {center - 4, middle.y + 10},
+                                     {center + 14, middle.y - 9}};
+            list->AddPolyline(points, 3, ink, 0, 4);
+        }
+        y += 2 * sign + 20;
+        ui::centered_text(list, heading, center, y, ui::color::text, problem());
+        y += heading->FontSize + 8;
+        ImGui::PushFont(ui_.fonts.small);
+        const auto name = ui::fitted(name_, width);
+        ImGui::PopFont();
+        ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted, name.c_str());
+        y += ui_.fonts.small->FontSize + 22;
+
+        ImGui::SetCursorScreenPos({center - width / 2, y});
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(.07f, .07f, .09f, .86f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {pad, pad});
+        ImGui::BeginChild("Story", {width, box},
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(205, 205, 214, 255));
+        ImGui::TextWrapped("%s", story.c_str());
+        ImGui::PopStyleColor();
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        y += box + 22;
+
+        const float button = ImGui::CalcTextSize("Back to library").x + 44;
+        ImGui::SetCursorScreenPos({center - button / 2, y});
+        if (ui::primary_button("Back to library", {button, 0}) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape))
+            close_title();
+    }
+    // the library is on screen and has something in it
+    bool library_shown() const {
+        return !loading_.valid() && !guest_ && !title_ && !titles_.empty();
     }
     void content() {
         const auto *screen = ImGui::GetMainViewport();
+        const ImVec2 size{screen->WorkSize.x, screen->WorkSize.y - ImGui::GetFrameHeight()};
+        // the layer under everything: with a library on top, the wordmark is part of it
+        ui::backdrop(ui_.fonts, screen->WorkPos,
+                     {screen->WorkPos.x + size.x, screen->WorkPos.y + size.y},
+                     library_shown() ? .09f : 0);
         if (hooks_.area) {
             // the largest 16:9 rectangle between the menu and the status bar, centered
             const auto scale = ImGui::GetIO().DisplayFramebufferScale;
-            const float room_x = screen->WorkSize.x * scale.x,
-                        room_y = (screen->WorkSize.y - ImGui::GetFrameHeight()) * scale.y;
+            const float room_x = size.x * scale.x, room_y = size.y * scale.y;
             const float width = std::min(room_x, room_y * 16 / 9), height = width * 9 / 16;
             hooks_.area(static_cast<int>(screen->WorkPos.x * scale.x + (room_x - width) / 2),
                         static_cast<int>(screen->WorkPos.y * scale.y + (room_y - height) / 2),
@@ -458,298 +700,172 @@ class Desktop {
         if (showing())
             return; // the title draws there
         ImGui::SetNextWindowPos(screen->WorkPos);
-        ImGui::SetNextWindowSize(
-            {screen->WorkSize.x, screen->WorkSize.y - ImGui::GetFrameHeight()});
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {16, 12});
+        ImGui::SetNextWindowSize(size);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {24, 18});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
         ImGui::Begin("Content", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
-        if (loading_.valid()) {
+        if (loading_.valid())
             loading_screen("Reading the title");
-        } else if (guest_) {
+        else if (guest_)
             loading_screen("Starting the title");
-        } else if (title_) {
-            if (ImGui::SmallButton("Back to library"))
-                close_title();
-            ImGui::Separator();
-            ImGui::PushFont(ui_.heading);
-            ImGui::TextUnformatted(name_.c_str());
-            ImGui::PopFont();
-            ImGui::TextDisabled("%s", title_->file.c_str());
-            ImGui::Separator();
-            ImGui::TextUnformatted(state());
-            ImGui::Spacing();
-            ImGui::TextWrapped("%s", title_->detail.c_str());
-        } else {
-            library_content();
-        }
+        else if (title_)
+            title_screen();
+        else if (titles_.empty())
+            welcome();
+        else
+            library();
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
     }
-    void library_content() {
-        // The library sits on top of the landing screen; keep the original
-        // pixel-font logo visible in the space beneath the translucent panel.
-        const float height = ImGui::GetContentRegionAvail().y;
-        const float panel_height = titles_.empty() && !discovery_.valid()
-                                       ? std::min(170.f, height * .55f)
-                                       : std::max(130.f, height - ui_.logo->FontSize - 48.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, .85f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(.38f, .32f, .32f, .55f));
-        ImGui::BeginChild("LibraryOverlay", {0, panel_height}, ImGuiChildFlags_Borders);
-        ImGui::TextDisabled("LIBRARY  /  %zu TITLES", titles_.size());
-        ImGui::Separator();
-        if (discovery_.valid())
-            ImGui::TextDisabled("Discovering games...");
-        if (!library_notice_.empty())
-            ImGui::TextWrapped("%s", library_notice_.c_str());
-        if (titles_.empty() && !discovery_.valid()) {
-            ImGui::Spacing();
-            ImGui::TextWrapped("No titles found. Add a folder in Options > Game Libraries, "
-                               "or open an unpacked title with File > Open Folder.");
-            ImGui::Spacing();
-            ImGui::TextDisabled("File > Open File... (Ctrl+O), or drop a title here");
-        } else {
-            const float tile = 178.f;
-            const float gap = ImGui::GetStyle().ItemSpacing.x;
-            const int columns =
-                libraries_.grid
-                    ? std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + gap) /
-                                                   (tile + gap)))
-                    : 1;
-            if (ImGui::BeginChild("Games", {0, 0}, ImGuiChildFlags_None,
-                                  ImGuiWindowFlags_NoBackground)) {
-                ImGuiListClipper clipper;
-                clipper.Begin(static_cast<int>((titles_.size() + columns - 1) / columns),
-                              (libraries_.grid ? 228.f : 44.f) + gap);
-                while (clipper.Step())
-                    for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
-                        for (int column = 0; column < columns; ++column) {
-                            const auto i = static_cast<std::size_t>(row * columns + column);
-                            if (i >= titles_.size())
-                                break;
-                            const auto &title = titles_[i];
-                            ImGui::PushID(static_cast<int>(i));
-                            const char *platform = title.target == Target::durango ? "Xbox One"
-                                                   : title.target == Target::scarlett
-                                                       ? "Series X|S"
-                                                       : "Unknown target";
-                            if (libraries_.grid) {
-                                if (column)
-                                    ImGui::SameLine();
-                                ImGui::BeginGroup();
-                                ImGui::PushStyleColor(ImGuiCol_ChildBg,
-                                                      ImVec4(.09f, .09f, .10f, .9f));
-                                ImGui::BeginChild("tile", {tile, 228}, ImGuiChildFlags_Borders);
-                                const auto &image =
-                                    title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
-                                if (image.texture) {
-                                    const auto scale =
-                                        std::min(152.f / image.width, 130.f / image.height);
-                                    ImGui::Image(static_cast<ImTextureID>(image.texture),
-                                                 {image.width * scale, image.height * scale});
-                                } else {
-                                    ImGui::Dummy({0, 130});
-                                }
-                                ImGui::TextWrapped("%s", title.name.c_str());
-                                ImGui::TextDisabled("%s%s", platform,
-                                                    title.package ? " - package" : "");
-                                ImGui::EndChild();
-                                ImGui::PopStyleColor();
-                                if (ImGui::IsItemClicked() && !busy())
-                                    open(title.path);
-                                ImGui::EndGroup();
-                            } else {
-                                const auto &image =
-                                    title.logo.empty() ? empty_logo_ : logos_.get(title.logo);
-                                if (image.texture) {
-                                    const auto scale =
-                                        std::min(44.f / image.width, 44.f / image.height);
-                                    ImGui::Image(static_cast<ImTextureID>(image.texture),
-                                                 {image.width * scale, image.height * scale});
-                                } else {
-                                    ImGui::Dummy({44, 44});
-                                }
-                                if (ImGui::IsItemClicked() && !busy())
-                                    open(title.path);
-                                ImGui::SameLine();
-                                const auto label =
-                                    title.name + "  |  " + platform +
-                                    (title.package ? "  |  Package (unsupported)" : "") + "  |  " +
-                                    title.version;
-                                if (ImGui::Selectable(label.c_str(), false, 0, {0, 44}) && !busy())
-                                    open(title.path);
-                            }
-                            if (ImGui::IsItemHovered())
-                                ImGui::SetTooltip(
-                                    "%s\n%s\n%s", title.name.c_str(), utf8(title.path).c_str(),
-                                    title.executable.empty() ? "Package cannot be mounted"
-                                                             : utf8(title.executable).c_str());
-                            ImGui::PopID();
-                        }
-            }
-            ImGui::EndChild();
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar();
-        const float remaining = ImGui::GetContentRegionAvail().y;
-        ImGui::SetCursorPosY(
-            ImGui::GetCursorPosY() +
-            std::max(0.f,
-                     (remaining - ui_.logo->FontSize - ImGui::GetTextLineHeightWithSpacing()) / 2));
-        ImGui::PushFont(ui_.logo);
-        centered("XScarlet");
-        ImGui::PopFont();
-        centered(version);
-    }
-    void library_options() {
-        if (!library_open_)
-            return;
-        ImGui::SetNextWindowSize({620, 360}, ImGuiCond_Appearing);
-        if (!ImGui::Begin("Game Libraries", &library_open_)) {
-            ImGui::End();
-            return;
-        }
-        ImGui::TextWrapped("Choose folders containing unpacked games or XVD/XVC packages. "
-                           "Packages are listed but cannot be launched yet.");
-        if (ImGui::Button("Add folder...", {120, 0}))
+    // an empty library: the logo, and the ways to get a title in
+    void welcome() {
+        const ImVec2 origin = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        auto *const list = ImGui::GetWindowDrawList();
+        const float mark = std::clamp(size.x * .14f, 52.f, 156.f);
+        const auto extent = ui::wordmark_size(ui_.fonts, mark);
+        const float center = origin.x + size.x / 2;
+        float y = origin.y + (size.y - extent.y - 150) / 2;
+        ui::wordmark(list, ui_.fonts, {center - extent.x / 2, y}, mark);
+        y += extent.y + 8;
+        ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted, version);
+        y += 44;
+        ui::centered_text(list, ui_.fonts.body, center, y, ui::color::text,
+                          discovery_.valid()         ? "Looking for games..."
+                          : !library_notice_.empty() ? library_notice_.c_str()
+                                                     : "Your library is empty");
+        y += 26;
+        ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted,
+                          "Add a folder with unpacked titles, open one, or drop it on this window");
+        y += 34;
+        const auto &style = ImGui::GetStyle();
+        const float add = ImGui::CalcTextSize("Add game folder...").x + 2 * style.FramePadding.x,
+                    file = ImGui::CalcTextSize("Open file...").x + 2 * style.FramePadding.x;
+        ImGui::SetCursorScreenPos({center - (add + style.ItemSpacing.x + file) / 2, y});
+        if (ui::primary_button("Add game folder..."))
             pick_folder(Dialog::add_library);
         ImGui::SameLine();
-        if (ImGui::Button("Rescan"))
-            refresh_library();
+        if (ImGui::Button("Open file..."))
+            pick();
+    }
+    // the line above the titles: logo, count, search, view, add
+    void library_header(std::size_t shown) {
+        constexpr float height = 32, mark = 26;
+        static constexpr const char *layouts[] = {"Grid", "List"};
+        auto *const list = ImGui::GetWindowDrawList();
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const auto extent = ui::wordmark_size(ui_.fonts, mark);
+        ui::wordmark(list, ui_.fonts, {at.x, at.y + (height - extent.y) / 2}, mark);
+        float x = at.x + extent.x + 14;
+        list->AddLine({x, at.y + 7}, {x, at.y + height - 7}, IM_COL32(255, 255, 255, 40));
+        x += 14;
+        const float line = ImGui::GetFontSize();
+        list->AddText({x, at.y + (height - line) / 2}, ui::color::text, "Library");
+        x += ImGui::CalcTextSize("Library").x + 10;
+        char count[64];
+        if (discovery_.valid())
+            std::snprintf(count, sizeof count, "scanning...");
+        else if (shown != titles_.size())
+            std::snprintf(count, sizeof count, "%zu of %zu", shown, titles_.size());
+        else
+            std::snprintf(count, sizeof count, "%zu %s", shown, shown == 1 ? "title" : "titles");
+        auto *const small = ui_.fonts.small;
+        list->AddText(small, small->FontSize, {x, at.y + (height - small->FontSize) / 2 + 1},
+                      ui::color::muted, count);
+
+        const auto &style = ImGui::GetStyle();
+        const float room = ImGui::GetContentRegionAvail().x;
+        const float view =
+            2 * (std::max(ImGui::CalcTextSize("Grid").x, ImGui::CalcTextSize("List").x) +
+                 2 * style.FramePadding.x + 6);
+        const float buttons = view + style.ItemSpacing.x + ImGui::CalcTextSize("Add folder...").x +
+                              2 * style.FramePadding.x;
+        // the search box is the first thing to go in a narrow window
+        const float search = std::min(240.f, room - (x - at.x) - 120 - buttons);
+        ImGui::SetCursorScreenPos(
+            {at.x + room - buttons - (search >= 100 ? search + style.ItemSpacing.x : 0),
+             at.y + (height - ImGui::GetFrameHeight()) / 2});
+        if (search >= 100) {
+            ImGui::SetNextItemWidth(search);
+            ImGui::InputTextWithHint("##search", "Search", search_, sizeof search_);
+            ImGui::SameLine();
+        }
         int layout = libraries_.grid ? 0 : 1;
-        if (ImGui::Combo("Library view", &layout, "Grid\0List\0")) {
+        if (ui::segmented("view", layouts, layout)) {
             libraries_.grid = layout == 0;
-            save_libraries();
-        }
-        ImGui::Separator();
-        for (std::size_t i = 0; i < libraries_.directories.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            ImGui::TextWrapped("%s", utf8(libraries_.directories[i]).c_str());
-            if (ImGui::SmallButton("Change..."))
-                pick_folder(Dialog::replace_library, i);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove")) {
-                libraries_.directories.erase(libraries_.directories.begin() +
-                                             static_cast<std::ptrdiff_t>(i));
-                save_libraries();
-                ImGui::PopID();
-                break;
-            }
-            ImGui::Separator();
-            ImGui::PopID();
-        }
-        ImGui::End();
-    }
-    void changed(const input::Settings &settings) {
-        input::configure(settings);
-        input_notice_.clear();
-        try {
-            if (hooks_.input_changed)
-                hooks_.input_changed();
-        } catch (const std::exception &e) {
-            input_notice_ = std::string("Not saved: ") + e.what();
-        }
-    }
-    // Options > Input: where the gamepad's readings come from and which key is which
-    // control. Changes apply at once.
-    void input_options() {
-        if (!input_open_) {
-            binding_.reset();
-            return;
-        }
-        ImGui::SetNextWindowSize({460, 0}, ImGuiCond_Appearing);
-        const auto center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {.5f, .5f});
-        if (!ImGui::Begin("Input", &input_open_, ImGuiWindowFlags_NoCollapse)) {
-            ImGui::End();
-            return;
-        }
-        auto settings = input::settings();
-        const bool direct = input::direct_capture_available();
-        ImGui::TextUnformatted("Capture method");
-        if (ImGui::RadioButton("Window (software)", settings.capture == input::Capture::window)) {
-            settings.capture = input::Capture::window;
-            changed(settings);
+            save_libraries(false);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("keyboard, from this window's events");
-        ImGui::BeginDisabled(!direct);
-        if (ImGui::RadioButton("Direct (system)", settings.capture == input::Capture::direct)) {
-            settings.capture = input::Capture::direct;
-            changed(settings);
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled(direct ? "gamepad (XInput) and keyboard, read from the system"
-                                   : "not available on this host");
-        ImGui::BeginDisabled(settings.capture != input::Capture::direct);
-        if (ImGui::Checkbox("Use the host's gamepad", &settings.host_gamepad))
-            changed(settings);
-        ImGui::EndDisabled();
-        ImGui::EndDisabled();
-        ImGui::Separator();
-        ImGui::TextUnformatted("Keyboard");
-        if (binding_ && pressed_) {
-            if (pressed_ != 0x1b) // Escape leaves the binding as it was
-                settings.keys[*binding_] = pressed_;
-            binding_.reset();
-            pressed_ = 0;
-            changed(settings);
-        }
-        if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_SizingStretchProp,
-                              {0, 14 * ImGui::GetFrameHeightWithSpacing()})) {
-            for (std::size_t index = 0; index < input::control_count; ++index) {
-                ImGui::PushID(static_cast<int>(index));
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(input::control_name(static_cast<input::Control>(index)));
-                ImGui::TableNextColumn();
-                const bool waiting = binding_ && *binding_ == index;
-                const auto label =
-                    waiting ? std::string("Press a key...") : input::key_name(settings.keys[index]);
-                if (ImGui::Button(label.c_str(), {140, 0})) {
-                    binding_ = index;
-                    pressed_ = 0;
-                }
-                ImGui::TableNextColumn();
-                if (ImGui::SmallButton("Clear")) {
-                    settings.keys[index] = 0;
-                    binding_.reset();
-                    changed(settings);
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndTable();
-        }
-        if (ImGui::Button("Restore defaults")) {
-            const auto defaults = input::default_settings();
-            settings.keys = defaults.keys;
-            binding_.reset();
-            changed(settings);
-        }
-        if (!input_notice_.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", input_notice_.c_str());
-        }
-        ImGui::End();
+        if (ImGui::Button("Add folder..."))
+            pick_folder(Dialog::add_library);
+        ImGui::SetCursorScreenPos({at.x, at.y + height + 14});
     }
-    void about() {
-        if (about_requested_)
-            ImGui::OpenPopup("About XScarlet");
-        about_requested_ = false;
-        const auto center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {.5f, .5f});
-        if (!ImGui::BeginPopupModal("About XScarlet", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    bool matches(const LibraryTitle &title) const {
+        const auto lower = [](unsigned char c) { return std::tolower(c); };
+        const std::string_view wanted = search_;
+        return wanted.empty() || std::search(title.name.begin(), title.name.end(), wanted.begin(),
+                                             wanted.end(), [&](char a, char b) {
+                                                 return lower(a) == lower(b);
+                                             }) != title.name.end();
+    }
+    void library() {
+        std::vector<const LibraryTitle *> shown;
+        for (const auto &title : titles_)
+            if (matches(title))
+                shown.push_back(&title);
+        library_header(shown.size());
+        if (!library_notice_.empty())
+            ImGui::TextDisabled("%s", library_notice_.c_str());
+        if (shown.empty()) {
+            ImGui::TextDisabled("No title matches \"%s\"", search_);
             return;
-        ImGui::Text("XScarlet %s", version);
-        ImGui::TextUnformatted("Experimental Xbox One and Xbox Series X|S compatibility layer.");
-        ImGui::TextUnformatted("Not affiliated with or endorsed by Microsoft. MIT license.");
-        ImGui::Spacing();
-        if (ImGui::Button("OK", {96, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        }
+        // like on the console, something is always selected: the first title if nothing else
+        auto chosen = std::find_if(shown.begin(), shown.end(),
+                                   [&](const auto *title) { return title->path == selected_; });
+        if (chosen == shown.end()) {
+            chosen = shown.begin();
+            selected_ = (*chosen)->path;
+        }
+        // the titles scroll under the header; the padding is the room for the rings, which
+        // the header's own spacing already provides above
+        ImGui::SetCursorPos({ImGui::GetCursorPosX() - ring_room, ImGui::GetCursorPosY() - 8});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {ring_room, ring_room});
+        const bool open = ImGui::BeginChild(
+            "Games", {ImGui::GetContentRegionAvail().x + ring_room, 0},
+            ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
+        ImGui::PopStyleVar();
+        if (open) {
+            const float room = ImGui::GetContentRegionAvail().x;
+            const float gap = libraries_.grid ? 20.f : 8.f;
+            // as many columns as fit at the smallest width, then stretched to fill the row
+            const int columns =
+                libraries_.grid ? std::max(1, static_cast<int>((room + gap) / (168 + gap))) : 1;
+            const float width = std::floor((room - gap * static_cast<float>(columns - 1)) /
+                                           static_cast<float>(columns));
+            const float height = libraries_.grid ? width + card_text : row_height;
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {gap, gap});
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>((shown.size() + columns - 1) / columns), height + gap);
+            while (clipper.Step())
+                for (int line = clipper.DisplayStart; line < clipper.DisplayEnd; ++line)
+                    for (int column = 0; column < columns; ++column) {
+                        const auto index = static_cast<std::size_t>(line * columns + column);
+                        if (index >= shown.size())
+                            break;
+                        ImGui::PushID(static_cast<int>(index));
+                        if (column)
+                            ImGui::SameLine();
+                        if (libraries_.grid)
+                            card(*shown[index], width);
+                        else
+                            row(*shown[index], width);
+                        ImGui::PopID();
+                    }
+            ImGui::PopStyleVar();
+        }
+        ImGui::EndChild();
     }
 
     GLFWwindow *window_;
@@ -758,7 +874,9 @@ class Desktop {
     std::optional<LaunchResult> title_;
     std::string name_;    // file name of title_
     std::string outcome_; // how the last run of title_ ended
-    std::string notice_;  // frontend problem unrelated to title_
+    bool ended_badly_ = false;
+    std::filesystem::path splash_; // the splash picture of what was opened, if it has one
+    std::string notice_;           // frontend problem unrelated to title_
     std::shared_ptr<Guest> guest_;
     std::future<LaunchResult> loading_;
     std::filesystem::path path_; // what loading_ is reading
@@ -770,15 +888,19 @@ class Desktop {
     std::vector<LibraryTitle> titles_;
     std::future<std::vector<LibraryTitle>> discovery_;
     bool refresh_pending_ = false;
-    bool library_open_ = false;
     std::string library_notice_;
+    std::filesystem::path selected_; // the library entry a click or the keyboard chose
+    char search_[64] = "";
     Logos logos_;
     LogoImage empty_logo_;
-    bool about_requested_ = false;
-    bool input_open_ = false;
-    std::optional<std::size_t> binding_; // control waiting for a key
-    int pressed_ = 0;                    // the key it got
-    std::string input_notice_;
+    struct Sample {
+        double time; // ImGui::GetTime()
+        std::uint64_t frames;
+    };
+    std::optional<Sample> sample_; // where the current measurement started
+    std::optional<double> rate_;   // frames per second
+    ui::Settings settings_;
+    ui::Settings::Host settings_host_;
     int exit_code_ = 0;
 };
 } // namespace
@@ -789,13 +911,13 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> window(
-        glfwCreateWindow(960, 600, "XScarlet", nullptr, nullptr), glfwDestroyWindow);
+        glfwCreateWindow(1180, 740, "XScarlet", nullptr, nullptr), glfwDestroyWindow);
     if (!window) {
         const char *message = nullptr;
         glfwGetError(&message);
         throw std::runtime_error(message ? message : "OpenGL 3.3 window creation failed");
     }
-    glfwSetWindowSizeLimits(window.get(), 480, 320, GLFW_DONT_CARE, GLFW_DONT_CARE);
+    glfwSetWindowSizeLimits(window.get(), 640, 420, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwMakeContextCurrent(window.get());
     if (!gladLoadGL(glfwGetProcAddress))
         throw std::runtime_error("OpenGL function loading failed");
@@ -835,7 +957,7 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
         desktop.frame();
         ImGui::Render();
         glViewport(0, 0, w, h);
-        glClearColor(.09f, .09f, .1f, 1);
+        glClearColor(.035f, .035f, .047f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window.get());

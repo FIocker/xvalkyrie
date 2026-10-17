@@ -25,7 +25,10 @@ std::string package(std::string_view executable) {
            "<Logo>Assets/logo.png</Logo></Properties>"
            "<Prerequisites><mx:OSName>era</mx:OSName></Prerequisites>"
            "<Applications><Application Id=\"App\" Executable=\"" +
-           std::string(executable) + "\" EntryPoint=\"Sample.App\"/></Applications></Package>";
+           std::string(executable) +
+           "\" EntryPoint=\"Sample.App\"><VisualElements>"
+           "<SplashScreen Image=\"Assets\\splash.png\"/></VisualElements></Application>"
+           "</Applications></Package>";
 }
 // title directory laid out like an unpacked package: <root>/Mount/{manifest, executable}
 fs::path title_directory(const char *name, std::string_view executable) {
@@ -44,6 +47,7 @@ TEST_CASE("package manifest") {
     CHECK(report.at("version") == "1.2.3.4");
     CHECK(report.at("display_name") == "Sample Title");
     CHECK(report.at("logo") == "Assets/logo.png");
+    CHECK(report.at("splash") == "Assets\\splash.png");
     CHECK(report.at("os_name") == "era");
     CHECK(report.at("environment").is_null());
     REQUIRE(report.at("applications").size() == 1);
@@ -70,6 +74,7 @@ TEST_CASE("library discovery") {
     std::ofstream(game / "Mount" / "AppxManifest.xml") << package("game.exe");
     fs::copy_file("durango-modules.pe", game / "Mount" / "game.exe");
     std::ofstream(game / "Mount" / "Assets" / "logo.scale-200.png") << "logo";
+    std::ofstream(game / "Mount" / "Assets" / "splash.png") << "splash";
 
     const auto found = xs::discover_title(game);
     REQUIRE(found);
@@ -79,6 +84,10 @@ TEST_CASE("library discovery") {
     CHECK(found->target == xs::Target::durango);
     CHECK(found->executable == game / "Mount" / "game.exe");
     CHECK(found->logo == game / "Mount" / "Assets" / "logo.scale-200.png");
+    CHECK(found->splash == game / "Mount" / "Assets" / "splash.png");
+    CHECK(xs::title_splash(game) == found->splash);
+    CHECK(xs::title_splash(found->executable) == found->splash);
+    CHECK(xs::title_splash(root / "missing").empty());
 
     const auto flat = root / "flat";
     fs::create_directory(flat);

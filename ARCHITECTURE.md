@@ -163,6 +163,20 @@ console Direct3D 11.X calls into desktop Direct3D 11 calls on an
 A backend for another host is therefore something that provides Direct3D 11
 (or 12) interfaces there, not a second copy of `d3d11x`.
 
+### The window
+
+`app/ui` is Dear ImGui, in four layers that only use the ones before them:
+
+- `theme`: fonts, colors, the pixel-art wordmark and the backdrop. The only
+  place with color values and font sizes.
+- `widgets`: stateless pieces built on the theme (badges, key hints, the
+  segmented control, the rows of a settings page, `animate`).
+- `settings`: the settings window, a list of pages and one function per page.
+  A new page is an entry in `pages` and a function. It asks its owner for
+  anything outside itself through `Settings::Host`.
+- `desktop`: the window itself: what is loaded or running, and the library,
+  loading and title screens.
+
 ## Target detection
 
 `analysis::import_profile` classifies every imported DLL with the tables of

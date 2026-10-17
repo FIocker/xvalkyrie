@@ -11,6 +11,7 @@ constexpr bool has_d3d11 = true;
 constexpr bool has_d3d11 = false;
 #endif
 std::atomic<Backend> selected{has_d3d11 ? Backend::d3d11 : Backend::vulkan};
+std::atomic<std::uint64_t> frames{0};
 } // namespace
 
 std::string_view backend_name(Backend backend) {
@@ -32,4 +33,6 @@ void select_backend(Backend backend) {
                                     " backend is not available on this host");
     selected = backend;
 }
+void frame_counted() { ++frames; }
+std::uint64_t frames_presented() { return frames; }
 } // namespace xs::graphics

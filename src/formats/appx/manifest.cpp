@@ -58,11 +58,21 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
                 break;
         }
     }
+    // <SplashScreen Image="..."/> inside the visual elements of an application, whatever
+    // namespace prefix the manifest version gives either of them
+    auto splash = json(nullptr);
+    for (auto application : root.child("Applications").children("Application"))
+        for (auto visual : application.children())
+            for (auto child : visual.children())
+                if (splash.is_null() && std::string_view(child.name()).ends_with("SplashScreen") &&
+                    child.attribute("Image"))
+                    splash = child.attribute("Image").value();
     return {{"name", attribute(identity, "Name")},
             {"version", attribute(identity, "Version")},
             {"architecture", attribute(identity, "ProcessorArchitecture")},
             {"display_name", text(root.child("Properties").child("DisplayName"))},
             {"logo", std::move(logo)},
+            {"splash", std::move(splash)},
             {"os_name", text(prerequisites.child("mx:OSName"))},
             {"environment", text(prerequisites.child("mx:ApplicationEnvironment"))},
             {"applications", std::move(applications)}};

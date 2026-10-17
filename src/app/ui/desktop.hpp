@@ -19,6 +19,9 @@ struct DesktopHooks {
     std::function<void(void *native_window)> host;
     std::function<void(int x, int y, int width, int height)> area;
     std::function<bool()> showing;
+    // How many frames the title has presented so far; the status bar shows the rate while
+    // a title is on screen. Optional.
+    std::function<std::uint64_t()> frames;
     // The input settings were changed in Options > Input and are already in effect; this
     // is where they get saved. May throw.
     std::function<void()> input_changed;

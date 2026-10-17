@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -20,4 +21,10 @@ Backend default_backend();
 Backend selected_backend();
 // throws if the backend is not available on this host
 void select_backend(Backend backend);
+
+// How many frames titles have presented in this process, whatever the backend. A backend
+// calls frame_counted() once per Present; the difference between two readings over the
+// time between them is the frame rate.
+void frame_counted();
+std::uint64_t frames_presented();
 } // namespace xs::graphics
