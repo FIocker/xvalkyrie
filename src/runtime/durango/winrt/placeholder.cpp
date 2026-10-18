@@ -123,9 +123,6 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::action3:
             *static_cast<void **>(third) = make_completed_action();
             break;
-        case Inert::not_stored2: // the connected storage error for a blob that does not exist
-            *static_cast<void **>(second) = make_failed_action(static_cast<long>(0x80830008));
-            break;
         case Inert::list_operation:
             *static_cast<void **>(first) = make_completed_operation(make_vector_view({}));
             break;

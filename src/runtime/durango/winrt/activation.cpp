@@ -5,6 +5,7 @@
 #include "runtime/durango/winrt/application.hpp"
 #include "runtime/durango/winrt/gamepad.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
+#include "runtime/durango/winrt/storage.hpp"
 #include <cstdio>
 #include <initializer_list>
 #include <inspectable.h>
@@ -32,6 +33,8 @@ HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **
     if (auto *const own = winrt::application_class(name))
         return own->QueryInterface(iid, factory);
     if (auto *const own = winrt::input_class(name))
+        return own->QueryInterface(iid, factory);
+    if (auto *const own = winrt::storage_class(name))
         return own->QueryInterface(iid, factory);
     if (host_class(name)) {
         HSTRING_HEADER header;

@@ -21,5 +21,13 @@ std::optional<LibraryTitle> discover_title(const std::filesystem::path &path);
 // The splash picture of the title `path` stands for (its directory, its manifest or its
 // executable), read from the manifest alone. Empty if there is none; never throws.
 std::filesystem::path title_splash(const std::filesystem::path &path);
-std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::path> &roots);
+// Every title under `roots`. With a `cache` file, a title whose manifest and executable did
+// not change since the last scan is taken from it instead of being read again, and the
+// result is written back to it.
+std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::path> &roots,
+                                           const std::filesystem::path &cache = {});
+// The titles under `roots` that the last scan wrote to `cache` and that are still there,
+// without reading any of them: what to show while discover_library runs. Never throws.
+std::vector<LibraryTitle> cached_library(const std::vector<std::filesystem::path> &roots,
+                                         const std::filesystem::path &cache);
 } // namespace xs

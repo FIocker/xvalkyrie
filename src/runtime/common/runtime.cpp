@@ -16,7 +16,11 @@ std::string lower(std::string_view text) {
     });
     return result;
 }
+std::filesystem::path saves;
 } // namespace
+
+const std::filesystem::path &save_directory() { return saves; }
+void detail::set_save_directory(std::filesystem::path directory) { saves = std::move(directory); }
 
 void Registry::add(std::string_view module, std::string_view symbol, void *function) {
     if (module.empty() || symbol.empty() || !function)

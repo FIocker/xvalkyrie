@@ -52,13 +52,20 @@ struct ExecuteOptions {
     bool trace = false;
     // no sound from the title
     bool mute = false;
+    // host folder where the title's saved games go, see save_directory()
+    std::filesystem::path save_directory{};
 };
 // Maps and runs the image, returns its exit code. No sandbox!
 // A guest that faults ends the process with exit_guest_fault.
 std::uint32_t execute(const std::filesystem::path &path, std::span<const std::uint8_t> file,
                       const Registry &registry, const ExecuteOptions &options = {});
 
+// The folder of the running title's saved games, from ExecuteOptions; empty before execute
+// or when none was given.
+const std::filesystem::path &save_directory();
+
 namespace detail {
+void set_save_directory(std::filesystem::path directory);
 struct Binding {
     void *function;     // null if missing
     const char *origin; // "own", "host" or "missing"

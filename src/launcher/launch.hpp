@@ -25,4 +25,7 @@ LaunchResult launch_title(const std::filesystem::path &path);
 // The executable `path` stands for: the first application of the manifest for a title
 // directory (looked up in it and in its Mount subdirectory), `path` itself otherwise.
 std::filesystem::path title_executable(const std::filesystem::path &path);
+// Where the saved games of the title `path` stands for are kept: saves/<package name> in the
+// configuration folder, or saves/<executable name> for a title without a manifest.
+std::filesystem::path title_save_directory(const std::filesystem::path &path);
 } // namespace xs

@@ -109,6 +109,8 @@ class Desktop {
         settings_host_.rescan = [this] { refresh_library(); };
         settings_host_.libraries_saved = [this](bool rescan) { save_libraries(rescan); };
         settings_host_.input_saved = hooks.input_changed;
+        // what the last scan found is on screen at once; the scan then brings it up to date
+        titles_ = cached_library(libraries_.directories, library_cache_file());
         refresh_library();
     }
     ~Desktop() {
@@ -133,7 +135,7 @@ class Desktop {
     }
     // something on screen moves without input: the loading bar
     bool animating() const {
-        return loading_.valid() || discovery_.valid() || (guest_ && !showing());
+        return loading_.valid() || discovery_.valid() || logos_.loading() || (guest_ && !showing());
     }
     // the native dialog is modal: the window stays open until it is dismissed
     bool dialog_open() const { return dialog_.valid(); }
@@ -220,7 +222,9 @@ class Desktop {
             refresh_pending_ = true;
             return;
         }
-        discovery_ = std::async(std::launch::async, discover_library, libraries_.directories);
+        discovery_ = std::async(std::launch::async, [roots = libraries_.directories] {
+            return discover_library(roots, library_cache_file());
+        });
     }
     void save_libraries(bool rescan = true) {
         try {
@@ -230,8 +234,12 @@ class Desktop {
         } catch (const std::exception &e) {
             library_notice_ = std::string("Not saved: ") + e.what();
         }
-        if (rescan)
+        if (rescan) {
+            // a folder that was removed takes its titles with it before the scan is over
+            if (!discovery_.valid())
+                titles_ = cached_library(libraries_.directories, library_cache_file());
             refresh_library();
+        }
     }
     void close_title() {
         title_.reset();
@@ -731,10 +739,14 @@ class Desktop {
         y += extent.y + 8;
         ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted, version);
         y += 44;
+        // the first scan, with nothing to show yet: only that something is going on
+        if (discovery_.valid()) {
+            ui::spinner(list, {center, y + 14}, 11);
+            return;
+        }
         ui::centered_text(list, ui_.fonts.body, center, y, ui::color::text,
-                          discovery_.valid()         ? "Looking for games..."
-                          : !library_notice_.empty() ? library_notice_.c_str()
-                                                     : "Your library is empty");
+                          !library_notice_.empty() ? library_notice_.c_str()
+                                                   : "Your library is empty");
         y += 26;
         ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted,
                           "Add a folder with unpacked titles, open one, or drop it on this window");
@@ -764,15 +776,19 @@ class Desktop {
         list->AddText({x, at.y + (height - line) / 2}, ui::color::text, "Library");
         x += ImGui::CalcTextSize("Library").x + 10;
         char count[64];
-        if (discovery_.valid())
-            std::snprintf(count, sizeof count, "scanning...");
-        else if (shown != titles_.size())
+        if (shown != titles_.size())
             std::snprintf(count, sizeof count, "%zu of %zu", shown, titles_.size());
         else
             std::snprintf(count, sizeof count, "%zu %s", shown, shown == 1 ? "title" : "titles");
         auto *const small = ui_.fonts.small;
         list->AddText(small, small->FontSize, {x, at.y + (height - small->FontSize) / 2 + 1},
                       ui::color::muted, count);
+        // the library on screen may still change: a scan is bringing it up to date
+        if (discovery_.valid())
+            ui::spinner(list,
+                        {x + small->CalcTextSizeA(small->FontSize, FLT_MAX, 0, count).x + 14,
+                         at.y + height / 2},
+                        5, 1.5f);
 
         const auto &style = ImGui::GetStyle();
         const float room = ImGui::GetContentRegionAvail().x;

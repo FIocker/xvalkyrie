@@ -451,6 +451,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     if ((execution.mute || std::getenv("XS_MUTE")) && !audio::mute_process())
         std::fprintf(stderr, "[Runtime] could not mute the audio of this process\n");
 
+    detail::set_save_directory(execution.save_directory);
     Stubs stubs;
     Guest state;
     state.path = std::filesystem::absolute(path).wstring();

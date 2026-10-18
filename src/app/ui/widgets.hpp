@@ -39,6 +39,10 @@ bool primary_button(const char *label, ImVec2 size = {0, 0});
 // which `chosen` then is.
 bool segmented(const char *id, std::span<const char *const> labels, int &chosen);
 
+// That something is going on in the background: a short scarlet arc turning on a faint ring
+// of `radius` around `center`.
+void spinner(ImDrawList *list, ImVec2 center, float radius, float thickness = 2);
+
 // A value that follows `target` a little more every frame. Kept per `id` in the current
 // window; starts at the target.
 float animate(ImGuiID id, float target, float rate = 16);

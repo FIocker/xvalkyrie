@@ -117,6 +117,38 @@ TEST_CASE("library discovery") {
     CHECK(std::count_if(titles.begin(), titles.end(), [&](const auto &title) {
               return title.path == game && !title.package;
           }) == 1);
+
+    // the cache: the same titles, without reading the unchanged ones again
+    const auto cache = root / "cache" / "library.json";
+    CHECK(xs::cached_library({root}, cache).empty());
+    REQUIRE(xs::discover_library({root}, cache).size() == 3);
+    const auto cached = xs::cached_library({root}, cache);
+    REQUIRE(cached.size() == 3);
+    CHECK(xs::cached_library({root / "elsewhere"}, cache).empty());
+    const auto sample = std::find_if(cached.begin(), cached.end(),
+                                     [&](const auto &title) { return title.path == game; });
+    REQUIRE(sample != cached.end());
+    CHECK(sample->name == "Sample Title");
+    CHECK(sample->target == xs::Target::durango);
+    CHECK(sample->executable == found->executable);
+    CHECK(sample->logo == found->logo);
+
+    nlohmann::json json;
+    std::ifstream(cache) >> json;
+    for (auto &entry : json.at("titles"))
+        entry["name"] = "From cache";
+    std::ofstream(cache, std::ios::trunc) << json.dump();
+    const auto again = xs::discover_library({root}, cache);
+    CHECK(std::count_if(again.begin(), again.end(),
+                        [](const auto &title) { return title.name == "From cache"; }) == 3);
+    // a title whose manifest changed is read again
+    std::ofstream(game / "Mount" / "AppxManifest.xml", std::ios::trunc)
+        << package("game.exe") << "\n";
+    const auto changed = xs::discover_library({root}, cache);
+    CHECK(std::count_if(changed.begin(), changed.end(),
+                        [](const auto &title) { return title.name == "Sample Title"; }) == 1);
+    CHECK(xs::title_save_directory(game).filename() == "Sample");
+    CHECK(xs::title_save_directory(game).parent_path().filename() == "saves");
 }
 
 TEST_CASE("title directory") {

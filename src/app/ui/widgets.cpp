@@ -95,6 +95,17 @@ bool segmented(const char *id, std::span<const char *const> labels, int &chosen)
     return changed;
 }
 
+void spinner(ImDrawList *list, ImVec2 center, float radius, float thickness) {
+    constexpr float pi = 3.14159265f;
+    const auto time = static_cast<float>(ImGui::GetTime());
+    list->AddCircle(center, radius, IM_COL32(255, 255, 255, 28), 32, thickness);
+    // the arc grows and shrinks while it turns
+    const float start = time * 2 * pi * .9f;
+    const float length = pi * (.35f + .3f * (1 + std::sin(time * 2.4f)));
+    list->PathArcTo(center, radius, start, start + length, 24);
+    list->PathStroke(color::scarlet, 0, thickness);
+}
+
 float animate(ImGuiID id, float target, float rate) {
     auto &value = *ImGui::GetStateStorage()->GetFloatRef(id, target);
     value += (target - value) * std::min(1.f, ImGui::GetIO().DeltaTime * rate);

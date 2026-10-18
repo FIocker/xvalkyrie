@@ -4,8 +4,10 @@
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "host/files.hpp"
+#include "launcher/config.hpp"
 #include "loader/image.hpp"
 #include "runtime/console.hpp"
+#include <cctype>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -59,6 +61,21 @@ std::filesystem::path title_executable(const std::filesystem::path &path) {
     std::filesystem::path directory;
     const auto manifest = read_manifest(path, directory);
     return manifest.is_null() ? path : executable_of(manifest, directory);
+}
+
+std::filesystem::path title_save_directory(const std::filesystem::path &path) {
+    std::filesystem::path directory;
+    const auto manifest = read_manifest(path, directory);
+    const auto stem = path.stem().u8string();
+    std::string name = manifest.is_object() && manifest.at("name").is_string()
+                           ? manifest.at("name").get<std::string>()
+                           : std::string(stem.begin(), stem.end());
+    for (auto &c : name)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_')
+            c = '_';
+    if (name.empty() || name.find_first_not_of('.') == std::string::npos)
+        name = "title";
+    return config_directory() / "saves" / name;
 }
 
 namespace {

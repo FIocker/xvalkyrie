@@ -122,6 +122,14 @@ three kinds of console module:
 - `winrt/inert.cpp`: table of methods of console classes whose feature is
   absent (nobody signed in, no store, no party): accept the arguments, return
   zero, hand out a token for an event that is never raised.
+- `winrt/storage.cpp`: connected storage (`Windows.Xbox.Storage`), the way
+  ERA titles save their games. The spaces, containers and container queries
+  are ours and keep everything in files through `storage.cpp` (`SaveSpace`):
+  `saves/<package name>/{machine,user}/<container>/<blob>` in the per-user
+  configuration folder, with every name escaped into a portable file name.
+  `launcher` picks the folder and hands it over in
+  `ExecuteOptions::save_directory`. Only the methods seen in titles are
+  implemented; the layout of `ContainerInfo2` is a guess.
 - `winrt/application.cpp`: real classes, written with WRL against the public
   Windows SDK headers: `CoreApplication`, `CoreApplicationView`, `CoreWindow`
   and `CoreDispatcher`. `CoreApplication::Run` drives the title's view on the
@@ -176,6 +184,13 @@ A backend for another host is therefore something that provides Direct3D 11
   anything outside itself through `Settings::Host`.
 - `desktop`: the window itself: what is loaded or running, and the library,
   loading and title screens.
+
+The library is scanned on a worker thread. `discover_library` keeps what it
+found in `cache/library.json` in the configuration folder, with the size and
+time of each title's manifest and executable: a title whose files did not
+change is not read again. The window shows `cached_library` (the last scan,
+without reading anything) the moment it opens, and replaces it when the new
+scan is done. Library pictures are decoded off the window thread too.
 
 ## Target detection
 

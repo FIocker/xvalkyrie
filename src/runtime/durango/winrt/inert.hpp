@@ -20,7 +20,6 @@ enum class Inert : std::uint8_t {
     operation2,     // HRESULT start(argument, IAsyncOperation<T> **), finished at once likewise
     action2,        // HRESULT start(argument, IAsyncAction **), finished at once
     action3,        // HRESULT start(argument, argument, IAsyncAction **), finished at once
-    not_stored2,    // HRESULT read(what, IAsyncAction **): fails at once, there is no such blob
     list_operation, // HRESULT start(IAsyncOperation<IVectorView<T>> **): finished, nothing found
     offline,        // HRESULT start(..., IAsyncOperation<T> **) of an online service: the operation
                     // fails at once. The result is argument number `argument`.

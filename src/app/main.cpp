@@ -155,6 +155,7 @@ int main(int argc, char **argv) {
                     throw std::invalid_argument("exec: unknown option");
             }
             const auto bytes = read_title(argv[2]);
+            options.save_directory = xs::title_save_directory(argv[2]);
             return static_cast<int>(xs::runtime::execute(
                 xs::title_executable(argv[2]), bytes, xs::runtime::title_registry(bytes), options));
         }
@@ -193,7 +194,11 @@ int main(int argc, char **argv) {
             const auto file = xs::title_executable(path);
             std::cerr << "[Launcher] starting " << text(file) << std::endl;
             const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
-            const auto code = xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes));
+            xs::runtime::ExecuteOptions options;
+            options.save_directory = xs::title_save_directory(path);
+            std::cerr << "[Launcher] saves in " << text(options.save_directory) << std::endl;
+            const auto code =
+                xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes), options);
             std::cerr << "[Launcher] the title ended with code 0x" << std::hex << code << std::dec
                       << std::endl;
             return code;

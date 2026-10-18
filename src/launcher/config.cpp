@@ -29,6 +29,8 @@ std::filesystem::path config_directory() {
 #endif
 }
 std::filesystem::path config_file() { return config_directory() / "config.ini"; }
+std::filesystem::path cache_directory() { return config_directory() / "cache"; }
+std::filesystem::path library_cache_file() { return cache_directory() / "library.json"; }
 
 namespace {
 std::string trim(std::string value) {
