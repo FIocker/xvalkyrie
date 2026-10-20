@@ -30,6 +30,7 @@ enum class Inert : std::uint8_t {
     one32,          // HRESULT get(T *result) with a 4-byte result of 1
     one64,          // same, 8 bytes
     string,         // HRESULT get(HSTRING *result): the text in `result`
+    title_string,   // same, the title_info() named `result`
     shared,         // HRESULT get(T **result): the one object of type `result` there is
     shared_list,    // HRESULT get(IVectorView<T> **): a view with that one object
     empty_list,     // HRESULT get(IVectorView<T> **): an empty view
@@ -37,6 +38,7 @@ enum class Inert : std::uint8_t {
     one_item,       // HRESULT get(IVectorView<T> **): a view with one inert object of type `result`
     no_items,       // IVectorView::GetMany of an empty collection
     event_add,      // HRESULT add(handler, EventRegistrationToken *token); never raised
+    controllers,    // HRESULT get(IVectorView<IController> **): the one gamepad
 };
 struct InertMethod {
     Inert kind;

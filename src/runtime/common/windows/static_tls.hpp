@@ -1,0 +1,13 @@
+#pragma once
+#include <cstdint>
+#include <nlohmann/json_fwd.hpp>
+
+namespace xs::runtime {
+// Gives a manually mapped image the static thread-local storage the system loader would
+// give it: a block for every thread, those that exist and those to come, at the index the
+// image reads from its _tls_index. `tls` is the "tls" entry of its pe::inspect report,
+// whose addresses are for `image_base`; the image is mapped and relocated at `base`.
+// The system does the work: it loads a small DLL made here that has the same TLS template
+// (and the image's TLS callbacks), and the image gets that DLL's index. Throws on failure.
+void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint64_t image_base);
+} // namespace xs::runtime

@@ -24,6 +24,8 @@ std::string package(std::string_view executable) {
            "<Properties><DisplayName>Sample Title</DisplayName>"
            "<Logo>Assets/logo.png</Logo></Properties>"
            "<Prerequisites><mx:OSName>era</mx:OSName></Prerequisites>"
+           "<Extensions><mx:XboxLive TitleId=\"34BA1DE0\" "
+           "PrimaryServiceConfigId=\"1fac0100-3c93-421f-8d16-536a34ba1de0\"/></Extensions>"
            "<Applications><Application Id=\"App\" Executable=\"" +
            std::string(executable) +
            "\" EntryPoint=\"Sample.App\"><VisualElements>"
@@ -50,6 +52,8 @@ TEST_CASE("package manifest") {
     CHECK(report.at("splash") == "Assets\\splash.png");
     CHECK(report.at("os_name") == "era");
     CHECK(report.at("environment").is_null());
+    CHECK(report.at("xbox_live_title_id") == "34BA1DE0");
+    CHECK(report.at("service_config_id") == "1fac0100-3c93-421f-8d16-536a34ba1de0");
     REQUIRE(report.at("applications").size() == 1);
     CHECK(report["applications"][0].at("executable") == "game.exe");
     CHECK(report["applications"][0].at("entry_point") == "Sample.App");

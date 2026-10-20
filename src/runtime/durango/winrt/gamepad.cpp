@@ -122,8 +122,7 @@ class Statics final : public Object<IGamepadStatics> {
         return Object::QueryInterface(iid, object);
     }
     STDMETHODIMP get_Gamepads(void **gamepads) override {
-        gamepad.AddRef();
-        *gamepads = make_vector_view({static_cast<IGamepad *>(&gamepad)});
+        *gamepads = gamepad_list();
         return S_OK;
     }
     STDMETHODIMP add_GamepadAdded(void *, std::int64_t *token) override {
@@ -143,6 +142,17 @@ class Statics final : public Object<IGamepadStatics> {
 Statics statics;
 } // namespace
 
+void *gamepad_list() {
+    gamepad.AddRef();
+    return make_vector_view({static_cast<IGamepad *>(&gamepad)});
+}
+void *controller_list() {
+    constexpr GUID controller{
+        0x9776ff56, 0x9bfd, 0x4581, {0xad, 0x45, 0xb6, 0x45, 0xbb, 0xa5, 0x26, 0xd6}};
+    IInspectable *facet = nullptr;
+    gamepad.QueryInterface(controller, reinterpret_cast<void **>(&facet));
+    return make_vector_view({facet});
+}
 IInspectable *input_class(std::wstring_view name) {
     return name == class_name ? static_cast<IGamepadStatics *>(&statics) : nullptr;
 }

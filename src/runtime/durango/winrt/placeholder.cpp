@@ -2,7 +2,9 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/winrt/async.hpp"
 #include "runtime/durango/winrt/collection.hpp"
+#include "runtime/durango/winrt/gamepad.hpp"
 #include "runtime/durango/winrt/inert.hpp"
+#include "runtime/durango/winrt/title_info.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -165,6 +167,11 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::string:
             return WindowsCreateString(known->result, static_cast<UINT32>(wcslen(known->result)),
                                        static_cast<HSTRING *>(first));
+        case Inert::title_string: {
+            const auto value = title_info(known->result);
+            return WindowsCreateString(value.c_str(), static_cast<UINT32>(value.size()),
+                                       static_cast<HSTRING *>(first));
+        }
         case Inert::shared:
             *static_cast<void **>(first) = shared_placeholder(known->result);
             break;
@@ -184,6 +191,9 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             break;
         case Inert::no_items:
             *static_cast<std::uint32_t *>(fourth) = 0;
+            break;
+        case Inert::controllers:
+            *static_cast<void **>(first) = controller_list();
             break;
         case Inert::event_add:
             *static_cast<std::int64_t *>(second) = ++tokens;
@@ -250,7 +260,15 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
     *object = nullptr;
     if (iid == marshal)
         return E_NOINTERFACE;
-    *object = make_placeholder(name, iid);
+    // A facet is only its class and interface: titles that ask every frame get the same one.
+    static std::mutex mutex;
+    static std::map<std::pair<std::wstring, std::string>, Placeholder *> facets;
+    const std::lock_guard lock(mutex);
+    auto &facet = facets[{name, text(iid)}];
+    if (!facet)
+        facet = static_cast<Placeholder *>(make_placeholder(name, iid));
+    ++facet->references;
+    *object = facet;
     return S_OK;
 }
 

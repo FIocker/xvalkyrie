@@ -85,6 +85,9 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
     if (host.SampleDesc.Count <= 1)
         host.SampleDesc = {1, 0};
+    // the console lets the CPU read a dynamic texture too
+    if (host.Usage == D3D11_USAGE_DYNAMIC)
+        host.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Texture2D *created = nullptr;
     const auto result = static_cast<ID3D11Device *>(unwrap(self))
                             ->CreateTexture2D(&host, initial, texture ? &created : nullptr);
@@ -103,6 +106,34 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     return result;
 }
 
+// CreateShaderResourceView, which says what it was given when the host refuses it
+HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource,
+                                                      const D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
+                                                      ID3D11ShaderResourceView **view) {
+    auto *const host = static_cast<ID3D11Resource *>(unwrap(resource));
+    ID3D11ShaderResourceView *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateShaderResourceView(host, desc, view ? &created : nullptr);
+    if (FAILED(result)) {
+        D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+        if (host)
+            host->GetType(&dimension);
+        std::fprintf(
+            stderr,
+            "[Runtime] CreateShaderResourceView of a resource of dimension %u: format %u "
+            "view dimension %u, words %08x %08x %08x %08x: 0x%08lx\n",
+            static_cast<unsigned>(dimension), desc ? static_cast<unsigned>(desc->Format) : 0u,
+            desc ? static_cast<unsigned>(desc->ViewDimension) : 0u,
+            desc ? desc->Buffer.FirstElement : 0u, desc ? desc->Buffer.NumElements : 0u,
+            desc ? desc->Texture2DArray.FirstArraySlice : 0u,
+            desc ? desc->Texture2DArray.ArraySize : 0u, static_cast<unsigned long>(result));
+        std::fflush(stderr);
+    } else if (view) {
+        *view = static_cast<ID3D11ShaderResourceView *>(wrap(created, Kind::view));
+    }
+    return result;
+}
+
 Layout device() {
     Layout result{"device"};
     const auto set = [&](std::size_t slot, std::initializer_list<Fix> fixes = {}) {
@@ -116,6 +147,7 @@ Layout device() {
     set(6, {created(3, Kind::texture3d)});
     for (std::size_t slot = 7; slot <= 10; ++slot) // views of a resource
         set(slot, {in(1), created(3, Kind::view)});
+    result.vtable[7] = custom(&create_shader_resource_view);
     set(11, {created(5, Kind::child)});               // input layout
     for (std::size_t slot : {12, 13, 15, 16, 17, 18}) // shaders
         set(slot, {in(3), created(4, Kind::child)});
@@ -138,13 +170,14 @@ Layout device() {
     for (std::size_t slot = 50; slot > extra_device_slot; --slot)
         result.vtable[slot] = result.vtable[slot - 1];
     result.vtable[extra_device_slot] = {};
+    // Console only: fills 16 bytes the title cleared, and takes another path if the second
+    // half says 2 or more. Left as it is.
+    result.vtable[85] = {Method::ignore};
     return result;
 }
 
-HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
-    auto *const host = static_cast<IDXGISwapChain *>(unwrap(self));
-    graphics::d3d11::frame_presented(host);
-    const auto result = host->Present(interval, flags);
+// what follows each frame the title presents, whichever way it does
+void presented() {
     if (auto *const window = winrt::current_title_window()) {
         window->show();
         static std::atomic<int> frames{0};
@@ -153,6 +186,22 @@ HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
             std::fflush(stderr);
         }
     }
+}
+HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
+    auto *const host = static_cast<IDXGISwapChain *>(unwrap(self));
+    graphics::d3d11::frame_presented(host);
+    const auto result = host->Present(interval, flags);
+    presented();
+    return result;
+}
+// Present1: the console takes no parameters to mean the whole frame, the host crashes
+HRESULT STDMETHODCALLTYPE present1(void *self, UINT interval, UINT flags,
+                                   const DXGI_PRESENT_PARAMETERS *parameters) {
+    auto *const host = static_cast<IDXGISwapChain1 *>(unwrap(self));
+    graphics::d3d11::frame_presented(host);
+    const DXGI_PRESENT_PARAMETERS whole{};
+    const auto result = host->Present1(interval, flags, parameters ? parameters : &whole);
+    presented();
     return result;
 }
 
@@ -162,6 +211,7 @@ Layout swap_chain() {
         result.vtable[slot] = forward(slot);
     result.vtable[7] = forward(7, {out_iid(2, 1)}); // GetDevice
     result.vtable[8] = custom(&present);
+    result.vtable[22] = custom(&present1);
     result.vtable[9] = forward(9, {out_iid(3, 2)}); // GetBuffer
     return result;
 }

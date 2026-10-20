@@ -67,6 +67,10 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
                 if (splash.is_null() && std::string_view(child.name()).ends_with("SplashScreen") &&
                     child.attribute("Image"))
                     splash = child.attribute("Image").value();
+    // <mx:XboxLive TitleId="..." PrimaryServiceConfigId="..."/>, wherever it is
+    const auto live = root.find_node([](pugi::xml_node node) {
+        return std::string_view(node.name()).ends_with("XboxLive") && node.attribute("TitleId");
+    });
     return {{"name", attribute(identity, "Name")},
             {"version", attribute(identity, "Version")},
             {"architecture", attribute(identity, "ProcessorArchitecture")},
@@ -75,6 +79,8 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
             {"splash", std::move(splash)},
             {"os_name", text(prerequisites.child("mx:OSName"))},
             {"environment", text(prerequisites.child("mx:ApplicationEnvironment"))},
-            {"applications", std::move(applications)}};
+            {"applications", std::move(applications)},
+            {"xbox_live_title_id", attribute(live, "TitleId")},
+            {"service_config_id", attribute(live, "PrimaryServiceConfigId")}};
 }
 } // namespace xs::appx

@@ -1,5 +1,5 @@
 if(WIN32)
-  add_library(xs_runtime_common runtime.cpp windows/execute.cpp windows/com_forward.cpp)
+  add_library(xs_runtime_common runtime.cpp windows/execute.cpp windows/com_forward.cpp windows/static_tls.cpp)
   target_compile_definitions(xs_runtime_common PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 else()
   add_library(xs_runtime_common runtime.cpp unsupported.cpp)

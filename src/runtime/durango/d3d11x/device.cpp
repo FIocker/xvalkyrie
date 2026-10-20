@@ -6,6 +6,7 @@
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <d3d11_1.h>
@@ -38,15 +39,36 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
     if (!window || !description || !swap_chain)
         return E_INVALIDARG;
     auto *const factory = static_cast<IDXGIFactory2 *>(forwarder_host(self));
+    // what a CoreWindow takes and a window handle does not
+    auto host = *description;
+    if (host.Scaling == DXGI_SCALING_ASPECT_RATIO_STRETCH)
+        host.Scaling = DXGI_SCALING_STRETCH;
+    if (host.AlphaMode != DXGI_ALPHA_MODE_UNSPECIFIED && host.AlphaMode != DXGI_ALPHA_MODE_IGNORE)
+        host.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+    const bool flip = host.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL ||
+                      host.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    if (flip) {
+        host.BufferCount = std::max(host.BufferCount, 2u);
+        host.SampleDesc = {1, 0};
+    }
+    host.Flags &= DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE |
+                  DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
+                  DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     const auto result = factory->CreateSwapChainForHwnd(
-        static_cast<IUnknown *>(d3d11x::unwrap(device)), static_cast<HWND>(window->native()),
-        description, nullptr, nullptr, swap_chain);
+        static_cast<IUnknown *>(d3d11x::unwrap(device)), static_cast<HWND>(window->native()), &host,
+        nullptr, nullptr, swap_chain);
     if (SUCCEEDED(result))
         *swap_chain =
             static_cast<IDXGISwapChain1 *>(d3d11x::wrap(*swap_chain, d3d11x::Kind::swap_chain));
-    std::fprintf(stderr, "[Runtime] swap chain %ux%u format %u for the title window: 0x%08lx\n",
-                 description->Width, description->Height,
-                 static_cast<unsigned>(description->Format), static_cast<unsigned long>(result));
+    std::fprintf(
+        stderr,
+        "[Runtime] swap chain %ux%u format %u buffers %u effect %u scaling %u alpha %u "
+        "samples %u usage 0x%x flags 0x%x for the title window: 0x%08lx\n",
+        description->Width, description->Height, static_cast<unsigned>(description->Format),
+        description->BufferCount, static_cast<unsigned>(description->SwapEffect),
+        static_cast<unsigned>(description->Scaling), static_cast<unsigned>(description->AlphaMode),
+        description->SampleDesc.Count, static_cast<unsigned>(description->BufferUsage),
+        description->Flags, static_cast<unsigned long>(result));
     std::fflush(stderr);
     return result;
 }

@@ -30,6 +30,7 @@ constexpr auto game_transport_controls = guid("f5ba60d7-9303-44cd-ac0c-4e532702c
 constexpr auto current_app = guid("d52dc065-da3f-4685-995e-9b482eb5e603");
 constexpr auto user_statics = guid("b4f23a93-7fc6-4a50-b153-950016389e50");
 constexpr auto network_statics = guid("5074f851-950d-4165-9c15-365619481eea");
+constexpr auto xbox_live_statics = guid("00193376-6a84-4c67-84a5-3b8a8aaea712");
 
 constexpr wchar_t transport[] = L"Windows.Xbox.Media.GameTransportControls";
 constexpr wchar_t store[] = L"Windows.ApplicationModel.Store.CurrentApp";
@@ -88,6 +89,18 @@ constexpr Row rows[] = {
     {L"Windows.Xbox.Input.Controller",
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
      11,
+     {Inert::event_add}},
+    {L"Windows.Xbox.Input.Controller", // Controllers: the gamepad is the one there is
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     6,
+     {Inert::controllers}},
+    {L"Windows.Xbox.Input.Controller", // ControllerAdded, ControllerRemoved
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     7,
+     {Inert::event_add}},
+    {L"Windows.Xbox.Input.Controller",
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     9,
      {Inert::event_add}},
     {L"Windows.Xbox.System.User",
      guid("b4f23a93-7fc6-4a50-b153-950016389e50"),
@@ -192,6 +205,19 @@ constexpr Row rows[] = {
      6,
      {Inert::zero64}},
     {L"Windows.Xbox.System.User", direct, 7, {Inert::empty_list}},
+    // IXboxLiveConfigurationStatics: TitleId (decimal), PrimaryServiceConfigId, SandboxId
+    {L"Windows.Xbox.Services.XboxLiveConfiguration",
+     xbox_live_statics,
+     6,
+     {Inert::title_string, L"title_id"}},
+    {L"Windows.Xbox.Services.XboxLiveConfiguration",
+     xbox_live_statics,
+     7,
+     {Inert::title_string, L"service_config_id"}},
+    {L"Windows.Xbox.Services.XboxLiveConfiguration",
+     xbox_live_statics,
+     8,
+     {Inert::title_string, L"sandbox_id"}},
 };
 } // namespace
 

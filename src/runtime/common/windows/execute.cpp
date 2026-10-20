@@ -3,6 +3,7 @@
 #include "host/files.hpp"
 #include "loader/image.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/common/windows/static_tls.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -254,8 +255,6 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     const auto &contents = pe.at("directory_contents");
     if (!(pe.at("characteristics").get<std::uint64_t>() & 0x2000))
         throw std::runtime_error(name + " is not a DLL");
-    if (contents.contains("tls"))
-        throw std::runtime_error("Unsupported: " + name + " declares static thread-local storage");
     loader::MapOptions options;
     options.executable = true;
     options.resolve = resolve;
@@ -265,6 +264,8 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     const auto &layout = module.image->report();
     module.base = module.image->guest_base();
     module.size = layout.at("size_of_image");
+    if (contents.contains("tls"))
+        install_static_tls(contents.at("tls"), module.base, pe.at("image_base"));
     if (pe.at("entry_rva").get<std::uint64_t>())
         module.entry = layout.at("entry_va");
     if (contents.contains("exports"))
@@ -442,8 +443,6 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         throw std::runtime_error("The image is a DLL, not an executable");
     if (!pe.at("entry_rva").get<std::uint64_t>())
         throw std::runtime_error("The image has no entry point");
-    if (contents.contains("tls"))
-        throw std::runtime_error("Unsupported: the image declares static thread-local storage");
     if (contents.contains("delay_imports"))
         throw std::runtime_error("Unsupported: the image declares delay-load imports");
 
@@ -503,6 +502,8 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         throw std::runtime_error("Cannot protect import stubs");
     state.base = image.guest_base();
     state.size = layout.at("size_of_image");
+    if (contents.contains("tls"))
+        install_static_tls(contents.at("tls"), state.base, pe.at("image_base"));
 
     // needed for SEH and C++ exceptions inside the guest
     const auto &directories = pe.at("directory_descriptors");

@@ -52,9 +52,10 @@ HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **
 } // namespace
 
 void install_winrt(Registry &registry) {
-    registry.add("vccorlib110.dll",
-                 "?GetActivationFactoryByPCWSTR@@YAJPEAXAEAVGuid@Platform@@PEAPEAX@Z",
-                 reinterpret_cast<void *>(&activation_factory));
+    // titles built with Visual Studio 2012 use the first, later ones the second
+    for (const auto *module : {"vccorlib110.dll", "vccorlib140.dll"})
+        registry.add(module, "?GetActivationFactoryByPCWSTR@@YAJPEAXAEAVGuid@Platform@@PEAPEAX@Z",
+                     reinterpret_cast<void *>(&activation_factory));
 }
 } // namespace xs::runtime::durango
 #else

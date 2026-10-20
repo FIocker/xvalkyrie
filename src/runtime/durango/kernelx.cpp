@@ -90,6 +90,14 @@ void install_kernelx(Registry &registry) {
     registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
+    // ETW is in kernelx on the console; on the desktop kernelbase has it, not kernel32
+    if (const auto base = LoadLibraryExW(L"kernelbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+        for (const auto *name :
+             {"EventRegister", "EventUnregister", "EventWrite", "EventWriteEx", "EventWriteString",
+              "EventWriteTransfer", "EventEnabled", "EventProviderEnabled", "EventSetInformation",
+              "EventActivityIdControl", "TraceEvent"})
+            if (const auto function = GetProcAddress(base, name))
+                registry.add("kernelx.dll", name, reinterpret_cast<void *>(function));
     for (const auto *name : {"XMemAllocDefault", "XMemAlloc"})
         registry.add("kernelx.dll", name, reinterpret_cast<void *>(&xmem_alloc));
     for (const auto *name : {"XMemFreeDefault", "XMemFree"})
