@@ -22,6 +22,7 @@ namespace {
 constexpr wchar_t class_name[] = L"XScarletTitle";
 std::atomic<HWND> surface{nullptr};
 std::atomic<bool> shown{false};
+std::atomic<bool> covered{false};
 
 LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wide, LPARAM value) {
     switch (message) {
@@ -77,6 +78,11 @@ void set_title_area(int x, int y, int width, int height) {
         SetWindowPos(handle, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 bool title_window_shown() { return shown; }
+void set_title_covered(bool hidden) {
+    const auto handle = surface.load();
+    if (covered.exchange(hidden) != hidden && handle && shown)
+        ShowWindowAsync(handle, hidden ? SW_HIDE : SW_SHOWNA);
+}
 
 TitleWindow::TitleWindow(const std::wstring &title, int width, int height) {
     if (const auto handle = surface.load()) {
@@ -133,7 +139,7 @@ TitleWindow::~TitleWindow() {
     delete thread_;
 }
 void TitleWindow::show() {
-    if (!shown.exchange(true))
+    if (!shown.exchange(true) && (owned_ || !covered))
         ShowWindowAsync(static_cast<HWND>(handle_), SW_SHOWNA);
 }
 bool TitleWindow::open() const {

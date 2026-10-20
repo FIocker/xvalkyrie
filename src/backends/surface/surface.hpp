@@ -10,6 +10,10 @@ void set_title_parent(void *parent);
 void set_title_area(int x, int y, int width, int height);
 // true while a title is showing frames, which starts with its first one
 bool title_window_shown();
+// The interface has something where the surface is (a menu, the settings), which a native
+// child window would hide: the surface is hidden until this is called with false. The
+// title keeps running. Same thread as set_title_parent.
+void set_title_covered(bool covered);
 
 // The window a title presents into: the surface inside the parent if there is one,
 // otherwise a window of its own. Either way its messages are handled by another thread

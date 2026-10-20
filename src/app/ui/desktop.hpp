@@ -19,6 +19,9 @@ struct DesktopHooks {
     std::function<void(void *native_window)> host;
     std::function<void(int x, int y, int width, int height)> area;
     std::function<bool()> showing;
+    // Whether the interface has something on top of the title's rectangle (a menu, the
+    // settings) that the title would hide; called when that changes. Optional.
+    std::function<void(bool covered)> covered;
     // How many frames the title has presented so far; the status bar shows the rate while
     // a title is on screen. Optional.
     std::function<std::uint64_t()> frames;

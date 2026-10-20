@@ -34,6 +34,7 @@ class Settings {
         open_ = true;
         raise_ = true;
     }
+    bool shown() const { return open_; }
     // While the input page is up the keyboard is for choosing keys, not for the title.
     bool input_shown() const { return open_ && page_ == Page::input; }
     // true while a control waits for the key to bind to it: give the next one to key()

@@ -197,6 +197,14 @@ class Desktop {
         content();
         settings_.draw(ui_.fonts, settings_host_,
                        {libraries_, titles_.size(), discovery_.valid(), library_notice_});
+        // the title is a native window over the interface: out of the way of what is open
+        const bool covered =
+            settings_.shown() ||
+            ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (covered != covered_ && hooks_.covered) {
+            covered_ = covered;
+            hooks_.covered(covered);
+        }
     }
 
   private:
@@ -918,6 +926,7 @@ class Desktop {
     ui::Settings settings_;
     ui::Settings::Host settings_host_;
     int exit_code_ = 0;
+    bool covered_ = false; // what hooks_.covered was last told
 };
 } // namespace
 
