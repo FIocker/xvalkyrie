@@ -1,6 +1,7 @@
 #include "runtime/durango/winrt/async.hpp"
 #include <asyncinfo.h>
 #include <atomic>
+#include <cstring>
 #include <inspectable.h>
 #include <windows.h>
 
@@ -16,6 +17,8 @@ class Operation final : public IOperation, public IAsyncInfo {
   public:
     Operation(IUnknown *result, bool action, HRESULT error = S_OK)
         : result_(result), action_(action), error_(error) {}
+    Operation(unsigned long long value, unsigned size)
+        : result_(nullptr), action_(false), error_(S_OK), value_(value), size_(size) {}
     // The interface ID of IAsyncOperation<T> depends on T, so anything that is not
     // IAsyncInfo is taken to be the operation itself.
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
@@ -70,6 +73,10 @@ class Operation final : public IOperation, public IAsyncInfo {
     STDMETHODIMP GetResults(void **result) override {
         if (FAILED(error_) || action_)
             return error_;
+        if (size_) {
+            std::memcpy(result, &value_, size_);
+            return S_OK;
+        }
         *result = result_;
         if (result_)
             result_->AddRef();
@@ -95,6 +102,8 @@ class Operation final : public IOperation, public IAsyncInfo {
     IUnknown *result_;
     bool action_;
     HRESULT error_;
+    unsigned long long value_ = 0;
+    unsigned size_ = 0; // of the value, 0 for an object result
     AsyncStatus status() const {
         return FAILED(error_) ? AsyncStatus::Error : AsyncStatus::Completed;
     }
@@ -109,6 +118,9 @@ void *make_failed_action(long error) {
 }
 void *make_failed_operation(long error) {
     return static_cast<IOperation *>(new Operation(nullptr, false, error));
+}
+void *make_completed_value(unsigned long long value, unsigned size) {
+    return static_cast<IOperation *>(new Operation(value, size));
 }
 void *make_completed_action() { return static_cast<IOperation *>(new Operation(nullptr, true)); }
 } // namespace xs::runtime::durango::winrt

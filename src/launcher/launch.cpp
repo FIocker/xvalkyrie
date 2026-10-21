@@ -65,7 +65,10 @@ std::filesystem::path title_executable(const std::filesystem::path &path) {
 
 std::filesystem::path title_save_directory(const std::filesystem::path &path) {
     std::filesystem::path directory;
-    const auto manifest = read_manifest(path, directory);
+    auto manifest = read_manifest(path, directory);
+    // an executable is the same title as the package it is in
+    if (manifest.is_null() && std::filesystem::is_regular_file(path.parent_path() / manifest_name))
+        manifest = read_manifest(path.parent_path(), directory);
     const auto stem = path.stem().u8string();
     std::string name = manifest.is_object() && manifest.at("name").is_string()
                            ? manifest.at("name").get<std::string>()

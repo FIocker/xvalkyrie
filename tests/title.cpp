@@ -152,6 +152,7 @@ TEST_CASE("library discovery") {
     CHECK(std::count_if(changed.begin(), changed.end(),
                         [](const auto &title) { return title.name == "Sample Title"; }) == 1);
     CHECK(xs::title_save_directory(game).filename() == "Sample");
+    CHECK(xs::title_save_directory(game / "Mount" / "game.exe") == xs::title_save_directory(game));
     CHECK(xs::title_save_directory(game).parent_path().filename() == "saves");
 }
 

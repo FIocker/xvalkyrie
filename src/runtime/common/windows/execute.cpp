@@ -123,13 +123,21 @@ struct Override {
     std::string_view symbol;
     void *function;
 };
+// The title's own filter for unhandled exceptions, which runs after ours has reported them
+LPTOP_LEVEL_EXCEPTION_FILTER title_filter = nullptr;
+LPTOP_LEVEL_EXCEPTION_FILTER WINAPI
+set_unhandled_exception_filter(LPTOP_LEVEL_EXCEPTION_FILTER filter) {
+    return std::exchange(title_filter, filter);
+}
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
-const Override overrides[] = {{"GetModuleHandleW", erase(get_module_handle_w)},
-                              {"GetModuleHandleA", erase(get_module_handle_a)},
-                              {"GetModuleHandleExW", erase(get_module_handle_ex_w)},
-                              {"GetModuleFileNameW", erase(get_module_file_name_w)},
-                              {"GetModuleFileNameA", erase(get_module_file_name_a)},
-                              {"_CxxThrowException", erase(cxx_throw_exception)}};
+const Override overrides[] = {
+    {"GetModuleHandleW", erase(get_module_handle_w)},
+    {"GetModuleHandleA", erase(get_module_handle_a)},
+    {"GetModuleHandleExW", erase(get_module_handle_ex_w)},
+    {"GetModuleFileNameW", erase(get_module_file_name_w)},
+    {"GetModuleFileNameA", erase(get_module_file_name_a)},
+    {"_CxxThrowException", erase(cxx_throw_exception)},
+    {"SetUnhandledExceptionFilter", erase(set_unhandled_exception_filter)}};
 
 void report_recent_calls();
 [[noreturn]] void unimplemented(std::uint32_t index) {
@@ -376,7 +384,7 @@ LONG WINAPI unhandled(EXCEPTION_POINTERS *info) {
         std::fprintf(stderr, "[Runtime] on thread %lu:\n", GetCurrentThreadId());
         report_fault(info);
     }
-    return EXCEPTION_CONTINUE_SEARCH;
+    return title_filter ? title_filter(info) : EXCEPTION_CONTINUE_SEARCH;
 }
 #endif
 DWORD WINAPI guest_thread(void *start) {

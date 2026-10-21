@@ -205,6 +205,26 @@ constexpr Row rows[] = {
      6,
      {Inert::zero64}},
     {L"Windows.Xbox.System.User", direct, 7, {Inert::empty_list}},
+    // ShowAccountPickerAsync(controller, options, IAsyncOperation<AccountPickerResult> **)
+    {L"Windows.Xbox.UI.SystemUI",
+     guid("1a0dd80e-3f9d-4cfa-8e50-0e2ebd1aa72f"),
+     10,
+     {Inert::operation_at, L"Windows.Xbox.UI.AccountPickerResult", 3}},
+    {L"Windows.Xbox.UI.AccountPickerResult", direct, 6, {Inert::shared, user}}, // User
+    {user, direct, 6, {Inert::one32}},                                          // Id
+    {user, direct, 8, {Inert::controllers}},                                    // Controllers
+    {user, direct, 12, {Inert::zero32}},                                        // Location
+    {user, direct, 13, {Inert::zero64}},                                        // Sponsor: none
+    {user, direct, 14, {Inert::string, L"0000000000000001"}},                   // XboxUserHash
+    // GetTokenAndSignatureAsync, three overloads: there is no network to sign with
+    {user, direct, 16, {Inert::offline, nullptr, 4}},
+    {user, direct, 17, {Inert::offline, nullptr, 6}},
+    {user, direct, 18, {Inert::offline, nullptr, 5}},
+    // a getter of an object the title does without when there is none
+    {L"Windows.ApplicationModel.Core.CoreApplication",
+     guid("1ada0e3e-e4a2-4123-b451-dc96bf800419"),
+     6,
+     {Inert::zero64}},
     // IXboxLiveConfigurationStatics: TitleId (decimal), PrimaryServiceConfigId, SandboxId
     {L"Windows.Xbox.Services.XboxLiveConfiguration",
      xbox_live_statics,

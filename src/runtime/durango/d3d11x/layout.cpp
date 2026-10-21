@@ -103,6 +103,16 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     } else if (texture) {
         *texture = static_cast<ID3D11Texture2D *>(wrap(created, Kind::texture2d));
     }
+    // every format once: what the title draws with
+    static std::atomic<std::uint64_t> seen[3]{};
+    const auto format = static_cast<unsigned>(host.Format);
+    if (format < 192 &&
+        !(seen[format / 64].fetch_or(1ull << (format % 64)) & (1ull << (format % 64)))) {
+        std::fprintf(stderr, "[Runtime] first 2D texture of format %u: %ux%u usage %u bind 0x%x\n",
+                     format, host.Width, host.Height, static_cast<unsigned>(host.Usage),
+                     host.BindFlags);
+        std::fflush(stderr);
+    }
     return result;
 }
 

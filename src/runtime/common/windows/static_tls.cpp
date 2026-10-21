@@ -1,4 +1,5 @@
 #include "runtime/common/windows/static_tls.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -21,7 +22,9 @@ template <class T> void put(std::vector<std::uint8_t> &bytes, std::size_t at, co
 }
 
 // One section with the TLS directory, the index the loader fills in, the callbacks, the
-// template and the relocations of the directory's addresses; no code, imports or entry point.
+// template, the relocations of the directory's addresses and one import. The import is what
+// makes the system set up the TLS: it does that while it binds a DLL's imports, and skips
+// it for a DLL that has none. No code and no entry point.
 std::vector<std::uint8_t> make_dll(const std::uint8_t *data, std::size_t size,
                                    std::uint32_t zero_fill, std::uint32_t characteristics,
                                    const std::vector<std::uint64_t> &callbacks) {
@@ -29,7 +32,13 @@ std::vector<std::uint8_t> make_dll(const std::uint8_t *data, std::size_t size,
     const std::size_t template_at = align(callbacks_at + 8 * (callbacks.size() + 1), 16);
     const std::size_t relocations_at = align(template_at + size, 4);
     constexpr std::size_t relocations_size = sizeof(IMAGE_BASE_RELOCATION) + 4 * sizeof(WORD);
-    const std::size_t content = relocations_at + relocations_size;
+    // kernel32!GetTickCount: descriptors (the last one empty), lookup and address tables
+    constexpr char function[] = "\0\0GetTickCount", library[] = "kernel32.dll";
+    const std::size_t imports_at = align(relocations_at + relocations_size, 8);
+    const std::size_t lookup_at = imports_at + 2 * sizeof(IMAGE_IMPORT_DESCRIPTOR);
+    const std::size_t addresses_at = lookup_at + 16, function_at = addresses_at + 16;
+    const std::size_t library_at = align(function_at + sizeof function, 2);
+    const std::size_t content = library_at + sizeof library;
     const std::size_t raw = align(content, file_alignment);
 
     std::vector<std::uint8_t> bytes(file_alignment + raw);
@@ -63,6 +72,11 @@ std::vector<std::uint8_t> make_dll(const std::uint8_t *data, std::size_t size,
     optional.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
     optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS] = {section_rva,
                                                          sizeof(IMAGE_TLS_DIRECTORY64)};
+    optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT] = {
+        static_cast<DWORD>(section_rva + imports_at),
+        static_cast<DWORD>(2 * sizeof(IMAGE_IMPORT_DESCRIPTOR))};
+    optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT] = {
+        static_cast<DWORD>(section_rva + addresses_at), 16};
     optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC] = {
         static_cast<DWORD>(section_rva + relocations_at), static_cast<DWORD>(relocations_size)};
     put(bytes, sizeof dos, nt);
@@ -91,6 +105,16 @@ std::vector<std::uint8_t> make_dll(const std::uint8_t *data, std::size_t size,
     std::memcpy(body + callbacks_at, callbacks.data(), 8 * callbacks.size());
     if (size)
         std::memcpy(body + template_at, data, size);
+    IMAGE_IMPORT_DESCRIPTOR import{};
+    import.OriginalFirstThunk = static_cast<DWORD>(section_rva + lookup_at);
+    import.Name = static_cast<DWORD>(section_rva + library_at);
+    import.FirstThunk = static_cast<DWORD>(section_rva + addresses_at);
+    std::memcpy(body + imports_at, &import, sizeof import);
+    const std::uint64_t by_name = section_rva + function_at;
+    std::memcpy(body + lookup_at, &by_name, sizeof by_name);
+    std::memcpy(body + addresses_at, &by_name, sizeof by_name);
+    std::memcpy(body + function_at, function, sizeof function);
+    std::memcpy(body + library_at, library, sizeof library);
     const IMAGE_BASE_RELOCATION block{section_rva, static_cast<DWORD>(relocations_size)};
     std::memcpy(body + relocations_at, &block, sizeof block);
     for (WORD i = 0; i < 4; ++i) {

@@ -3,6 +3,8 @@
 #include "runtime/durango/storage.hpp"
 #include "runtime/durango/winrt/async.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
+#include "runtime/durango/winrt/title_info.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -15,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <roapi.h>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -28,9 +31,13 @@ constexpr std::size_t method_count = 32;
 constexpr wchar_t space_class[] = L"Windows.Xbox.Storage.ConnectedStorageSpace";
 constexpr wchar_t container_class[] = L"Windows.Xbox.Storage.ConnectedStorageContainer";
 constexpr wchar_t query_class[] = L"Windows.Xbox.Storage.ContainerInfoQueryResult";
+constexpr wchar_t blob_query_class[] = L"Windows.Xbox.Storage.BlobInfoQueryResult";
 constexpr wchar_t user_class[] = L"Windows.Xbox.System.User";
 // what titles get for a blob or container that is not there
 constexpr HRESULT not_found = static_cast<HRESULT>(0x80830008);
+#ifndef E_BOUNDS
+#define E_BOUNDS static_cast<HRESULT>(0x8000000B)
+#endif
 
 constexpr GUID unknown_iid{0, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
 constexpr GUID inspectable_iid{
@@ -39,12 +46,14 @@ constexpr GUID agile_iid{
     0x94ea2b94, 0xe9cc, 0x49e0, {0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90}};
 constexpr GUID marshal_iid{0x00000003, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
 constexpr GUID factory_iid{0x00000035, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
-// IConnectedStorageSpaceStatics: GetForMachineAsync() is method 8
+// IConnectedStorageSpaceStatics: GetForUserAsync(User) is method 6, GetForMachineAsync() 8
 constexpr GUID space_statics{
     0x07020414, 0xb3e9, 0x47c8, {0xa3, 0x6f, 0xf2, 0x4e, 0x2d, 0xc6, 0x55, 0x73}};
 // the other statics interface: method 6 takes the user and gives the user's space
 constexpr GUID space_statics2{
     0xdf3fe390, 0x13fa, 0x4814, {0x91, 0xc1, 0xfb, 0x92, 0xf9, 0x0f, 0x64, 0x1d}};
+// IConnectedStorageSpace2: GetRemainingBytesInQuota64Async
+constexpr GUID space2{0xbc5b91a7, 0x2afc, 0x46fd, {0x81, 0xd4, 0x74, 0xb8, 0x18, 0x8d, 0x74, 0x8a}};
 // IConnectedStorageContainer2: SubmitUpdatesAsync with a display name is method 6
 constexpr GUID container2{
     0xaf964b72, 0xec65, 0x46de, {0x93, 0x5c, 0x84, 0x5a, 0xd0, 0x19, 0x4f, 0x0d}};
@@ -183,39 +192,9 @@ std::shared_ptr<SaveSpace> open_space(const char *kind) {
     return std::make_shared<SaveSpace>(root / kind);
 }
 
-// ContainerInfo2 as titles read it back from the vector view. The field order is that of
-// the metadata of the desktop GameSaveContainerInfo, which was made from it: a guess.
-struct ContainerInfo2 {
-    HSTRING name;
-    std::uint64_t total_size;
-    HSTRING display_name;
-    std::int64_t last_modified; // Windows::Foundation::DateTime
-    boolean needs_sync;
-};
-static_assert(sizeof(ContainerInfo2) == 40);
-
-// IVectorView<ContainerInfo2>. Every interface asked for is taken to be the view, like
-// make_vector_view does.
-struct IInfoView : IInspectable {
-    virtual HRESULT STDMETHODCALLTYPE GetAt(unsigned index, ContainerInfo2 *item) = 0;
-    virtual HRESULT STDMETHODCALLTYPE get_Size(unsigned *size) = 0;
-    virtual HRESULT STDMETHODCALLTYPE IndexOf(void *item, unsigned *index, boolean *found) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetMany(unsigned start, unsigned capacity,
-                                              ContainerInfo2 *items, unsigned *actual) = 0;
-};
-class InfoView final : public IInfoView {
+// Bits every object here has: COM identity for one interface, and a count.
+template <class Interface> class Counted : public Interface {
   public:
-    explicit InfoView(std::vector<SaveSpace::Container> items) : items_(std::move(items)) {}
-    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
-        if (!object)
-            return E_POINTER;
-        *object = nullptr;
-        if (iid == marshal_iid)
-            return E_NOINTERFACE;
-        *object = static_cast<IInfoView *>(this);
-        AddRef();
-        return S_OK;
-    }
     STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
     STDMETHODIMP_(ULONG) Release() override {
         const auto left = --references_;
@@ -236,14 +215,156 @@ class InfoView final : public IInfoView {
         *level = BaseTrust;
         return S_OK;
     }
-    STDMETHODIMP GetAt(unsigned index, ContainerInfo2 *item) override {
-        if (index >= items_.size())
-            return static_cast<HRESULT>(0x8000000B); // E_BOUNDS
-        fill(items_[index], *item);
+    virtual ~Counted() = default;
+
+  private:
+    std::atomic<ULONG> references_{1};
+};
+
+// The three structs of the queries, as the metadata has them (the interface IDs computed
+// from these signatures are the ones titles ask for):
+//   ContainerInfo  {String Name; UInt32 TotalSize}
+//   ContainerInfo2 {String Name; UInt64 TotalSize; String DisplayName; DateTime
+//                   LastModifiedTime; Boolean NeedsSync}
+//   BlobInfo       {String Name; UInt32 Size}
+enum class Shape { container, container2, blob };
+struct ContainerInfo {
+    HSTRING name;
+    std::uint32_t total_size;
+};
+struct ContainerInfo2 {
+    HSTRING name;
+    std::uint64_t total_size;
+    HSTRING display_name;
+    std::int64_t last_modified;
+    boolean needs_sync;
+};
+static_assert(sizeof(ContainerInfo) == 16 && sizeof(ContainerInfo2) == 40);
+struct Record {
+    std::string name, display_name;
+    std::uint64_t size = 0;
+    std::chrono::system_clock::time_point modified;
+};
+constexpr GUID view_iids[] = {
+    {0x6074aba5, 0x5f5d, 0x5595, {0xb7, 0x09, 0xa1, 0x3b, 0x89, 0xec, 0xf8, 0x46}},
+    {0xe8cc68f3, 0x4c1f, 0x5f92, {0xb0, 0xb6, 0x0a, 0x43, 0xc2, 0x47, 0x19, 0x73}},
+    {0x51b469a2, 0x6c7f, 0x5109, {0x8e, 0x13, 0xac, 0x20, 0x9d, 0x44, 0xac, 0x29}}};
+constexpr GUID iterable_iids[] = {
+    {0xf0e21fa2, 0xf44a, 0x54d2, {0xbe, 0xe2, 0x0e, 0x84, 0xf1, 0x01, 0xc8, 0xe3}},
+    {0x53f0bb98, 0x9aef, 0x5d69, {0x9c, 0xf4, 0xba, 0x72, 0x2a, 0xf7, 0x80, 0xde}},
+    {0x14cc6c4b, 0x2594, 0x55a4, {0xb0, 0xae, 0x78, 0x1d, 0x25, 0x3a, 0xf0, 0x9f}}};
+std::size_t stride(Shape shape) {
+    return shape == Shape::container2 ? sizeof(ContainerInfo2) : sizeof(ContainerInfo);
+}
+// writes the struct of `shape` for `from` at `to`; the strings are the caller's to free
+void fill(Shape shape, const Record &from, void *to) {
+    if (shape != Shape::container2) {
+        const ContainerInfo info{hstring(from.name), static_cast<std::uint32_t>(from.size)};
+        std::memcpy(to, &info, sizeof info);
+        return;
+    }
+    // DateTime counts 100 ns from 1601, the system clock from 1970
+    constexpr std::int64_t from_1601 = 116444736000000000;
+    const auto since_1970 =
+        std::chrono::duration_cast<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
+            from.modified.time_since_epoch());
+    const ContainerInfo2 info{hstring(from.name), from.size, hstring(from.display_name),
+                              since_1970.count() + from_1601, false};
+    std::memcpy(to, &info, sizeof info);
+}
+
+// IVectorView<T> and IIterable<T> of one of the structs; IIterator<T> over it.
+struct IStructView : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE GetAt(unsigned index, void *item) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Size(unsigned *size) = 0;
+    virtual HRESULT STDMETHODCALLTYPE IndexOf(void *item, unsigned *index, boolean *found) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMany(unsigned start, unsigned capacity, void *items,
+                                              unsigned *actual) = 0;
+};
+struct IStructIterator : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_Current(void *item) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_HasCurrent(boolean *has) = 0;
+    virtual HRESULT STDMETHODCALLTYPE MoveNext(boolean *has) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMany(unsigned capacity, void *items, unsigned *actual) = 0;
+};
+struct Records {
+    Shape shape;
+    std::vector<Record> items;
+};
+class StructIterator final : public Counted<IStructIterator> {
+  public:
+    explicit StructIterator(std::shared_ptr<const Records> records)
+        : records_(std::move(records)) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        *object = iid == marshal_iid ? nullptr : static_cast<IStructIterator *>(this);
+        if (!*object)
+            return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP get_Current(void *item) override {
+        if (at_ >= records_->items.size())
+            return E_BOUNDS;
+        fill(records_->shape, records_->items[at_], item);
+        return S_OK;
+    }
+    STDMETHODIMP get_HasCurrent(boolean *has) override {
+        *has = at_ < records_->items.size();
+        return S_OK;
+    }
+    STDMETHODIMP MoveNext(boolean *has) override {
+        if (at_ < records_->items.size())
+            ++at_;
+        return get_HasCurrent(has);
+    }
+    STDMETHODIMP GetMany(unsigned capacity, void *items, unsigned *actual) override {
+        unsigned count = 0;
+        for (; count < capacity && at_ < records_->items.size(); ++count, ++at_)
+            fill(records_->shape, records_->items[at_],
+                 static_cast<char *>(items) + count * stride(records_->shape));
+        *actual = count;
+        return S_OK;
+    }
+
+  private:
+    std::shared_ptr<const Records> records_;
+    std::size_t at_ = 0;
+};
+class StructView final : public Counted<IStructView>, public IIterableRaw {
+  public:
+    explicit StructView(Records records)
+        : records_(std::make_shared<const Records>(std::move(records))) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = nullptr;
+        const auto shape = static_cast<std::size_t>(records_->shape);
+        if (iid == marshal_iid)
+            return E_NOINTERFACE;
+        if (iid == iterable_iids[shape])
+            *object = static_cast<IIterableRaw *>(this);
+        else // the view itself, under whatever name the title has for it
+            *object = static_cast<IStructView *>(this);
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return Counted::AddRef(); }
+    STDMETHODIMP_(ULONG) Release() override { return Counted::Release(); }
+    STDMETHODIMP GetIids(ULONG *count, IID **iids) override {
+        return Counted::GetIids(count, iids);
+    }
+    STDMETHODIMP GetRuntimeClassName(HSTRING *name) override {
+        return Counted::GetRuntimeClassName(name);
+    }
+    STDMETHODIMP GetTrustLevel(TrustLevel *level) override { return Counted::GetTrustLevel(level); }
+    STDMETHODIMP GetAt(unsigned index, void *item) override {
+        if (index >= records_->items.size())
+            return E_BOUNDS;
+        fill(records_->shape, records_->items[index], item);
         return S_OK;
     }
     STDMETHODIMP get_Size(unsigned *size) override {
-        *size = static_cast<unsigned>(items_.size());
+        *size = static_cast<unsigned>(records_->items.size());
         return S_OK;
     }
     STDMETHODIMP IndexOf(void *, unsigned *index, boolean *found) override {
@@ -251,37 +372,195 @@ class InfoView final : public IInfoView {
         *found = false;
         return E_NOTIMPL;
     }
-    STDMETHODIMP GetMany(unsigned start, unsigned capacity, ContainerInfo2 *items,
+    STDMETHODIMP GetMany(unsigned start, unsigned capacity, void *items,
                          unsigned *actual) override {
         unsigned count = 0;
-        for (; count < capacity && start + count < items_.size(); ++count)
-            fill(items_[start + count], items[count]);
+        for (; count < capacity && start + count < records_->items.size(); ++count)
+            fill(records_->shape, records_->items[start + count],
+                 static_cast<char *>(items) + count * stride(records_->shape));
+        *actual = count;
+        return S_OK;
+    }
+    STDMETHODIMP First(IInspectable **iterator) override {
+        *iterator = new StructIterator(records_);
+        return S_OK;
+    }
+
+  private:
+    std::shared_ptr<const Records> records_;
+};
+
+// IMapView<String, IBuffer> of blobs read by GetAsync, with buffers of the host's.
+constexpr GUID blob_map_view{
+    0x2cfeec4f, 0xe261, 0x5f4c, {0xae, 0xe1, 0xc7, 0x85, 0x18, 0xe9, 0xd5, 0xb9}};
+struct IBlobMapView : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE Lookup(HSTRING key, IInspectable **value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Size(unsigned *size) = 0;
+    virtual HRESULT STDMETHODCALLTYPE HasKey(HSTRING key, boolean *found) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Split(IInspectable **first, IInspectable **second) = 0;
+};
+struct IPairIterator : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_Current(IInspectable **pair) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_HasCurrent(boolean *has) = 0;
+    virtual HRESULT STDMETHODCALLTYPE MoveNext(boolean *has) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMany(unsigned capacity, IInspectable **items,
+                                              unsigned *actual) = 0;
+};
+using Blobs = std::map<std::string, Ref<IBufferRaw>>;
+class Pair final : public Counted<IKeyValuePairRaw> {
+  public:
+    Pair(std::string key, IBufferRaw *value) : key_(std::move(key)), value_(value) {
+        value_->AddRef();
+    }
+    ~Pair() override { value_->Release(); }
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        *object = iid == marshal_iid ? nullptr : static_cast<IKeyValuePairRaw *>(this);
+        if (!*object)
+            return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP get_Key(HSTRING *key) override {
+        *key = hstring(key_);
+        return S_OK;
+    }
+    STDMETHODIMP get_Value(IInspectable **value) override {
+        value_->AddRef();
+        *value = value_;
+        return S_OK;
+    }
+
+  private:
+    std::string key_;
+    IBufferRaw *value_;
+};
+class PairIterator final : public Counted<IPairIterator> {
+  public:
+    explicit PairIterator(std::shared_ptr<const Blobs> blobs)
+        : blobs_(std::move(blobs)), at_(blobs_->begin()) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        *object = iid == marshal_iid ? nullptr : static_cast<IPairIterator *>(this);
+        if (!*object)
+            return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP get_Current(IInspectable **pair) override {
+        if (at_ == blobs_->end())
+            return E_BOUNDS;
+        *pair = new Pair(at_->first, at_->second.pointer);
+        return S_OK;
+    }
+    STDMETHODIMP get_HasCurrent(boolean *has) override {
+        *has = at_ != blobs_->end();
+        return S_OK;
+    }
+    STDMETHODIMP MoveNext(boolean *has) override {
+        if (at_ != blobs_->end())
+            ++at_;
+        return get_HasCurrent(has);
+    }
+    STDMETHODIMP GetMany(unsigned capacity, IInspectable **items, unsigned *actual) override {
+        unsigned count = 0;
+        for (; count < capacity && at_ != blobs_->end(); ++count, ++at_)
+            items[count] = new Pair(at_->first, at_->second.pointer);
         *actual = count;
         return S_OK;
     }
 
   private:
-    static void fill(const SaveSpace::Container &from, ContainerInfo2 &to) {
-        // DateTime counts 100 ns from 1601, the system clock from 1970
-        constexpr std::int64_t from_1601 = 116444736000000000;
-        const auto since_1970 = std::chrono::duration_cast<
-            std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
-            from.modified.time_since_epoch());
-        to = {hstring(from.name), from.size, hstring(from.display_name),
-              since_1970.count() + from_1601, false};
-    }
-    std::atomic<ULONG> references_{1};
-    std::vector<SaveSpace::Container> items_;
+    std::shared_ptr<const Blobs> blobs_;
+    Blobs::const_iterator at_;
 };
+class BlobMap final : public Counted<IBlobMapView>, public IIterableRaw {
+  public:
+    explicit BlobMap(Blobs blobs) : blobs_(std::make_shared<const Blobs>(std::move(blobs))) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = nullptr;
+        if (iid == marshal_iid)
+            return E_NOINTERFACE;
+        if (iid == blob_map_iterable)
+            *object = static_cast<IIterableRaw *>(this);
+        else
+            *object = static_cast<IBlobMapView *>(this);
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return Counted::AddRef(); }
+    STDMETHODIMP_(ULONG) Release() override { return Counted::Release(); }
+    STDMETHODIMP GetIids(ULONG *count, IID **iids) override {
+        return Counted::GetIids(count, iids);
+    }
+    STDMETHODIMP GetRuntimeClassName(HSTRING *name) override {
+        return Counted::GetRuntimeClassName(name);
+    }
+    STDMETHODIMP GetTrustLevel(TrustLevel *level) override { return Counted::GetTrustLevel(level); }
+    STDMETHODIMP Lookup(HSTRING key, IInspectable **value) override {
+        const auto found = blobs_->find(utf8(key));
+        if (found == blobs_->end())
+            return E_BOUNDS;
+        found->second->AddRef();
+        *value = found->second.pointer;
+        return S_OK;
+    }
+    STDMETHODIMP get_Size(unsigned *size) override {
+        *size = static_cast<unsigned>(blobs_->size());
+        return S_OK;
+    }
+    STDMETHODIMP HasKey(HSTRING key, boolean *found) override {
+        *found = blobs_->contains(utf8(key));
+        return S_OK;
+    }
+    STDMETHODIMP Split(IInspectable **first, IInspectable **second) override {
+        *first = *second = nullptr;
+        return S_OK;
+    }
+    STDMETHODIMP First(IInspectable **iterator) override {
+        *iterator = new PairIterator(blobs_);
+        return S_OK;
+    }
+
+  private:
+    std::shared_ptr<const Blobs> blobs_;
+};
+// a Windows.Storage.Streams.Buffer of the host holding `bytes`
+Ref<IBufferRaw> host_buffer(const std::vector<std::uint8_t> &bytes) {
+    struct IBufferFactoryRaw : IInspectable {
+        virtual HRESULT STDMETHODCALLTYPE Create(UINT32 capacity, IBufferRaw **buffer) = 0;
+    };
+    static constexpr GUID buffer_factory{
+        0x71af914d, 0xc10f, 0x484b, {0xbc, 0x50, 0x14, 0xbc, 0x62, 0x3b, 0x3a, 0x27}};
+    static const auto factory = [] {
+        constexpr wchar_t name[] = L"Windows.Storage.Streams.Buffer";
+        HSTRING_HEADER header;
+        HSTRING text = nullptr;
+        IBufferFactoryRaw *result = nullptr;
+        if (FAILED(WindowsCreateStringReference(name, static_cast<UINT32>(wcslen(name)), &header,
+                                                &text)) ||
+            FAILED(
+                RoGetActivationFactory(text, buffer_factory, reinterpret_cast<void **>(&result))))
+            throw std::runtime_error("no Windows.Storage.Streams.Buffer on the host");
+        return result;
+    }();
+    Ref<IBufferRaw> buffer;
+    check(factory->Create(static_cast<UINT32>(bytes.size()), &buffer.pointer));
+    if (!bytes.empty())
+        std::memcpy(bytes_of(buffer.pointer), bytes.data(), bytes.size());
+    check(buffer->put_Length(static_cast<UINT32>(bytes.size())));
+    return buffer;
+}
 
 // The objects of connected storage. Each one answers QueryInterface for the interfaces we
 // know with another facet sharing its state, and for the rest with a placeholder. The
 // methods we know are in call(); the others report themselves, like a placeholder's.
-enum class Kind { statics, space, container, query };
+enum class Kind { statics, space, container, query, blob_query };
 struct State {
     Kind kind;
     std::shared_ptr<SaveSpace> space;
-    std::string name; // of the container, or the prefix of the query
+    std::string name;           // of the container, or the prefix of the query
+    std::string container = {}; // of a blob query
 };
 struct Object {
     void *const *vtable;
@@ -299,9 +578,11 @@ const wchar_t *class_of(Kind kind) {
     case Kind::container:
         return container_class;
     case Kind::query:
+        return query_class;
+    case Kind::blob_query:
         break;
     }
-    return query_class;
+    return blob_query_class;
 }
 bool facet(Kind kind, const GUID &iid) {
     switch (kind) {
@@ -312,9 +593,21 @@ bool facet(Kind kind, const GUID &iid) {
     case Kind::query:
         return iid == query2;
     case Kind::space:
+        return iid == space2;
+    case Kind::blob_query:
         break;
     }
     return false;
+}
+// the default interface, which titles mostly use without asking for it
+bool default_interface(Kind kind, const GUID &iid) {
+    static constexpr GUID defaults[] = {
+        inspectable_iid,
+        {0xb48eea29, 0x8323, 0x41bc, {0xbb, 0xad, 0x2c, 0x26, 0xe2, 0x7b, 0xda, 0x22}},
+        {0x885c65fe, 0xe884, 0x4cff, {0xba, 0x58, 0xfb, 0x82, 0xcc, 0x32, 0xb5, 0x52}},
+        {0x4f937563, 0xbae3, 0x4062, {0xa6, 0x7f, 0xcb, 0xea, 0x61, 0xa2, 0xed, 0xc3}},
+        {0x5598379c, 0x82de, 0x4952, {0xaa, 0x30, 0x49, 0xae, 0x32, 0x9c, 0x58, 0x85}}};
+    return iid == inspectable_iid || iid == defaults[static_cast<std::size_t>(kind)];
 }
 std::string text(const GUID &iid) {
     char buffer[40];
@@ -323,6 +616,56 @@ std::string text(const GUID &iid) {
                   iid.Data4[3], iid.Data4[4], iid.Data4[5], iid.Data4[6], iid.Data4[7]);
     return buffer;
 }
+
+// the containers (or the blobs of `state.container`) whose name starts with the prefix
+Records records(const State &state, Shape shape) {
+    Records result{shape, {}};
+    try {
+        if (shape == Shape::blob)
+            for (const auto &blob : state.space->blobs(state.container, state.name))
+                result.items.push_back({blob.name, {}, blob.size, {}});
+        else
+            for (const auto &container : state.space->containers(state.name))
+                result.items.push_back(
+                    {container.name, container.display_name, container.size, container.modified});
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[Runtime] could not list connected storage: %s\n", e.what());
+    }
+    return result;
+}
+// GetContainerInfoAsync, GetContainerInfo2Async, GetBlobInfoAsync: all of them, or `count`
+// from `start`
+void *query_operation(const State &state, Shape shape, std::size_t start = 0,
+                      std::size_t count = SIZE_MAX) {
+    auto found = records(state, shape);
+    auto &items = found.items;
+    items.erase(items.begin(), items.begin() + std::min(start, items.size()));
+    if (items.size() > count)
+        items.resize(count);
+    return make_completed_operation(static_cast<IStructView *>(new StructView(std::move(found))));
+}
+// GetAsync(IIterable<String>, IAsyncOperation<IMapView<String, IBuffer>> **)
+void *get(const State &container, IInspectable *wanted) {
+    try {
+        Blobs blobs;
+        for (const auto &name : names(wanted)) {
+            const auto data = container.space->read(container.name, name);
+            if (!data) {
+                std::fprintf(stderr, "[Runtime] no blob \"%s\" in container \"%s\"\n", name.c_str(),
+                             container.name.c_str());
+                return make_failed_operation(not_found);
+            }
+            blobs.emplace(name, host_buffer(*data));
+        }
+        return make_completed_operation(static_cast<IBlobMapView *>(new BlobMap(std::move(blobs))));
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[Runtime] could not read container \"%s\": %s\n",
+                     container.name.c_str(), e.what());
+        return make_failed_operation(E_FAIL);
+    }
+}
+// what titles are told is left of a quota nothing enforces
+constexpr unsigned long long remaining_bytes = 256ull << 20;
 
 void *space_operation(const char *kind) {
     return make_completed_operation(
@@ -381,6 +724,7 @@ void *read(const State &container, IInspectable *reads) {
     }
 }
 
+// Method numbers are those of the metadata: from 6, in the order the interface declares them.
 std::optional<HRESULT> call(const Object &self, std::size_t method,
                             const std::array<void *, 11> &a) {
     const auto &state = *self.state;
@@ -388,46 +732,108 @@ std::optional<HRESULT> call(const Object &self, std::size_t method,
         *static_cast<void **>(a[index]) = value;
         return S_OK;
     };
-    const bool direct = self.iid == inspectable_iid;
+    const auto string = [&](std::size_t index, const std::string &text) {
+        *static_cast<HSTRING *>(a[index]) = hstring(text);
+        return S_OK;
+    };
+    const auto number = [&](std::size_t index) {
+        return static_cast<std::size_t>(reinterpret_cast<std::uintptr_t>(a[index]) & 0xffffffff);
+    };
+    const auto make = [&](Kind kind, std::string name, std::string container = {}) {
+        return make_object(std::make_shared<State>(
+            State{kind, state.space, std::move(name), std::move(container)}));
+    };
+    const bool direct = default_interface(state.kind, self.iid);
     switch (state.kind) {
     case Kind::statics:
-        if (self.iid == space_statics && method == 8) // GetForMachineAsync()
-            return out(0, space_operation("machine"));
-        if (self.iid == space_statics2 && method == 6) // (User, IAsyncOperation **)
-            return out(1, space_operation("user"));
+        // GetForUserAsync(User[, String]), GetForMachineAsync([String]): where the result goes
+        if (self.iid == space_statics && method >= 6 && method <= 9) {
+            constexpr std::size_t result[] = {1, 2, 0, 1};
+            return out(result[method - 6], space_operation(method < 8 ? "user" : "machine"));
+        }
+        // GetSyncOnDemandForUserAsync(User[, String]): everything is here already
+        if (self.iid == space_statics2 && (method == 6 || method == 7))
+            return out(method - 5, space_operation("user"));
         break;
     case Kind::space:
-        if (direct && method == 6) // the user
+        if (self.iid == space2 && method == 6) // GetRemainingBytesInQuota64Async
+            return out(0, make_completed_value(remaining_bytes, 8));
+        if (!direct)
+            break;
+        switch (method) {
+        case 6: // User
             return out(0, shared_placeholder(user_class));
-        if (direct && (method == 9 || method == 11)) { // CreateContainer, CreateContainerInfoQuery
+        case 7: // ServiceConfigurationId
+            *static_cast<HSTRING *>(a[0]) = nullptr;
+            {
+                const auto id = title_info(L"service_config_id");
+                return WindowsCreateString(id.c_str(), static_cast<UINT32>(id.size()),
+                                           static_cast<HSTRING *>(a[0]));
+            }
+        case 8: // IsReadOnly
+            *static_cast<boolean *>(a[0]) = false;
+            return S_OK;
+        case 9: // CreateContainer(String)
+            return out(1, make(Kind::container, utf8(static_cast<HSTRING>(a[0]))));
+        case 10: { // DeleteContainerAsync(String)
             const auto name = utf8(static_cast<HSTRING>(a[0]));
-            return out(1, make_object(std::make_shared<State>(State{
-                              method == 9 ? Kind::container : Kind::query, state.space, name})));
+            try {
+                const bool removed = state.space->remove(name);
+                std::fprintf(stderr, "[Runtime] deleted container \"%s\"%s\n", name.c_str(),
+                             removed ? "" : " (there was none)");
+                return out(1, removed ? make_completed_action() : make_failed_action(not_found));
+            } catch (const std::exception &e) {
+                std::fprintf(stderr, "[Runtime] %s\n", e.what());
+                return out(1, make_failed_action(E_FAIL));
+            }
+        }
+        case 11: // CreateContainerInfoQuery(String prefix)
+            return out(1, make(Kind::query, utf8(static_cast<HSTRING>(a[0]))));
+        case 12: // GetRemainingBytesInQuotaAsync
+            return out(0, make_completed_value(remaining_bytes, 4));
         }
         break;
     case Kind::container:
-        if (direct && method == 8)
+        if (self.iid == container2) {
+            if (method == 6) // SubmitUpdatesAsync(blobs, deletes, display name)
+                return out(3, submit(state, static_cast<IInspectable *>(a[0]),
+                                     static_cast<IInspectable *>(a[1]),
+                                     utf8(static_cast<HSTRING>(a[2]))));
+            if (method == 8) // CreateBlobInfoQuery(String prefix)
+                return out(1, make(Kind::blob_query, utf8(static_cast<HSTRING>(a[0])), state.name));
+            break;
+        }
+        if (!direct)
+            break;
+        switch (method) {
+        case 6: // Name
+            return string(0, state.name);
+        case 7: // OwningSpace
+            return out(0, make(Kind::space, {}));
+        case 8: // SubmitUpdatesAsync(blobs, deletes)
             return out(2, submit(state, static_cast<IInspectable *>(a[0]),
                                  static_cast<IInspectable *>(a[1]), {}));
-        if (direct && method == 9)
+        case 9: // ReadAsync(blobs)
             return out(1, read(state, static_cast<IInspectable *>(a[0])));
-        if (self.iid == container2 && method == 6)
-            return out(3,
-                       submit(state, static_cast<IInspectable *>(a[0]),
-                              static_cast<IInspectable *>(a[1]), utf8(static_cast<HSTRING>(a[2]))));
-        break;
-    case Kind::query:
-        if (self.iid == query2 && method == 7) { // GetContainerInfo2Async()
-            std::vector<SaveSpace::Container> found;
-            try {
-                found = state.space->containers(state.name);
-            } catch (const std::exception &e) {
-                std::fprintf(stderr, "[Runtime] could not list containers: %s\n", e.what());
-            }
-            return out(0, make_completed_operation(
-                              static_cast<IInfoView *>(new InfoView(std::move(found)))));
+        case 10: // GetAsync(names)
+            return out(1, get(state, static_cast<IInspectable *>(a[0])));
         }
         break;
+    case Kind::query:
+    case Kind::blob_query: {
+        const auto shape = state.kind == Kind::blob_query ? Shape::blob
+                           : self.iid == query2           ? Shape::container2
+                                                          : Shape::container;
+        if (!direct && self.iid != query2)
+            break;
+        if (method == 6) // (UInt32 start, UInt32 count, IAsyncOperation **)
+            return out(2, query_operation(state, shape, number(0), number(1)));
+        if (method == 7) // (IAsyncOperation **)
+            return out(0, query_operation(state, shape));
+        if (method == 8 && shape != Shape::container2) // GetItemCountAsync
+            return out(0, make_completed_value(records(state, shape).items.size(), 4));
+        break;
+    }
     }
     return std::nullopt;
 }
