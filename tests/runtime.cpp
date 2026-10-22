@@ -65,7 +65,7 @@ TEST_CASE("forwarded modules") {
         CHECK(resolve(registry, "era.dll", "NoSuchFunction").function == nullptr);
         // must not see xscarlet.exe as the main module
         CHECK(resolve(registry, "era.dll", "GetModuleHandleW").origin == std::string_view("own"));
-        CHECK(era["imports"][0]["origin"] == "host"); // kernelx.dll!VirtualAlloc
+        CHECK(era["imports"][0]["origin"] == "own");  // kernelx.dll!VirtualAlloc: console flags
         CHECK(era["imports"][1]["origin"] == "own");  // kernelx.dll!XMemAllocDefault
         CHECK(era["imports"][2]["origin"] == "own");  // etwplus.dll!EtxRegister
         CHECK(era["imports"][3]["origin"] == "host"); // ws2_32.dll!#1

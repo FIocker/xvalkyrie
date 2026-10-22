@@ -10,8 +10,7 @@ namespace {
 constexpr std::uint32_t section_execute = 0x20000000, section_write = 0x80000000;
 constexpr std::uint64_t user_space_end = 0x7fff'ffff'0000;
 
-std::uint64_t image_size(std::span<const std::uint8_t> file) {
-    const auto report = pe::inspect(file);
+std::uint64_t image_size(const json &report) {
     if (report.at("machine") != 0x8664)
         throw std::runtime_error("Only x86-64 images can be mapped");
     const std::uint64_t size = report.at("size_of_image");
@@ -31,8 +30,11 @@ std::string import_label(const json &symbol) {
 }
 
 MappedImage::MappedImage(std::span<const std::uint8_t> file, const MapOptions &options)
-    : size_(image_size(file)), memory_(static_cast<std::size_t>(size_)) {
-    const auto pe = pe::inspect(file);
+    : MappedImage(file, pe::inspect(file, pe::Detail::light), options) {}
+
+MappedImage::MappedImage(std::span<const std::uint8_t> file, const json &pe,
+                         const MapOptions &options)
+    : size_(image_size(pe)), memory_(static_cast<std::size_t>(size_)) {
     const std::uint64_t page = host::page_size(), preferred = pe.at("image_base"),
                         alignment = pe.at("section_alignment"), headers = pe.at("size_of_headers");
     if (!alignment || alignment % page || size_ % alignment)
@@ -101,16 +103,22 @@ MappedImage::MappedImage(std::span<const std::uint8_t> file, const MapOptions &o
     if (delta && !contents.contains("base_relocations"))
         throw std::runtime_error("Image has no base relocations and cannot be rebased");
     if (contents.contains("base_relocations")) {
+        // the entries are read from the mapped .reloc data, which pe::inspect has checked
         for (const auto &block : contents.at("base_relocations")) {
-            for (const auto &entry : block.at("entries")) {
-                const std::uint64_t type = entry.at("type");
+            const std::uint64_t page = block.at("page_rva"), data = block.at("data_rva"),
+                                count = block.at("count");
+            if (data > size_ || count * 2 > size_ - data)
+                throw std::runtime_error("Base relocations lie outside the image");
+            for (std::uint64_t i = 0; i < count; ++i) {
+                std::uint16_t word;
+                std::memcpy(&word, bytes + data + 2 * i, 2);
+                const auto type = word >> 12;
                 if (type == 0) // padding entry
                     continue;
                 if (type != 10)
                     throw std::runtime_error("Unsupported base relocation type " +
                                              std::to_string(type) + " for an x64 image");
-                auto *const target = slot(block.at("page_rva").get<std::uint64_t>() +
-                                          entry.at("offset").get<std::uint64_t>());
+                auto *const target = slot(page + (word & 0xfff));
                 std::uint64_t value;
                 std::memcpy(&value, target, 8);
                 value += delta;

@@ -34,6 +34,9 @@ std::string import_label(const nlohmann::json &symbol);
 class MappedImage {
   public:
     explicit MappedImage(std::span<const std::uint8_t> file, const MapOptions &options = {});
+    // the same, with the pe::inspect report of `file` already at hand (light is enough)
+    MappedImage(std::span<const std::uint8_t> file, const nlohmann::json &pe,
+                const MapOptions &options = {});
     std::uint64_t guest_base() const { return base_; }
     // throws if the RVA is not inside the headers or a section
     std::uint64_t read64(std::uint64_t rva) const;

@@ -15,7 +15,8 @@ Registry console_registry(Target target) {
     return registry;
 }
 Registry title_registry(std::span<const std::uint8_t> file) {
-    const auto target = analysis::console_target(analysis::import_profile(pe::inspect(file)));
+    const auto target =
+        analysis::console_target(analysis::import_profile(pe::inspect(file, pe::Detail::light)));
     return target ? console_registry(*target) : Registry{};
 }
 } // namespace xs::runtime

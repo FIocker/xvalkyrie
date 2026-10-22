@@ -36,6 +36,18 @@ TEST_CASE("pe directories") {
     CHECK(contents.at("exceptions").at(0).at("unwind_info_rva") == 0x1190);
 }
 
+TEST_CASE("pe directories in light detail") {
+    const auto full = xs::pe::inspect(fixture()).at("directory_contents");
+    const auto light = xs::pe::inspect(fixture(), xs::pe::Detail::light).at("directory_contents");
+    // the same tables, the long lists left out
+    CHECK(light.at("imports") == full.at("imports"));
+    CHECK(light.at("exceptions").at("count") == full.at("exceptions").size());
+    const auto &block = light.at("base_relocations").at(0);
+    CHECK_FALSE(block.contains("entries"));
+    CHECK(block.at("count") == full.at("base_relocations").at(0).at("entries").size());
+    CHECK(block.at("data_rva") == full.at("base_relocations").at(0).at("data_rva"));
+}
+
 TEST_CASE("pe directory variations") {
     auto bytes = fixture();
     SECTION("no directories") {

@@ -137,13 +137,20 @@ json exports(const Image &image, Bytes data, std::uint64_t start, Budget &budget
     return {{"module", budget.text(image.at(d.number(12, 4)))}, {"symbols", std::move(entries)}};
 }
 
-json relocations(Bytes data, Budget &budget) {
+json relocations(Bytes data, std::uint64_t rva, bool listed, Budget &budget) {
     auto blocks = json::array();
     for (std::size_t pos = 0; pos < data.bytes.size();) {
         const auto page = data.number(pos, 4), size = data.number(pos + 4, 4);
         if (size < 8 || size % 2 || pos % 4)
             throw std::runtime_error("Invalid relocation block layout");
         const auto block = data.slice(pos, static_cast<std::size_t>(size));
+        if (!listed) {
+            budget.consume();
+            blocks.push_back(
+                {{"page_rva", page}, {"data_rva", rva + pos + 8}, {"count", (size - 8) / 2}});
+            pos += static_cast<std::size_t>(size);
+            continue;
+        }
         budget.consume(1 + (size - 8) / 2);
         auto entries = json::array();
         for (std::size_t i = 8; i < size; i += 2) {
@@ -156,7 +163,10 @@ json relocations(Bytes data, Budget &budget) {
             }
             entries.push_back(std::move(item));
         }
-        blocks.push_back({{"page_rva", page}, {"entries", std::move(entries)}});
+        blocks.push_back({{"page_rva", page},
+                          {"data_rva", rva + pos + 8},
+                          {"count", (size - 8) / 2},
+                          {"entries", std::move(entries)}});
         pos += static_cast<std::size_t>(size);
     }
     return blocks;
@@ -184,11 +194,13 @@ json tls(const Image &image, Bytes data, std::uint64_t base, Budget &budget) {
             {"characteristics", d.number(36, 4)}};
 }
 
-json exceptions(Bytes data, std::uint64_t machine, Budget &budget) {
+json exceptions(Bytes data, std::uint64_t machine, bool listed, Budget &budget) {
     if (machine != 0x8664)
         return {{"status", "unsupported machine-specific exception layout"}};
     if (data.bytes.size() % 12)
         throw std::runtime_error("Partial AMD64 runtime function record");
+    if (!listed)
+        return {{"count", data.bytes.size() / 12}};
     budget.consume(data.bytes.size() / 12);
     auto entries = json::array();
     for (std::size_t i = 0; i < data.bytes.size(); i += 12) {
@@ -201,7 +213,7 @@ json exceptions(Bytes data, std::uint64_t machine, Budget &budget) {
 } // namespace
 
 nlohmann::json decode_directories(const Image &image, Bytes descriptors, std::uint64_t base,
-                                  std::uint64_t machine) {
+                                  std::uint64_t machine, bool entries) {
     Budget budget;
     json result = json::object();
     for (const std::size_t index : {0, 1, 3, 5, 9, 13}) {
@@ -223,10 +235,10 @@ nlohmann::json decode_directories(const Image &image, Bytes descriptors, std::ui
                 result["imports"] = imports(image, data, budget);
                 break;
             case 3:
-                result["exceptions"] = exceptions(data, machine, budget);
+                result["exceptions"] = exceptions(data, machine, entries, budget);
                 break;
             case 5:
-                result["base_relocations"] = relocations(data, budget);
+                result["base_relocations"] = relocations(data, rva, entries, budget);
                 break;
             case 9:
                 result["tls"] = tls(image, data, base, budget);

@@ -13,7 +13,7 @@ constexpr std::array names{
     "iat",     "delay_import", "clr",        "reserved"};
 } // namespace
 
-nlohmann::json inspect(std::span<const std::uint8_t> bytes) {
+nlohmann::json inspect(std::span<const std::uint8_t> bytes, Detail detail) {
     const Bytes r{bytes};
     if (r.number(0, 2) != 0x5a4d)
         throw std::runtime_error("Missing DOS signature");
@@ -87,8 +87,8 @@ nlohmann::json inspect(std::span<const std::uint8_t> bytes) {
             {"size_of_headers", headers},
             {"sections", sections},
             {"directory_descriptors", dirs},
-            {"directory_contents",
-             decode_directories(image, r.slice(opt + 112, dir_count * 8), base, machine)},
+            {"directory_contents", decode_directories(image, r.slice(opt + 112, dir_count * 8),
+                                                      base, machine, detail == Detail::full)},
             {"platform_indicator",
              subsystem == 14 ? "Xbox subsystem; generation unknown" : "none established"},
             {"console_target_verified", false}};

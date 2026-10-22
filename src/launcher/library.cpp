@@ -74,7 +74,8 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
             if (info.at("splash").is_string())
                 title.splash =
                     logo_asset(manifest.parent_path(), info.at("splash").get<std::string>());
-            const auto pe = pe::inspect(host::read_snapshot(file, 256 * 1024 * 1024));
+            const auto pe =
+                pe::inspect(host::FileMapping(file, 256 * 1024 * 1024).bytes(), pe::Detail::light);
             title.target = analysis::console_target(analysis::import_profile(pe));
             return title;
         }

@@ -310,7 +310,7 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     if (path.empty())
         return nullptr;
     const auto file = host::read_snapshot(path, 256 * 1024 * 1024);
-    const auto pe = pe::inspect(file);
+    const auto pe = pe::inspect(file, pe::Detail::light);
     const auto &contents = pe.at("directory_contents");
     if (!(pe.at("characteristics").get<std::uint64_t>() & 0x2000))
         throw std::runtime_error(name + " is not a DLL");
@@ -319,7 +319,7 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     options.resolve = resolve;
     TitleModule module;
     module.name = name;
-    module.image = std::make_unique<loader::MappedImage>(file, options);
+    module.image = std::make_unique<loader::MappedImage>(file, pe, options);
     const auto &layout = module.image->report();
     module.base = module.image->guest_base();
     module.size = layout.at("size_of_image");
@@ -496,7 +496,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
                       const Registry &registry, const ExecuteOptions &execution) {
     if (guest)
         throw std::logic_error("A guest image is already running in this process");
-    const auto pe = pe::inspect(file);
+    const auto pe = pe::inspect(file, pe::Detail::light);
     const auto &contents = pe.at("directory_contents");
     if (pe.at("characteristics").get<std::uint64_t>() & 0x2000)
         throw std::runtime_error("The image is a DLL, not an executable");
@@ -545,7 +545,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
                                : reinterpret_cast<std::uint64_t>(function);
     };
     options.resolve = resolve;
-    const loader::MappedImage image(file, options);
+    const loader::MappedImage image(file, pe, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())
         throw std::runtime_error("Unsupported: the image has a bound import table");

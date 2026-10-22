@@ -115,7 +115,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
                 "Expected an unpackaged x64 PE32+ executable. Package loading is not supported.";
             return result;
         }
-        const auto report = pe::inspect(bytes);
+        const auto report = pe::inspect(bytes, pe::Detail::light);
         if (report.at("machine") != 0x8664) {
             result.status = LaunchStatus::wrong_machine;
             result.detail = "This executable is not x86-64, the CPU architecture of Xbox One and "
@@ -150,7 +150,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
         loader::MapOptions options;
         if (!report.at("directory_contents").contains("base_relocations"))
             options.guest_base = report.at("image_base").get<std::uint64_t>();
-        const loader::MappedImage image(bytes, options);
+        const loader::MappedImage image(bytes, report, options);
         const auto &map = image.report();
         const auto plan = runtime::bind_plan(bytes, runtime::console_registry(*result.target),
                                              std::filesystem::absolute(path).parent_path());

@@ -105,7 +105,8 @@ bool detail::title_provides(const Registry &registry, const std::filesystem::pat
     if (path.empty())
         return false;
     try {
-        const auto report = pe::inspect(host::read_snapshot(path, 256 * 1024 * 1024));
+        const auto report =
+            pe::inspect(host::read_snapshot(path, 256 * 1024 * 1024), pe::Detail::light);
         const auto &contents = report.at("directory_contents");
         if (!(report.at("characteristics").get<std::uint64_t>() & 0x2000) ||
             !contents.contains("exports"))
@@ -128,7 +129,7 @@ bool detail::title_provides(const Registry &registry, const std::filesystem::pat
 nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
                          const std::filesystem::path &directory) {
     using json = nlohmann::json;
-    const auto contents = pe::inspect(file).at("directory_contents");
+    const auto contents = pe::inspect(file, pe::Detail::light).at("directory_contents");
     auto imports = json::array(), opaque = json::array(), delayed = json::array();
     std::size_t own = 0, host = 0, title = 0, missing = 0;
     if (contents.contains("imports")) {
