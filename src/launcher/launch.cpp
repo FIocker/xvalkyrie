@@ -7,6 +7,7 @@
 #include "launcher/config.hpp"
 #include "loader/image.hpp"
 #include "runtime/console.hpp"
+#include <algorithm>
 #include <cctype>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -50,9 +51,16 @@ std::filesystem::path executable_of(const nlohmann::json &manifest,
                                     const std::filesystem::path &directory) {
     const auto &name =
         manifest.at("applications")[0].at("executable").get_ref<const std::string &>();
-    const std::filesystem::path relative(std::u8string(name.begin(), name.end()));
-    if (name.find_first_of(":\\/") != std::string::npos || name == "." || name == "..")
-        throw std::runtime_error("Package manifest executable is not a plain file name");
+    // a path inside the package, such as Binaries\\XboxOne\\Game.exe
+    auto text = name;
+    std::replace(text.begin(), text.end(), '\\', '/');
+    const std::filesystem::path relative(std::u8string(text.begin(), text.end()));
+    bool inside = !text.empty() && !relative.is_absolute() && text.find(':') == std::string::npos &&
+                  text.front() != '/';
+    for (const auto &part : relative)
+        inside = inside && part != ".." && part != ".";
+    if (!inside)
+        throw std::runtime_error("Package manifest executable is not a path inside the package");
     return directory / relative;
 }
 } // namespace
@@ -67,8 +75,11 @@ std::filesystem::path title_save_directory(const std::filesystem::path &path) {
     std::filesystem::path directory;
     auto manifest = read_manifest(path, directory);
     // an executable is the same title as the package it is in
-    if (manifest.is_null() && std::filesystem::is_regular_file(path.parent_path() / manifest_name))
-        manifest = read_manifest(path.parent_path(), directory);
+    if (manifest.is_null()) {
+        const auto package = runtime::package_directory(path.parent_path());
+        if (std::filesystem::is_regular_file(package / manifest_name))
+            manifest = read_manifest(package, directory);
+    }
     const auto stem = path.stem().u8string();
     std::string name = manifest.is_object() && manifest.at("name").is_string()
                            ? manifest.at("name").get<std::string>()

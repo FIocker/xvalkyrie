@@ -123,6 +123,52 @@ struct Override {
     std::string_view symbol;
     void *function;
 };
+// The command line is xscarlet's; the title gets one of its own with nothing but its path,
+// as when the console starts it. Built once, the first time it is asked for.
+struct CommandLine {
+    std::wstring wide;
+    std::string narrow;
+    std::vector<wchar_t *> wide_argv;
+    std::vector<char *> narrow_argv;
+    int argc = 1;
+};
+CommandLine &command_line() {
+    static CommandLine line = [] {
+        CommandLine result;
+        result.wide = L"\"" + guest->path + L"\"";
+        const int size =
+            WideCharToMultiByte(CP_ACP, 0, result.wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        result.narrow.resize(static_cast<std::size_t>(std::max(size, 1)));
+        WideCharToMultiByte(CP_ACP, 0, result.wide.c_str(), -1, result.narrow.data(), size, nullptr,
+                            nullptr);
+        result.narrow.resize(std::strlen(result.narrow.c_str()));
+        static std::wstring wide_path;
+        static std::string narrow_path;
+        wide_path = guest->path;
+        narrow_path = result.narrow.substr(1, result.narrow.size() - 2);
+        result.wide_argv = {wide_path.data(), nullptr};
+        result.narrow_argv = {narrow_path.data(), nullptr};
+        return result;
+    }();
+    return line;
+}
+LPWSTR WINAPI get_command_line_w() { return command_line().wide.data(); }
+LPSTR WINAPI get_command_line_a() { return command_line().narrow.data(); }
+int *__cdecl argc_pointer() { return &command_line().argc; }
+char ***__cdecl argv_pointer() {
+    static char **argv = command_line().narrow_argv.data();
+    return &argv;
+}
+wchar_t ***__cdecl wargv_pointer() {
+    static wchar_t **argv = command_line().wide_argv.data();
+    return &argv;
+}
+// vccorlib's Platform::Details::GetCmdArguments, how C++/CX titles read their arguments
+wchar_t **__cdecl cmd_arguments(int *argc) {
+    if (argc)
+        *argc = command_line().argc;
+    return command_line().wide_argv.data();
+}
 // The title's own filter for unhandled exceptions, which runs after ours has reported them
 LPTOP_LEVEL_EXCEPTION_FILTER title_filter = nullptr;
 LPTOP_LEVEL_EXCEPTION_FILTER WINAPI
@@ -137,6 +183,12 @@ const Override overrides[] = {
     {"GetModuleFileNameW", erase(get_module_file_name_w)},
     {"GetModuleFileNameA", erase(get_module_file_name_a)},
     {"_CxxThrowException", erase(cxx_throw_exception)},
+    {"GetCommandLineW", erase(get_command_line_w)},
+    {"GetCommandLineA", erase(get_command_line_a)},
+    {"__p___argc", erase(argc_pointer)},
+    {"__p___argv", erase(argv_pointer)},
+    {"__p___wargv", erase(wargv_pointer)},
+    {"?GetCmdArguments@Details@Platform@@YAPEAPEA_WPEAH@Z", erase(cmd_arguments)},
     {"SetUnhandledExceptionFilter", erase(set_unhandled_exception_filter)}};
 
 void report_recent_calls();
@@ -254,9 +306,8 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     for (const auto &module : guest->modules)
         if (module.name == name)
             return &module;
-    const auto path = guest->directory / name;
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error))
+    const auto path = detail::title_dll(guest->directory, name);
+    if (path.empty())
         return nullptr;
     const auto file = host::read_snapshot(path, 256 * 1024 * 1024);
     const auto pe = pe::inspect(file);

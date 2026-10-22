@@ -3,8 +3,8 @@
 #include <string_view>
 
 namespace xs::runtime::durango::winrt {
-// What the console knows about the running title from its package manifest, which is in
-// the title's folder (the current directory while it runs):
+// What the console knows about the running title from its package manifest: that of the
+// package the current directory (the executable's folder while it runs) is in:
 //   title_id           the Xbox Live title ID, in decimal as the console gives it
 //   service_config_id  the primary service configuration ID
 //   sandbox_id         always RETAIL

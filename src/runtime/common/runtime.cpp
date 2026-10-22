@@ -69,16 +69,40 @@ bool detail::host_policy_allows(std::string_view module, std::string_view symbol
            analysis::is_game_os_api(symbol);
 }
 
+std::filesystem::path package_directory(const std::filesystem::path &directory) {
+    std::error_code error;
+    auto folder = directory;
+    for (int depth = 0; depth < 8 && !folder.empty(); ++depth) {
+        if (std::filesystem::is_regular_file(folder / "AppxManifest.xml", error))
+            return folder;
+        if (folder == folder.parent_path())
+            break;
+        folder = folder.parent_path();
+    }
+    return directory;
+}
+
+std::filesystem::path detail::title_dll(const std::filesystem::path &directory,
+                                        std::string_view module) {
+    const auto name = lower(module);
+    if (directory.empty() || name.empty() || name.find_first_of("\\/:") != std::string::npos)
+        return {};
+    const auto root = package_directory(directory);
+    std::error_code error;
+    for (auto folder = directory;; folder = folder.parent_path()) {
+        if (std::filesystem::is_regular_file(folder / name, error))
+            return folder / name;
+        if (folder == root || folder == folder.parent_path())
+            return {};
+    }
+}
+
 bool detail::title_provides(const Registry &registry, const std::filesystem::path &directory,
                             std::string_view module, std::string_view symbol) {
     if (directory.empty() || registry.find(module, symbol) || !registry.forwarded(module).empty())
         return false;
-    const auto name = lower(module);
-    if (name.empty() || name.find_first_of("\\/:") != std::string::npos)
-        return false;
-    const auto path = directory / name;
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error))
+    const auto path = title_dll(directory, module);
+    if (path.empty())
         return false;
     try {
         const auto report = pe::inspect(host::read_snapshot(path, 256 * 1024 * 1024));

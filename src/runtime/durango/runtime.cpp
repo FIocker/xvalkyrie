@@ -16,6 +16,8 @@ void install(Registry &registry) {
     // ERA titles are WinRT applications and use more of these than the GDK allows
     registry.forward("combase.dll", "combase.dll");
     registry.forward("ws2_32.dll", "ws2_32.dll");
+    // the shader compiler is the desktop one
+    registry.forward("d3dcompiler_47.dll", "d3dcompiler_47.dll");
     install_kernelx(registry);
     modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);

@@ -60,6 +60,11 @@ struct ExecuteOptions {
 std::uint32_t execute(const std::filesystem::path &path, std::span<const std::uint8_t> file,
                       const Registry &registry, const ExecuteOptions &options = {});
 
+// The package a title's executable belongs to: the nearest folder at or above `directory`
+// with an AppxManifest.xml, `directory` itself if there is none. A title's own DLLs are
+// looked for from the executable's folder up to that one.
+std::filesystem::path package_directory(const std::filesystem::path &directory);
+
 // The folder of the running title's saved games, from ExecuteOptions; empty before execute
 // or when none was given.
 const std::filesystem::path &save_directory();
@@ -79,6 +84,8 @@ void *runtime_override(std::string_view symbol);
 void *host_export(std::string_view module, std::string_view symbol);
 // Whether the import is one the title's own DLL of that name provides: a DLL in
 // `directory` that is neither ours nor forwarded and exports the symbol. Never loads it.
+// The title's own DLL `module` for an executable in `directory`, empty if it has none
+std::filesystem::path title_dll(const std::filesystem::path &directory, std::string_view module);
 bool title_provides(const Registry &registry, const std::filesystem::path &directory,
                     std::string_view module, std::string_view symbol);
 // offset of an address inside the running guest image, 0 if it is not in it

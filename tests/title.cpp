@@ -1,6 +1,7 @@
 #include "formats/appx/manifest.hpp"
 #include "launcher/launch.hpp"
 #include "launcher/library.hpp"
+#include "runtime/common/runtime.hpp"
 #include <algorithm>
 #include <catch2/catch.hpp>
 #include <chrono>
@@ -153,6 +154,26 @@ TEST_CASE("library discovery") {
                         [](const auto &title) { return title.name == "Sample Title"; }) == 1);
     CHECK(xs::title_save_directory(game).filename() == "Sample");
     CHECK(xs::title_save_directory(game / "Mount" / "game.exe") == xs::title_save_directory(game));
+
+    // an executable further down the package, its DLLs at the root of it
+    const auto deep = root / "deep";
+    fs::create_directories(deep / "Binaries" / "XboxOne");
+    std::ofstream(deep / "AppxManifest.xml") << package("Binaries\\XboxOne\\game.exe");
+    fs::copy_file("durango-modules.pe", deep / "Binaries" / "XboxOne" / "game.exe");
+    const auto found_deep = xs::discover_title(deep);
+    REQUIRE(found_deep);
+    CHECK(found_deep->executable == deep / "Binaries" / "XboxOne" / "game.exe");
+    CHECK(xs::title_save_directory(found_deep->executable).filename() == "Sample");
+    CHECK(xs::runtime::package_directory(deep / "Binaries" / "XboxOne") == deep);
+    std::ofstream(deep / "helper.dll") << "x";
+    CHECK(xs::runtime::detail::title_dll(deep / "Binaries" / "XboxOne", "HELPER.dll") ==
+          deep / "helper.dll");
+    CHECK(xs::runtime::detail::title_dll(deep / "Binaries" / "XboxOne", "none.dll").empty());
+    for (const auto *unsafe_path : {"..\\game.exe", "C:\\game.exe", "\\game.exe", "a\\.\\b.exe"}) {
+        std::ofstream(root / "unsafe" / "AppxManifest.xml", std::ios::trunc)
+            << package(unsafe_path);
+        CHECK_FALSE(xs::discover_title(root / "unsafe"));
+    }
     CHECK(xs::title_save_directory(game).parent_path().filename() == "saves");
 }
 
@@ -172,10 +193,12 @@ TEST_CASE("title directory") {
     fs::remove(root / "Mount" / "AppxManifest.xml");
     CHECK_THROWS(xs::title_executable(root));
     CHECK(xs::launch_title(root).status == xs::LaunchStatus::unreadable);
-    // the manifest must name a file next to it
-    for (auto name : {"..\\game.exe", "../game.exe", "C:game.exe", "sub/game.exe", ".."}) {
+    // the manifest must name a file inside the package
+    for (auto name : {"..\\game.exe", "../game.exe", "C:game.exe", "sub/../../game.exe", ".."}) {
         const auto escaping = title_directory("title-directory", name);
         CHECK_THROWS(xs::title_executable(escaping));
     }
+    CHECK(xs::title_executable(title_directory("title-directory", "sub\\game.exe")) ==
+          fs::absolute("title-directory") / "Mount" / "sub" / "game.exe");
     fs::remove_all(root);
 }

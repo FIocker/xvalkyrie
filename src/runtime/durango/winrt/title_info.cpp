@@ -1,6 +1,7 @@
 #include "runtime/durango/winrt/title_info.hpp"
 #include "formats/appx/manifest.hpp"
 #include "host/files.hpp"
+#include "runtime/common/runtime.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -16,7 +17,8 @@ Info read() {
     Info info;
     try {
         const auto manifest = appx::inspect_manifest(host::read_snapshot(
-            std::filesystem::current_path() / "AppxManifest.xml", appx::manifest_limit));
+            package_directory(std::filesystem::current_path()) / "AppxManifest.xml",
+            appx::manifest_limit));
         if (manifest.at("xbox_live_title_id").is_string())
             info.title_id = std::to_wstring(
                 std::stoul(manifest.at("xbox_live_title_id").get<std::string>(), nullptr, 16));

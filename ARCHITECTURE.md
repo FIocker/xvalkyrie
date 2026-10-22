@@ -303,9 +303,17 @@ Running in-process means a few things have to be faked:
   not in it, so `catch` would never match.
 - The image's unwind table is registered with `RtlAddFunctionTable`.
 
-Things that do not work yet: static TLS, delay-load imports, DLLs shipped with
-the title, and the guest still sees xscarlet's command line. There is no
-isolation of any kind.
+- The command line (`GetCommandLine`, `__p___argv`, `Platform::GetCmdArguments`)
+  is the title's path alone, not xscarlet's.
+- Static TLS: the system loader only gives TLS to what it loads itself, so
+  `runtime/common/windows/static_tls.cpp` writes a small DLL with the image's
+  TLS template (and one import, without which the loader skips its TLS) and
+  loads it; the image's `_tls_index` is set to the index that DLL got.
+- A title's own DLLs are looked for from the executable's folder up to its
+  package root, the folder with the `AppxManifest.xml`.
+
+Things that do not work yet: delay-load imports. There is no isolation of any
+kind.
 
 ## Graphics
 
