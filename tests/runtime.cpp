@@ -60,20 +60,16 @@ TEST_CASE("forwarded modules") {
                                             xs::runtime::console_registry(xs::Target::durango));
     REQUIRE(era.at("imports").size() == 6);
     CHECK(era["imports"][5]["origin"] == "missing"); // d3d11_x.dll!D3D11XCreateDeviceX
-    if (xs::runtime::execution_supported()) {
-        CHECK(resolve(registry, "era.dll", "VirtualAlloc").origin == std::string_view("host"));
-        CHECK(resolve(registry, "era.dll", "NoSuchFunction").function == nullptr);
-        // must not see xscarlet.exe as the main module
-        CHECK(resolve(registry, "era.dll", "GetModuleHandleW").origin == std::string_view("own"));
-        CHECK(era["imports"][0]["origin"] == "own");  // kernelx.dll!VirtualAlloc: console flags
-        CHECK(era["imports"][1]["origin"] == "own");  // kernelx.dll!XMemAllocDefault
-        CHECK(era["imports"][2]["origin"] == "own");  // etwplus.dll!EtxRegister
-        CHECK(era["imports"][3]["origin"] == "host"); // ws2_32.dll!#1
-        CHECK(era["imports"][4]["origin"] == "own");  // d3d11_x.dll!D3D11CreateDevice
-        CHECK(era.at("missing") == 1);
-    } else {
-        CHECK(era.at("missing") == 5); // only EtwPlus needs nothing from the host
-    }
+    CHECK(resolve(registry, "era.dll", "VirtualAlloc").origin == std::string_view("host"));
+    CHECK(resolve(registry, "era.dll", "NoSuchFunction").function == nullptr);
+    // must not see xscarlet.exe as the main module
+    CHECK(resolve(registry, "era.dll", "GetModuleHandleW").origin == std::string_view("own"));
+    CHECK(era["imports"][0]["origin"] == "own");  // kernelx.dll!VirtualAlloc: console flags
+    CHECK(era["imports"][1]["origin"] == "own");  // kernelx.dll!XMemAllocDefault
+    CHECK(era["imports"][2]["origin"] == "own");  // etwplus.dll!EtxRegister
+    CHECK(era["imports"][3]["origin"] == "host"); // ws2_32.dll!#1
+    CHECK(era["imports"][4]["origin"] == "own");  // d3d11_x.dll!D3D11CreateDevice
+    CHECK(era.at("missing") == 1);
 }
 
 TEST_CASE("host export policy") {
@@ -100,12 +96,7 @@ TEST_CASE("bind plan") {
     CHECK(plan.at("missing") == 1);
     const auto delayed = xs::runtime::bind_plan(file("delay.pe"), {});
     CHECK(delayed.at("delay_load_modules").size() == 2);
-    CHECK(delayed["imports"][1]["origin"] == "missing"); // WinExec, on every host
-    if (!xs::runtime::execution_supported()) {
-        CHECK(delayed.at("host") == 0);
-        CHECK_THROWS(xs::runtime::execute("synthetic.pe", file("synthetic.pe"), registry,
-                                          {.allow_missing = true, .trace = false}));
-    }
+    CHECK(delayed["imports"][1]["origin"] == "missing"); // WinExec
 }
 
 TEST_CASE("texture layout") {
@@ -128,7 +119,7 @@ TEST_CASE("texture layout") {
 
     // the xg_x.dll exports, called the way a title does
     const auto registry = xs::runtime::console_registry(xs::Target::durango);
-    using Create = std::int32_t(XS_GUEST_ABI *)(const std::uint32_t *, void ***);
+    using Create = std::int32_t (*)(const std::uint32_t *, void ***);
     const auto create =
         reinterpret_cast<Create>(registry.find("xg_x.dll", "XGCreateTexture2DComputer"));
     REQUIRE(create);
@@ -137,16 +128,15 @@ TEST_CASE("texture layout") {
     REQUIRE(create(description, &computer) == 0);
     const auto *const methods = static_cast<void **>(*computer);
     std::vector<std::uint64_t> layout(0xd40 / 8, ~std::uint64_t{0});
-    using Layout = std::int32_t(XS_GUEST_ABI *)(void *, void *);
+    using Layout = std::int32_t (*)(void *, void *);
     CHECK(reinterpret_cast<Layout>(methods[2])(computer, layout.data()) == 0);
     CHECK(layout[0] == 1920 * 1080 * 4);
     CHECK(layout[1] == 4096);
     CHECK(layout.back() == 0);
-    using Release = std::uint32_t(XS_GUEST_ABI *)(void *);
+    using Release = std::uint32_t (*)(void *);
     CHECK(reinterpret_cast<Release>(methods[1])(computer) == 0);
-    using Mode =
-        std::uint32_t(XS_GUEST_ABI *)(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
-                                      std::uint32_t, std::uint32_t, std::uint32_t);
+    using Mode = std::uint32_t (*)(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+                                   std::uint32_t, std::uint32_t, std::uint32_t);
     const auto mode = reinterpret_cast<Mode>(registry.find("xg_x.dll", "XGComputeOptimalTileMode"));
     REQUIRE(mode);
     CHECK(mode(3, 28, 1920, 1080, 1, 1, 0x20) == 0);

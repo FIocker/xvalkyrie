@@ -62,14 +62,14 @@ struct Computer {
     std::atomic<std::uint32_t> references;
     TextureDescription description;
 };
-std::uint32_t XS_GUEST_ABI add_ref(Computer *self) { return ++self->references; }
-std::uint32_t XS_GUEST_ABI release(Computer *self) {
+std::uint32_t add_ref(Computer *self) { return ++self->references; }
+std::uint32_t release(Computer *self) {
     const auto left = --self->references;
     if (!left)
         delete self;
     return left;
 }
-std::int32_t XS_GUEST_ABI resource_layout(Computer *self, void *layout) {
+std::int32_t resource_layout(Computer *self, void *layout) {
     std::memset(layout, 0, layout_bytes);
     const auto &d = self->description;
     const std::uint64_t header[2] = {
@@ -79,7 +79,7 @@ std::int32_t XS_GUEST_ABI resource_layout(Computer *self, void *layout) {
     std::memcpy(static_cast<char *>(layout) + sizeof header, counts, sizeof counts);
     return 0;
 }
-template <int Slot> std::int32_t XS_GUEST_ABI unknown(Computer *) {
+template <int Slot> std::int32_t unknown(Computer *) {
     std::fprintf(stderr, "[Runtime] unimplemented xg_x.dll texture computer method %d\n", Slot);
     std::fflush(stderr);
     return static_cast<std::int32_t>(0x80004001); // E_NOTIMPL
@@ -93,24 +93,20 @@ void *const computer_vtable[] = {
     reinterpret_cast<void *>(&unknown<10>),     reinterpret_cast<void *>(&unknown<11>),
 };
 
-std::int32_t XS_GUEST_ABI create_texture2d_computer(const TextureDescription *description,
-                                                    Computer **computer) {
+std::int32_t create_texture2d_computer(const TextureDescription *description, Computer **computer) {
     if (!description || !computer)
         return static_cast<std::int32_t>(0x80070057); // E_INVALIDARG
     *computer = new Computer{computer_vtable, 1, *description};
     return 0;
 }
 // There is one layout, so one tile mode: 0.
-std::uint32_t XS_GUEST_ABI optimal_tile_mode(std::uint32_t, std::uint32_t, std::uint32_t,
-                                             std::uint32_t, std::uint32_t, std::uint32_t,
-                                             std::uint32_t) {
+std::uint32_t optimal_tile_mode(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+                                std::uint32_t, std::uint32_t, std::uint32_t) {
     return 0;
 }
-std::int32_t XS_GUEST_ABI optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t,
-                                                           std::uint32_t, std::uint32_t,
-                                                           std::uint32_t, std::uint32_t,
-                                                           std::uint32_t *depth,
-                                                           std::uint32_t *stencil) {
+std::int32_t optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std::uint32_t,
+                                              std::uint32_t, std::uint32_t, std::uint32_t,
+                                              std::uint32_t *depth, std::uint32_t *stencil) {
     if (depth)
         *depth = 0;
     if (stencil)

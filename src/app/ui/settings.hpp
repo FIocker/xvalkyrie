@@ -11,7 +11,7 @@ namespace xs::ui {
 // page is an entry in `pages` (settings.cpp) and a function that draws it.
 class Settings {
   public:
-    enum class Page { input, libraries, about };
+    enum class Page { input, graphics, libraries, about };
     // What the settings need done by whoever owns the window. All of them are called
     // from draw().
     struct Host {
@@ -20,6 +20,7 @@ class Settings {
         std::function<void()> rescan;                     // look for titles again
         std::function<void(bool rescan)> libraries_saved; // `libraries` was changed
         std::function<void()> input_saved;                // input::settings() was; may throw
+        std::function<void()> graphics_saved;
     };
     // what the library page shows about the library itself
     struct Library {
@@ -44,6 +45,7 @@ class Settings {
 
   private:
     void input(const Fonts &fonts, const Host &host);
+    void graphics(const Fonts &fonts, const Host &host);
     void libraries(const Fonts &fonts, const Host &host, Library library);
     void about(const Fonts &fonts);
 
@@ -51,6 +53,6 @@ class Settings {
     Page page_ = Page::input;
     std::optional<std::size_t> binding_; // control waiting for a key
     int pressed_ = 0;                    // the key it got
-    std::string input_notice_;
+    std::string input_notice_, graphics_notice_;
 };
 } // namespace xs::ui

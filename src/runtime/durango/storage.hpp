@@ -10,7 +10,7 @@
 namespace xs::runtime::durango {
 // One connected storage space (the machine's, or the user's) kept in host files:
 // `directory`/<container>/<blob>, every name escaped so that any text the title picks is a
-// valid file name on every host. Names are UTF-8. Nothing is kept in memory: every call
+// valid Windows file name. Names are UTF-8. Nothing is kept in memory: every call
 // goes to the files, so what a title wrote survives the process.
 class SaveSpace {
   public:

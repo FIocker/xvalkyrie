@@ -1,9 +1,5 @@
 #include "app/ui/file_dialog.hpp"
-#ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
-#else
-#define GLFW_EXPOSE_NATIVE_X11
-#endif
 #include <nfd_glfw3.h>
 #include <stdexcept>
 #include <string>

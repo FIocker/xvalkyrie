@@ -6,22 +6,21 @@ directory, each with its own `CMakeLists.txt`. There is a single executable,
 import table of the title and picks the console runtime to use.
 
 Two words are used with one meaning each. The **host** is the machine xscarlet
-runs on (Windows, Linux). A **console** is what the title was built for:
+runs on, always 64-bit Windows. A **console** is what the title was built for:
 Xbox One (`durango`) or Xbox Series X|S (`scarlett`).
 
 ```
 src/
   core/            the Target enum (durango, scarlett), log, settings
   host/            OS wrappers: memory, files, threads, native modules, session log
-    windows/  linux/
   formats/         pe, gdk (MicrosoftGame.config), appx (AppxManifest.xml), xvd
   analysis/        import classification, console target detection
   loader/          image mapping
   backends/        what a title's output and input end up on, per host technology
-    graphics/      backend selection; d3d11/ (Windows), vulkan/ (every host)
-    audio/         wasapi/ (Windows), null/
-    input/         the emulated gamepad; xinput/ (Windows), null/
-    surface/       the window a title presents into; win32/, null/
+    graphics/      backend selection; d3d11/, dxvk/ (Direct3D 11 on Vulkan), vulkan/
+    audio/         wasapi/
+    input/         the emulated gamepad; xinput/
+    surface/       the window a title presents into; win32/
   runtime/         the console side: what a title's imports are bound to
     common/        import registry and resolver, guest execution
     modules/       console modules both consoles have
@@ -43,18 +42,15 @@ rules on top:
   no console object layouts.
 - `runtime/` is the only place that knows what a console DLL looks like. It
   reaches the host through `host/` and `backends/`, never the other way round.
-  The exceptions are the files that are the host side of running a guest and
-  only build there: `runtime/common/windows/` and the Windows-only parts of
-  `runtime/durango` (see "Windows-only code" below).
+  The exceptions are the files that are the host side of running a guest:
+  `runtime/common/{execute,com_forward,static_tls}`, `runtime/durango/winrt/` and
+  `runtime/durango/d3d11x/` (see "Host objects" below).
 - `runtime/durango` and `runtime/scarlett` do not include each other. What
   both need goes to `runtime/modules`.
 - `launcher/` has no window and prints nothing. `app/ui` uses `launcher`;
   `launcher` never includes `app`.
-- A file that only builds on one host sits in a subdirectory named after the
-  technology it uses (`win32/`, `wasapi/`, `xinput/`, `d3d11/`, `vulkan/`),
-  or `windows/` / `linux/` when it is the OS as a whole. `null/` is the
-  implementation for hosts that have none. New code picks the one to build
-  in the `CMakeLists.txt` of the directory rather than with `#ifdef`.
+- Code in `backends/` sits in a subdirectory named after the technology it uses
+  (`win32/`, `wasapi/`, `xinput/`, `d3d11/`, `dxvk/`, `vulkan/`).
 
 ### Shared
 
@@ -71,12 +67,13 @@ Used for every title, whatever console it was built for.
 | `analysis` | `xs_analysis` | Classifies imported DLLs and API names, detects the console target |
 | `loader` | `xs_loader` | Maps an image in memory: sections, relocations, import slots |
 | `backends/graphics` | `xs_graphics` | Which backend is selected, and the clear pass description |
-| `backends/graphics/d3d11` | `xs_graphics_d3d11` | The host's Direct3D 11: device creation, frame dump (Windows) |
+| `backends/graphics/d3d11` | `xs_graphics_d3d11` | The host's Direct3D 11: device creation, frame dump |
+| `backends/graphics/dxvk` | `xs_graphics_dxvk` | Direct3D 11 on Vulkan: loads `xs_dxgi.dll` and `xs_d3d11.dll` and creates the device |
 | `backends/graphics/vulkan` | `xs_vulkan` | The offscreen Vulkan test backend |
 | `backends/audio` | `xs_audio` | Sound output; so far only muting the process |
 | `backends/input` | `xs_input` | The emulated gamepad: capture methods, key bindings |
 | `backends/surface` | `xs_surface` | `TitleWindow`, the window a title presents into |
-| `runtime/common` | `xs_runtime_common` | Import registry and resolver, and the code that actually runs a guest (Windows) |
+| `runtime/common` | `xs_runtime_common` | Import registry and resolver, and the code that actually runs a guest |
 | `runtime/modules` | `xs_runtime_modules` | Console modules with the same interface on both consoles |
 
 ### Per console
@@ -155,21 +152,21 @@ three kinds of console module:
 - A console DLL both have: `runtime/modules`, installed by each console.
 - Console runtimes do not include each other.
 
-### Windows-only code
+### Host objects
 
-Titles are Windows programs, and today a title only runs on Windows, where
-most of what it imports is handed to the real system DLLs. That is why these
-are full of Windows headers and are only built there:
+Titles are Windows programs, and most of what they import is handed to the
+real system DLLs. These give the title host objects:
 
-- `runtime/common/windows/`: running the guest, and the COM forwarder.
+- `runtime/common/execute.cpp`, `static_tls.cpp` and `com_forward.cpp`: running
+  the guest, and the COM forwarder.
 - `runtime/durango/winrt/` and `runtime/durango/d3d11x/`: they give the title
   host COM objects, wrapped or as they are.
 
 The line through Direct3D is drawn at the API, not below it: `d3d11x` turns
 console Direct3D 11.X calls into desktop Direct3D 11 calls on an
-`ID3D11Device`, and `backends/graphics/d3d11` is where that device comes from.
-A backend for another host is therefore something that provides Direct3D 11
-(or 12) interfaces there, not a second copy of `d3d11x`.
+`ID3D11Device`, and `backends/graphics/d3d11` or `backends/graphics/dxvk` is
+where that device comes from. Another backend is therefore something that
+provides Direct3D 11 (or 12) interfaces, not a second copy of `d3d11x`.
 
 ### The window
 
@@ -268,13 +265,13 @@ Where the reading comes from is the capture method:
 
 - `window`: the main window (or the title's own) reports its key events, and
   the bindings turn the keys that are down into buttons, triggers and stick
-  directions. Works on every host.
+  directions.
 - `direct`: the state of the keyboard and of the host's first gamepad
   (XInput) is read from the system at the moment the title asks, without any
-  window or message loop involved. Windows only. It only counts while a window
+  window or message loop involved. It only counts while a window
   of xscarlet is in the foreground.
 
-Bindings are Windows virtual-key codes on every host. Options > Input in the
+Bindings are Windows virtual-key codes. Options > Input in the
 window changes the method and the bindings, which apply at once and are saved
 by `launcher/config` to `config.ini` in the per-user configuration folder.
 `runtime/durango/winrt/gamepad.cpp` is the console side: one
@@ -291,7 +288,7 @@ registered and its entry point is called before the title's.
 ## Running
 
 The guest runs inside the xscarlet process on its own thread. Since guest and
-host use the same calling convention on Windows, a bound import is just a
+host use the same calling convention, a bound import is just a
 function pointer.
 
 Running in-process means a few things have to be faked:
@@ -306,7 +303,7 @@ Running in-process means a few things have to be faked:
 - The command line (`GetCommandLine`, `__p___argv`, `Platform::GetCmdArguments`)
   is the title's path alone, not xscarlet's.
 - Static TLS: the system loader only gives TLS to what it loads itself, so
-  `runtime/common/windows/static_tls.cpp` writes a small DLL with the image's
+  `runtime/common/static_tls.cpp` writes a small DLL with the image's
   TLS template (and one import, without which the loader skips its TLS) and
   loads it; the image's `_tls_index` is set to the index that DLL got.
 - A title's own DLLs are looked for from the executable's folder up to its
@@ -318,16 +315,33 @@ kind.
 ## Graphics
 
 `backends/graphics/backend` names the two backends a console Direct3D module can sit on
-and holds the one selected for the process (`exec --backend`):
+and holds the one selected for the process (Options > Graphics, saved in
+`config.ini`; `exec --backend` overrides it):
 
-- `d3d11`, the host's Direct3D 11. Windows only, default there.
-- `vulkan`, available everywhere, default on Linux. It cannot render a title
-  yet: `xs_vulkan` is a standalone test that clears an offscreen image and
-  reads it back, to have a known-good starting point.
+- `d3d11`, the host's Direct3D 11. The default.
+- `vulkan`, Direct3D 11 translated to Vulkan by DXVK. `backends/graphics/dxvk`
+  loads `xs_dxgi.dll` and `xs_d3d11.dll` from the folder of `xscarlet.exe`,
+  takes the first adapter of the DXVK factory and creates the device on it, so
+  DXVK never goes looking for the system's `dxgi.dll`. The DLLs are DXVK's
+  `dxgi.dll` and `d3d11.dll` renamed, so they never clash with the system ones
+  already in the process.
 
-`runtime/durango/d3d11x` is `d3d11_x.dll`. With the `d3d11` backend,
-`D3D11CreateDevice` creates a device on the host; with `vulkan` selected it
-fails and says so.
+`cmake/Dxvk.cmake` (`-DXS_DXVK=ON`) fetches DXVK at a fixed commit, applies
+`cmake/dxvk.patch`, builds it with Meson and copies the two DLLs next to
+`xscarlet.exe`. The patch makes DXVK behave the way console titles expect:
+
+- `SetResourceMinLOD` and `GetResourceMinLOD` work for textures created with
+  `D3D11_RESOURCE_MISC_RESOURCE_CLAMP`, through `VK_EXT_image_view_min_lod`.
+- A compute shader may have the same resource bound as a shader resource and as
+  an unordered access view.
+- A stencil-only shader resource view has the stencil value in red, not green.
+
+`xs_vulkan` is a separate standalone test that clears an offscreen image and
+reads it back.
+
+`runtime/durango/d3d11x` is `d3d11_x.dll`. Its `D3D11CreateDevice` creates the
+device on the selected backend and wraps it; the rest of `d3d11x` does not know
+which one it is.
 
 Direct3D 11.X interfaces have the desktop interface IDs but not the desktop
 layout, so the title never gets a host object:
@@ -348,7 +362,7 @@ layout, so the title never gets a host object:
 - `device.cpp`: `D3D11CreateDevice` and the way to the swap chain. The host
   device itself is created by `backends/graphics/d3d11`. The DXGI
   device, adapter and factory are the same as on the desktop and go through
-  a `Forwarder` (`runtime/common/windows/com_forward`), a COM object that
+  a `Forwarder` (`runtime/common/com_forward`), a COM object that
   sends every method to the host except the ones it is told to answer;
   the only one of ours is `CreateSwapChainForCoreWindow`, which makes the
   swap chain on the `TitleWindow`.
@@ -382,4 +396,3 @@ away. With `exec` there is no main window and the title gets one of its own.
 - `tests/*.cpp`: Catch2 unit tests
 - `tests/corpus/generate.py`: writes small synthetic PE files used as fixtures
 - `tests/guest/`: two tiny Windows programs that the runtime loads and runs
-  (Windows only)

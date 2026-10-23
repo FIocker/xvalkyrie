@@ -20,7 +20,6 @@ float stick(SHORT value, SHORT dead_zone) {
 }
 } // namespace
 
-bool direct_available() { return true; }
 bool direct_key(int key) { return foreground() && (GetAsyncKeyState(key) & 0x8000) != 0; }
 bool direct_gamepad(GamepadState &state) {
     XINPUT_STATE pad{};

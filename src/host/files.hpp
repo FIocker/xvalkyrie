@@ -16,7 +16,7 @@ struct Prefix {
 };
 Prefix read_prefix(const std::filesystem::path &path, std::size_t count);
 
-// For stable regular files only. On Linux the caller must exclude concurrent truncation.
+// For stable regular files only.
 class FileMapping {
   public:
     FileMapping(const std::filesystem::path &path, std::size_t limit);

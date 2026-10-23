@@ -10,6 +10,3 @@ indent_size = 4
 
 [{*.cmake,CMakeLists.txt,*.yml}]
 indent_size = 2
-
-[Makefile]
-indent_style = tab

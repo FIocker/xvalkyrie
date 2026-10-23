@@ -2,7 +2,7 @@
 #include <d3d11_1.h>
 
 // The `d3d11` backend: the host's own Direct3D 11, which a console Direct3D module hands
-// the title's calls to one for one. Windows only. Nothing here knows about a console.
+// the title's calls to one for one. Nothing here knows about a console.
 namespace xs::graphics::d3d11 {
 // Creates the hardware device of the host and its immediate context. With `debug` the
 // device is created with the debug layer if the host has it installed, and without it

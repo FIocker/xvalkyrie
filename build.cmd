@@ -2,6 +2,7 @@
 setlocal
 set "CONFIG=Release"
 set "RUN_TESTS=0"
+set "VULKAN=OFF"
 if not defined JOBS set "JOBS=4"
 
 :parse
@@ -16,6 +17,11 @@ if /I "%~1"=="Release" (
     shift
     goto parse
 )
+if /I "%~1"=="--vulkan" (
+    set "VULKAN=ON"
+    shift
+    goto parse
+)
 if /I "%~1"=="--test" (
     set "RUN_TESTS=1"
     shift
@@ -24,17 +30,17 @@ if /I "%~1"=="--test" (
 if /I "%~1"=="-h" goto help
 if /I "%~1"=="--help" goto help
 echo Unknown option: %~1 1>&2
-echo Usage: build.cmd [Debug^|Release] [--test] 1>&2
+echo Usage: build.cmd [Debug^|Release] [--test] [--vulkan] 1>&2
 exit /b 2
 
 :help
-echo Usage: build.cmd [Debug^|Release] [--test]
+echo Usage: build.cmd [Debug^|Release] [--test] [--vulkan]
 exit /b 0
 
 :build
 pushd "%~dp0"
 if errorlevel 1 exit /b 1
-cmake -S . -B build\win -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build\win -G "Visual Studio 17 2022" -A x64 -DXS_DXVK=%VULKAN%
 if errorlevel 1 goto fail
 cmake --build build\win --config %CONFIG% --parallel %JOBS%
 if errorlevel 1 goto fail

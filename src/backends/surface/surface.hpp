@@ -18,7 +18,7 @@ void set_title_covered(bool covered);
 // The window a title presents into: the surface inside the parent if there is one,
 // otherwise a window of its own. Either way its messages are handled by another thread
 // than the title's (the parent's, or one made for the window), so that dragging, resizing
-// or a busy title never hold each other up. Only implemented on hosts that can execute.
+// or a busy title never hold each other up.
 class TitleWindow {
   public:
     TitleWindow(const std::wstring &title, int width, int height);

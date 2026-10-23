@@ -31,6 +31,8 @@ What exists today:
   import resolver, with a stub that tells you which import is missing
 - Unpacked Xbox One (ERA) title folders: reads `AppxManifest.xml` and finds the executable
 - Read-only XVD/XVC package header identification
+- Two graphics backends for Direct3D 11.X titles: the host's Direct3D 11, or
+  Direct3D 11 on Vulkan through a patched [DXVK](https://github.com/doitsujin/dxvk)
 - A tiny offscreen Vulkan backend used for testing
 
 What is missing is pretty much everything that makes a game boot: both console
@@ -48,40 +50,30 @@ Series comes after those.
 
 ## Building
 
-You need CMake 3.25+, a C++20 compiler and Python 3. Dependencies are fetched
-by CMake on the first configure. Both scripts build Release by default; pass
-`Debug` for a debug build and `--test` to run CTest. Set `JOBS` to control
-parallel builds (default: 4).
-
-### Windows (Visual Studio 2022)
-
-Install the "Desktop development with C++" workload, then from the repository:
+XScarlet builds and runs on 64-bit Windows. You need Visual Studio 2022
+with the "Desktop development with C++" workload, CMake 3.25+ and Python 3.
+Dependencies are fetched by CMake on the first configure.
 
 ```bat
 build.cmd --test
 ```
 
-The executable is `build\win\Release\xscarlet.exe`. Use `build.cmd Debug --test`
-for a debug build.
+The executable is `build\win\Release\xscarlet.exe`. `build.cmd` builds Release
+by default; pass `Debug` for a debug build, `--test` to run CTest and `--vulkan`
+to build the Vulkan backend as well. Set `JOBS` to control parallel builds
+(default: 4).
 
-### Linux
-
-Linux can build the tools and run the tests, but it cannot execute anything.
-
-```sh
-sudo apt install build-essential cmake ninja-build python3 xorg-dev libgl-dev libdbus-1-dev
-./build.sh --test
-```
-
-The executable is `build/Release/xscarlet`. Use `./build.sh Debug --test` for a
-debug build. The scripts can also be run from outside the repository directory.
+The Vulkan backend also needs [Meson](https://mesonbuild.com) (`pip install meson`)
+and `glslang` (it comes with the Vulkan SDK) on the `PATH`. CMake fetches DXVK at a
+fixed commit, applies `cmake/dxvk.patch` and puts `xs_d3d11.dll` and
+`xs_dxgi.dll` next to `xscarlet.exe`.
 
 Extra CMake options:
 
 | Option | What it does |
 |---|---|
+| `-DXS_DXVK=ON` | Builds Direct3D 11 on Vulkan for the `vulkan` backend (needs Meson and glslang) |
 | `-DXS_VULKAN=ON` | Builds the offscreen Vulkan test (needs the Vulkan SDK) |
-| `-DXS_SANITIZE=ON` | ASan + UBSan on GCC/Clang |
 | `-DBUILD_TESTING=OFF` | Skips the tests |
 
 ## Usage
@@ -102,16 +94,15 @@ xscarlet exec <file> [--allow-missing] [--trace] [--mute] [--backend d3d11|vulka
 ```
 
 Options > Input sets how the title's gamepad is driven: from the window's key
-events ("Window"), or read directly from the system ("Direct", Windows only),
+events ("Window"), or read directly from the system ("Direct"),
 which also uses a gamepad plugged into the host. The key for each control can
 be changed there. Defaults: left stick WASD, right stick arrows, A Space,
 B Backspace, X Q, Y E, Menu Enter, View Tab.
 
 Each session of the window, and each `exec`, writes everything it prints to
 `logs/yyyy-mm-dd_hh-mm-ss.log` under the per-user `xscarlet` configuration directory
-(`%APPDATA%/xscarlet` on Windows, `$XDG_CONFIG_HOME/xscarlet` or
-`~/.config/xscarlet` on Linux). Controls, game library folders and grid/list
-preference live in `config.ini` there. Lines from the window
+(`%APPDATA%/xscarlet`). Controls, the graphics backend, game library folders and
+grid/list preference live in `config.ini` there. Lines from the window
 start with `[Launcher]`, lines from running a title with `[Runtime]`. That
 file is what to attach when reporting a problem.
 
@@ -128,18 +119,20 @@ above them. A click selects a title, a double click or Enter starts it.
 XVD/XVC packages appear but
 cannot be mounted or played yet. You can
 also drop an executable or a title folder on it. A title that can start runs
-inside the window, after a loading screen; otherwise the window says why not. On Linux the dialog comes from
-xdg-desktop-portal. `xscarlet --version` prints the version and commit that
-the window shows.
+inside the window, after a loading screen; otherwise the window says why not.
+`xscarlet --version` prints the version and commit that the window shows.
+
+Options > Graphics picks what the title's Direct3D calls end up on for the next
+title started: "Direct3D 11", the host's own driver (the default), or "Vulkan",
+Direct3D 11 translated to Vulkan by `xs_d3d11.dll` and `xs_dxgi.dll`.
 
 `exec` is a developer command. It runs the file's code inside the xscarlet
 process with no sandbox at all, so only use it with things you built yourself.
 Add `--allow-missing` to start even if some imports are not implemented; the
 process exits naming the import as soon as one of them gets called. `--trace`
 prints the first call of every imported function, and the last ones before a
-fault. `--mute` silences the title. `--backend` picks what Direct3D calls end up on: `d3d11` is the host's
-Direct3D 11 (Windows only, the default there), `vulkan` exists on every host
-but cannot render a title yet.
+fault. `--mute` silences the title. `--backend` overrides the backend of Options > Graphics:
+`d3d11` is the host's Direct3D 11, `vulkan` is Direct3D 11 on Vulkan.
 
 ## How it works
 
@@ -166,10 +159,6 @@ No idea. This is a spare time project.
 **Where do I get games or keys?**
 Not here. XScarlet does not include or link to games, keys, firmware or SDK
 files, and it has no way of decrypting retail packages. Please don't ask.
-
-**Linux support?**
-Maybe some day. Windows comes first because most of the system API is already
-there.
 
 ## Contributing
 

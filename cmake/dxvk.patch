@@ -1,0 +1,436 @@
+diff --git a/src/d3d11/d3d11_context.cpp b/src/d3d11/d3d11_context.cpp
+index 487bcf58..4ba01b27 100644
+--- a/src/d3d11/d3d11_context.cpp
++++ b/src/d3d11/d3d11_context.cpp
+@@ -2187,7 +2187,6 @@ namespace dxvk {
+         if (!DirtyComputeUnorderedAccessView(StartSlot + i, !uav))
+           BindUnorderedAccessView(D3D11ShaderType::eCompute, StartSlot + i, uav);
+ 
+-        ResolveCsSrvHazards(uav);
+       }
+     }
+ 
+@@ -2699,21 +2698,45 @@ namespace dxvk {
+   void STDMETHODCALLTYPE D3D11CommonContext<ContextType>::SetResourceMinLOD(
+           ID3D11Resource*                   pResource,
+           FLOAT                             MinLOD) {
+-    bool s_errorShown = false;
++    D3D10DeviceLock lock = LockContext();
++
++    D3D11CommonTexture* texture = GetCommonTexture(pResource);
++
++    if (!texture)
++      return;
++
++    Rc<D3D11MinLodState> state = texture->GetMinLodState();
++
++    if (!state)
++      return;
++
++    if (!(MinLOD > 0.0f))
++      MinLOD = 0.0f;
++
++    state->cpuValue = MinLOD;
+ 
+-    if (std::exchange(s_errorShown, true))
+-      Logger::err("D3D11DeviceContext::SetResourceMinLOD: Not implemented");
++    EmitCs([
++      cState  = state,
++      cMinLod = MinLOD
++    ] (DxvkContext* ctx) mutable {
++      cState->csValue = cMinLod;
++    });
++
++    for (uint32_t i = 0; i < D3D11ShaderTypeCount; i++)
++      RebindShaderResourcesForMinLod(D3D11ShaderType(i), state.ptr());
+   }
+   
+   
+   template<typename ContextType>
+   FLOAT STDMETHODCALLTYPE D3D11CommonContext<ContextType>::GetResourceMinLOD(ID3D11Resource* pResource) {
+-    bool s_errorShown = false;
++    D3D10DeviceLock lock = LockContext();
+ 
+-    if (std::exchange(s_errorShown, true))
+-      Logger::err("D3D11DeviceContext::GetResourceMinLOD: Not implemented");
++    D3D11CommonTexture* texture = GetCommonTexture(pResource);
++
++    if (!texture || !texture->GetMinLodState())
++      return 0.0f;
+ 
+-    return 0.0f;
++    return texture->GetMinLodState()->cpuValue;
+   }
+ 
+ 
+@@ -3962,14 +3985,24 @@ namespace dxvk {
+ 
+     if (pResource) {
+       if (pResource->GetViewInfo().Dimension != D3D11_RESOURCE_DIMENSION_BUFFER) {
+-        EmitCs([
+-          cSlotId = slotId,
+-          cStage  = GetShaderStage(ShaderStage),
+-          cView   = pResource->GetImageView()
+-        ] (DxvkContext* ctx) mutable {
+-          ctx->bindResourceImageView(cStage, cSlotId,
+-            Forwarder::move(cView));
+-        });
++        if (unlikely(pResource->GetMinLodState())) {
++          EmitCs([
++            cSlotId  = slotId,
++            cStage   = GetShaderStage(ShaderStage),
++            cBinding = pResource->GetMinLodBinding()
++          ] (DxvkContext* ctx) mutable {
++            ctx->bindResourceImageView(cStage, cSlotId, cBinding.resolve());
++          });
++        } else {
++          EmitCs([
++            cSlotId = slotId,
++            cStage  = GetShaderStage(ShaderStage),
++            cView   = pResource->GetImageView()
++          ] (DxvkContext* ctx) mutable {
++            ctx->bindResourceImageView(cStage, cSlotId,
++              Forwarder::move(cView));
++          });
++        }
+       } else {
+         EmitCs([
+           cSlotId = slotId,
+@@ -4618,6 +4651,24 @@ namespace dxvk {
+   }
+ 
+ 
++  template<typename ContextType>
++  void D3D11CommonContext<ContextType>::RebindShaderResourcesForMinLod(
++          D3D11ShaderType                   ShaderStage,
++    const D3D11MinLodState*                 pState) {
++    const auto& bindings = m_state.srv[ShaderStage];
++
++    for (uint32_t i = 0; i < bindings.maxCount; i++) {
++      D3D11ShaderResourceView* view = bindings.views[i].ptr();
++
++      if (!view || view->GetMinLodState().ptr() != pState)
++        continue;
++
++      if (!DirtyShaderResource(ShaderStage, i, false))
++        BindShaderResource(ShaderStage, i, view);
++    }
++  }
++
++
+   template<typename ContextType>
+   bool D3D11CommonContext<ContextType>::DirtyComputeUnorderedAccessView(
+           uint32_t                          Slot,
+@@ -5290,7 +5341,7 @@ namespace dxvk {
+ 
+       if (bindings.views[StartSlot + i] != resView) {
+         if (likely(resView != nullptr)) {
+-          if (unlikely(resView->TestHazards())) {
++          if (ShaderStage != D3D11ShaderType::eCompute && unlikely(resView->TestHazards())) {
+             if (TestSrvHazards<ShaderStage>(resView))
+               resView = nullptr;
+ 
+diff --git a/src/d3d11/d3d11_context.h b/src/d3d11/d3d11_context.h
+index 666ae132..5cab9d30 100644
+--- a/src/d3d11/d3d11_context.h
++++ b/src/d3d11/d3d11_context.h
+@@ -988,6 +988,10 @@ namespace dxvk {
+             uint32_t                          Slot,
+             bool                              IsNull);
+ 
++    void RebindShaderResourcesForMinLod(
++            D3D11ShaderType                   ShaderStage,
++      const D3D11MinLodState*                 pState);
++
+     bool DirtyComputeUnorderedAccessView(
+             uint32_t                          Slot,
+             bool                              IsNull);
+diff --git a/src/d3d11/d3d11_texture.cpp b/src/d3d11/d3d11_texture.cpp
+index 2da6f5c5..c35760ad 100644
+--- a/src/d3d11/d3d11_texture.cpp
++++ b/src/d3d11/d3d11_texture.cpp
+@@ -247,6 +247,9 @@ namespace dxvk {
+     if (m_mapMode == D3D11_COMMON_TEXTURE_MAP_MODE_DIRECT)
+       m_mapPtr = m_image->mapPtr(0);
+ 
++    if ((m_desc.MiscFlags & D3D11_RESOURCE_MISC_RESOURCE_CLAMP) && m_desc.MipLevels > 1u)
++      m_minLodState = new D3D11MinLodState();
++
+     if (imageInfo.sharing.mode == DxvkSharedHandleMode::Export) {
+       if (m_desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
+         try {
+diff --git a/src/d3d11/d3d11_texture.h b/src/d3d11/d3d11_texture.h
+index 589603cf..9f680a5c 100644
+--- a/src/d3d11/d3d11_texture.h
++++ b/src/d3d11/d3d11_texture.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <atomic>
++
+ #include "../util/util_small_vector.h"
+ 
+ #include "../dxvk/dxvk_cs.h"
+@@ -73,7 +75,15 @@ namespace dxvk {
+     VkExtent3D      Extent;
+   };
+   
+-  
++  class D3D11MinLodState : public RcObject {
++
++  public:
++
++    std::atomic<float>  cpuValue = { 0.0f };
++    float               csValue  = 0.0f;
++
++  };
++
+   /**
+    * \brief D3D11 common texture object
+    * 
+@@ -159,6 +169,10 @@ namespace dxvk {
+       return m_dxgiUsage;
+     }
+ 
++    const Rc<D3D11MinLodState>& GetMinLodState() const {
++      return m_minLodState;
++    }
++
+     /**
+      * \brief Counts number of subresources
+      * \returns Number of subresources
+@@ -583,6 +597,7 @@ namespace dxvk {
+     VkFormat                      m_packedFormat;
+     
+     Rc<DxvkImage>                 m_image;
++    Rc<D3D11MinLodState>          m_minLodState;
+     small_vector<MappedBuffer, 6> m_buffers;
+     small_vector<MappedInfo, 6>   m_mapInfo;
+ 
+diff --git a/src/d3d11/d3d11_view_srv.cpp b/src/d3d11/d3d11_view_srv.cpp
+index 78f4830a..e6876ec6 100644
+--- a/src/d3d11/d3d11_view_srv.cpp
++++ b/src/d3d11/d3d11_view_srv.cpp
+@@ -81,10 +81,9 @@ namespace dxvk {
+       viewInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+       viewInfo.packedSwizzle = DxvkImageViewKey::packSwizzle(formatInfo.Swizzle);
+ 
+-      // Shaders expect the stencil value in the G component
+       if (viewInfo.aspects == VK_IMAGE_ASPECT_STENCIL_BIT) {
+         viewInfo.packedSwizzle = DxvkImageViewKey::packSwizzle({
+-          VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_R,
++          VK_COMPONENT_SWIZZLE_R,    VK_COMPONENT_SWIZZLE_ZERO,
+           VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ZERO });
+       }
+       
+@@ -178,10 +177,31 @@ namespace dxvk {
+ 
+       // Create the underlying image view object
+       m_imageView = texture->GetImage()->createView(viewInfo);
++
++      if (texture->GetMinLodState()) {
++        m_minLod.view  = m_imageView;
++        m_minLod.key   = viewInfo;
++        m_minLod.state = texture->GetMinLodState();
++      }
+     }
+   }
+   
+   
++  Rc<DxvkImageView> D3D11SrvMinLodBinding::resolve() const {
++    float lod = state->csValue - float(key.mipIndex);
++    lod = std::clamp(lod, 0.0f, float(key.mipCount - 1u));
++
++    uint16_t packed = DxvkImageViewKey::packMinLod(lod);
++
++    if (!packed)
++      return view;
++
++    DxvkImageViewKey clampedKey = key;
++    clampedKey.minLod = packed;
++    return view->image()->createView(clampedKey);
++  }
++
++
+   D3D11ShaderResourceView::~D3D11ShaderResourceView() {
+     m_destructionNotifier.Notify();
+ 
+@@ -190,6 +210,7 @@ namespace dxvk {
+ 
+     m_imageView = nullptr;
+     m_bufferView = nullptr;
++    m_minLod = D3D11SrvMinLodBinding();
+   }
+   
+   
+diff --git a/src/d3d11/d3d11_view_srv.h b/src/d3d11/d3d11_view_srv.h
+index 0446d4df..414c6ba8 100644
+--- a/src/d3d11/d3d11_view_srv.h
++++ b/src/d3d11/d3d11_view_srv.h
+@@ -5,12 +5,21 @@
+ #include "../d3d10/d3d10_view_srv.h"
+ 
+ #include "d3d11_device_child.h"
++#include "d3d11_texture.h"
+ #include "d3d11_view.h"
+ 
+ namespace dxvk {
+   
+   class D3D11Device;
+-  
++
++  struct D3D11SrvMinLodBinding {
++    Rc<DxvkImageView>     view  = nullptr;
++    DxvkImageViewKey      key   = { };
++    Rc<D3D11MinLodState>  state = nullptr;
++
++    Rc<DxvkImageView> resolve() const;
++  };
++
+   /**
+    * \brief Shader resource view
+    */
+@@ -61,6 +70,14 @@ namespace dxvk {
+       return m_imageView;
+     }
+ 
++    const Rc<D3D11MinLodState>& GetMinLodState() const {
++      return m_minLod.state;
++    }
++
++    const D3D11SrvMinLodBinding& GetMinLodBinding() const {
++      return m_minLod;
++    }
++
+     D3D10ShaderResourceView* GetD3D10Iface() {
+       return &m_d3d10;
+     }
+@@ -87,6 +104,7 @@ namespace dxvk {
+     D3D11_VK_VIEW_INFO                m_info;
+     Rc<DxvkBufferView>                m_bufferView;
+     Rc<DxvkImageView>                 m_imageView;
++    D3D11SrvMinLodBinding             m_minLod;
+     D3D10ShaderResourceView           m_d3d10;
+ 
+     D3DDestructionNotifier            m_destructionNotifier;
+diff --git a/src/dxvk/dxvk_device_info.cpp b/src/dxvk/dxvk_device_info.cpp
+index 7e3d16a7..2a3c1ff0 100644
+--- a/src/dxvk/dxvk_device_info.cpp
++++ b/src/dxvk/dxvk_device_info.cpp
+@@ -30,6 +30,7 @@ namespace dxvk {
+     HANDLE_EXT(extFullScreenExclusive);            \
+     HANDLE_EXT(extGraphicsPipelineLibrary);        \
+     HANDLE_EXT(extHdrMetadata);                    \
++    HANDLE_EXT(extImageViewMinLod);                \
+     HANDLE_EXT(extLineRasterization);              \
+     HANDLE_EXT(extMemoryBudget);                   \
+     HANDLE_EXT(extMemoryPriority);                 \
+@@ -989,6 +990,8 @@ namespace dxvk {
+       /* HDR metadata */
+       ENABLE_EXT(extHdrMetadata, false),
+ 
++      ENABLE_EXT_FEATURE(extImageViewMinLod, minLod, false),
++
+       /* Line rasterization features for client APIs */
+       ENABLE_EXT_FEATURE(extLineRasterization, rectangularLines,  false),
+       ENABLE_EXT_FEATURE(extLineRasterization, smoothLines, false),
+diff --git a/src/dxvk/dxvk_device_info.h b/src/dxvk/dxvk_device_info.h
+index a6af2a40..690b3f3a 100644
+--- a/src/dxvk/dxvk_device_info.h
++++ b/src/dxvk/dxvk_device_info.h
+@@ -74,6 +74,7 @@ namespace dxvk {
+     VkBool32                                                  extFullScreenExclusive          = VK_FALSE;
+     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT        extGraphicsPipelineLibrary      = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT };
+     VkBool32                                                  extHdrMetadata                  = VK_FALSE;
++    VkPhysicalDeviceImageViewMinLodFeaturesEXT                extImageViewMinLod              = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT };
+     VkPhysicalDeviceLineRasterizationFeaturesEXT              extLineRasterization            = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT };
+     VkBool32                                                  extMemoryBudget                 = VK_FALSE;
+     VkPhysicalDeviceMemoryPriorityFeaturesEXT                 extMemoryPriority               = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT };
+@@ -152,6 +153,7 @@ namespace dxvk {
+     VkExtensionProperties extFullScreenExclusive            = vk::makeExtension(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+     VkExtensionProperties extGraphicsPipelineLibrary        = vk::makeExtension(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+     VkExtensionProperties extHdrMetadata                    = vk::makeExtension(VK_EXT_HDR_METADATA_EXTENSION_NAME);
++    VkExtensionProperties extImageViewMinLod                = vk::makeExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
+     VkExtensionProperties extLineRasterization              = vk::makeExtension(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME);
+     VkExtensionProperties extMemoryBudget                   = vk::makeExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+     VkExtensionProperties extMemoryPriority                 = vk::makeExtension(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+diff --git a/src/dxvk/dxvk_image.cpp b/src/dxvk/dxvk_image.cpp
+index 3a181b9a..32a85b35 100644
+--- a/src/dxvk/dxvk_image.cpp
++++ b/src/dxvk/dxvk_image.cpp
+@@ -799,8 +799,10 @@ namespace dxvk {
+ 
+     // We need to expose RT and UAV swizzles to the backend,
+     // but cannot legally pass them down to Vulkan
+-    if ((key.usage & ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT) != VK_IMAGE_USAGE_SAMPLED_BIT)
++    if ((key.usage & ~VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT) != VK_IMAGE_USAGE_SAMPLED_BIT) {
+       key.packedSwizzle = 0u;
++      key.minLod = 0u;
++    }
+ 
+     return m_image->m_storage->createImageView(key);
+   }
+diff --git a/src/dxvk/dxvk_memory.cpp b/src/dxvk/dxvk_memory.cpp
+index fc18044d..e3a57fc8 100644
+--- a/src/dxvk/dxvk_memory.cpp
++++ b/src/dxvk/dxvk_memory.cpp
+@@ -218,6 +218,13 @@ namespace dxvk {
+     viewInfo.subresourceRange.baseArrayLayer = key.layerIndex;
+     viewInfo.subresourceRange.layerCount = key.layerCount;
+ 
++    VkImageViewMinLodCreateInfoEXT minLod = { VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT };
++
++    if (key.minLod && m_device->features().extImageViewMinLod.minLod) {
++      minLod.minLod = key.unpackMinLod();
++      minLod.pNext = std::exchange(usage.pNext, &minLod);
++    }
++
+     if (renderTargetUsage || !m_device->canUseDescriptorHeap() || m_device->hasCudaInterop()) {
+       descriptor.legacy.image.imageLayout = key.layout;
+ 
+diff --git a/src/dxvk/dxvk_memory.h b/src/dxvk/dxvk_memory.h
+index 8da44ed6..eee55717 100644
+--- a/src/dxvk/dxvk_memory.h
++++ b/src/dxvk/dxvk_memory.h
+@@ -377,6 +377,7 @@ namespace dxvk {
+     uint16_t layerCount = 0u;
+     /// Packed component swizzle, with four bits per component
+     uint16_t packedSwizzle = 0u;
++    uint16_t minLod = 0u;
+ 
+     size_t hash() const {
+       DxvkHashState hash;
+@@ -388,7 +389,7 @@ namespace dxvk {
+       hash.add(uint32_t(allowTypeMismatch));
+       hash.add(uint32_t(mipIndex) | (uint32_t(mipCount) << 16));
+       hash.add(uint32_t(layerIndex) | (uint32_t(layerCount) << 16));
+-      hash.add(uint32_t(packedSwizzle));
++      hash.add(uint32_t(packedSwizzle) | (uint32_t(minLod) << 16));
+       return hash;
+     }
+ 
+@@ -403,7 +404,8 @@ namespace dxvk {
+           && mipCount == other.mipCount
+           && layerIndex == other.layerIndex
+           && layerCount == other.layerCount
+-          && packedSwizzle == other.packedSwizzle;
++          && packedSwizzle == other.packedSwizzle
++          && minLod == other.minLod;
+     }
+ 
+     VkComponentMapping unpackSwizzle() const {
+@@ -414,6 +416,14 @@ namespace dxvk {
+         VkComponentSwizzle((packedSwizzle >> 12) & 0xf) };
+     }
+ 
++    static uint16_t packMinLod(float lod) {
++      return bit::encodeFixed<uint16_t, 4, 8>(lod);
++    }
++
++    float unpackMinLod() const {
++      return bit::decodeFixed<uint16_t, 4, 8>(minLod);
++    }
++
+     static uint16_t packSwizzle(VkComponentMapping mapping) {
+       return (uint16_t(mapping.r) <<  0)
+            | (uint16_t(mapping.g) <<  4)

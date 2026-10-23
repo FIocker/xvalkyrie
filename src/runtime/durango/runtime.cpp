@@ -21,9 +21,7 @@ void install(Registry &registry) {
     install_kernelx(registry);
     modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);
-#ifdef _WIN32
     install_d3d11x(registry);
-#endif
     for (const auto *name :
          {"EtxRegister", "EtxUnregister", "EtxEventWrite", "EtxFillCommonFields_v7"})
         registry.add("etwplus.dll", name, reinterpret_cast<void *>(&ignored));

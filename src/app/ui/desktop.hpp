@@ -28,6 +28,7 @@ struct DesktopHooks {
     // The input settings were changed in Options > Input and are already in effect; this
     // is where they get saved. May throw.
     std::function<void()> input_changed;
+    std::function<void()> graphics_changed;
     LibrarySettings libraries;
     std::function<void(const LibrarySettings &)> libraries_changed;
 };

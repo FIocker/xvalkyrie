@@ -31,6 +31,39 @@ licensed and the license asks for this notice to be kept:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE
 
+## DXVK (zlib/libpng license)
+
+With `-DXS_DXVK=ON`, [doitsujin/dxvk](https://github.com/doitsujin/dxvk) is
+fetched at commit `2c94c5f25cf75c313ef2a55b2e0c9276d67c28d6` and altered by
+`cmake/dxvk.patch` for console titles. The altered `d3d11.dll` and `dxgi.dll`
+are shipped as `xs_d3d11.dll` and `xs_dxgi.dll`; they are not the original
+DXVK. Its license:
+
+    Copyright (c) 2017 Philip Rebohle
+    Copyright (c) 2019 Joshua Ashton
+    Copyright (c) 2019 Robin Kertels
+    Copyright (c) 2023 Jeffrey Ellison
+
+    zlib/libpng license
+
+    This software is provided 'as-is', without any express or implied
+    warranty. In no event will the authors be held liable for any damages
+    arising from the use of this software.
+
+    Permission is granted to anyone to use this software for any purpose,
+    including commercial applications, and to alter it and redistribute it
+    freely, subject to the following restrictions:
+
+    - The origin of this software must not be misrepresented; you must not
+      claim that you wrote the original software. If you use this software
+      in a product, an acknowledgment in the product documentation would be
+      appreciated but is not required.
+
+    - Altered source versions must be plainly marked as such, and must not
+      be misrepresented as being the original software.
+
+    - This notice may not be removed or altered from any source distribution.
+
 ## Libraries
 
 Fetched by CMake at configure time, each under its own license: GLFW,

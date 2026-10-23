@@ -165,7 +165,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
             std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs, " +
             std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs and " +
             std::to_string(missing) + " have no implementation";
-        if (!missing && runtime::execution_supported() && plan.at("imports").size()) {
+        if (!missing && plan.at("imports").size()) {
             result.status = LaunchStatus::runnable;
             result.detail += ".";
             return result;

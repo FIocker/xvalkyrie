@@ -50,15 +50,11 @@ constexpr std::string_view usage =
     "  xscarlet bind FILE                 show where each import would bind; never runs it\n\n"
     "Developer (Windows host), RUNS THE FILE'S CODE regardless of its target:\n"
     "  xscarlet exec FILE [--allow-missing] [--trace] [--mute] [--backend d3d11|vulkan]\n"
-    "Backends: d3d11 uses the host's Direct3D 11 (Windows only); vulkan cannot render titles "
-    "yet.\n";
+    "Backends: d3d11 uses the host's Direct3D 11; vulkan translates Direct3D 11 to Vulkan\n"
+    "(needs xs_d3d11.dll and xs_dxgi.dll next to xscarlet.exe).\n";
 } // namespace
 
-#ifdef _WIN32
 int wmain(int argc, wchar_t **argv) {
-#else
-int main(int argc, char **argv) {
-#endif
     try {
         if (argc > 1 && std::filesystem::path(argv[1]) == xs::host::helper_option) {
             std::vector<std::wstring> arguments;
@@ -79,6 +75,7 @@ int main(int argc, char **argv) {
             }
         }
         xs::load_input_settings();
+        xs::load_graphics_settings();
         const std::filesystem::path command =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
         if (argc == 3 && command == "inspect") {
@@ -173,7 +170,7 @@ int main(int argc, char **argv) {
         }
         if (!std::filesystem::exists(xs::config_file())) {
             try {
-                xs::save_input_settings(); // create config.ini, migrating old settings.json
+                xs::save_input_settings();
             } catch (const std::exception &e) {
                 std::cerr << "[Launcher] could not create config.ini: " << e.what() << '\n';
             }
@@ -209,6 +206,12 @@ int main(int argc, char **argv) {
             std::cerr << "[Launcher] input: "
                       << (settings.capture == xs::input::Capture::direct ? "direct" : "window")
                       << " capture, saved to " << text(xs::config_file()) << std::endl;
+        };
+        hooks.graphics_changed = [] {
+            xs::save_graphics_settings();
+            std::cerr << "[Launcher] graphics: "
+                      << xs::graphics::backend_name(xs::graphics::selected_backend())
+                      << " backend, saved to " << text(xs::config_file()) << std::endl;
         };
         hooks.host = xs::surface::set_title_parent;
         hooks.area = xs::surface::set_title_area;

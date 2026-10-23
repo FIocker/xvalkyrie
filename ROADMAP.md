@@ -4,9 +4,8 @@ Xbox One (Durango) comes first, Xbox Series X|S (Scarlett) after it. Both are
 x86-64 consoles running a trimmed-down Windows, so most of the work is shared
 and the Series runtime is built on top of what the Xbox One one needs.
 
-Windows x64 is the only host that can execute code. Linux only builds the
-tools for now. Nothing here counts as "a game boots" until a real title shows
-its own output.
+XScarlet runs on 64-bit Windows. Nothing here counts as "a game boots" until a
+real title shows its own output.
 
 ## Phase 1: PE loader
 
@@ -74,7 +73,7 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [x] Input (`src/backends/input`): one gamepad for the title, fed by the keyboard or by the host's
   gamepad. Two capture methods, chosen in Options > Input together with the key bindings:
   from the window's events, or read directly from the system (XInput and the keyboard
-  state, Windows only). Saved in the per-user `settings.json`
+  state). Saved in the per-user `config.ini`
 - [x] `Windows.Xbox.Input.Gamepad`: the list of gamepads and the raw reading
 - [ ] The controller interface of the gamepad (user pairing, id), vibration
 - [ ] More than one gamepad, binding the host gamepad's buttons, mouse
@@ -82,12 +81,13 @@ The test program is an unpacked ERA title kept outside the repository, in
 
 ## Phase 3: Graphics
 
-Two backends behind the console Direct3D modules, chosen with `--backend`:
+Two backends behind the console Direct3D modules, chosen in Options > Graphics or
+with `--backend`:
 
-- `d3d11`: the host's own Direct3D 11. Windows only, and the default there. This
-  is the one that gets titles on screen first.
-- `vulkan`: exists on Windows and Linux, cannot render a title yet. It is the
-  backend D3D12 (later Xbox One titles, all Series titles) and Linux need.
+- `d3d11`: the host's own Direct3D 11, and the default. This is the one that gets
+  titles on screen first.
+- `vulkan`: Direct3D 11 on Vulkan through DXVK with the changes console titles need
+  (`cmake/dxvk.patch`).
 
 ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
 
@@ -107,8 +107,10 @@ ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
   host's debug layer says after each call
 - [ ] The methods of the context whose place is still a guess (see `d3d11x/layout.cpp`)
 - [ ] Check the picture against the console's, frame by frame
-- [ ] Vulkan: device, command submission, resources, shaders (DXBC to SPIR-V)
-- [ ] `d3d12_x.dll`
+- [x] Vulkan backend: Direct3D 11 on a patched DXVK (`-DXS_DXVK=ON`), chosen in
+  Options > Graphics and saved in `config.ini`
+- [ ] The test program on the Vulkan backend, checked against the `d3d11` one
+- [ ] `d3d12_x.dll`, and a D3D12 to Vulkan translation for it
 
 ## Phase 4: Xbox One compatibility
 
@@ -132,8 +134,7 @@ Same executable, second runtime (`runtime/scarlett`).
 
 ## Other
 
-- [x] C++20 project, CMake, tests, CI on Windows and Linux
+- [x] C++20 project, CMake, tests, CI on Windows
 - [x] `xscarlet <file>` entry point with a window that explains why launch failed
 - [ ] Window test on Windows
-- [ ] Linux execution (far future)
 - [ ] Retail titles are out of scope until packages can be handled legitimately

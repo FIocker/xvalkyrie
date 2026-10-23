@@ -3,7 +3,7 @@
 #include "host/files.hpp"
 #include "loader/image.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/common/windows/static_tls.hpp"
+#include "runtime/common/static_tls.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -461,8 +461,6 @@ struct Stubs {
     std::uint8_t *memory;
 };
 } // namespace
-
-bool execution_supported() { return true; }
 
 std::uint64_t detail::guest_offset(const void *address) {
     return guest && is_guest(address) ? reinterpret_cast<std::uint64_t>(address) - guest->base : 0;

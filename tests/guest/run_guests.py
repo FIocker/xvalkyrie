@@ -29,7 +29,7 @@ origins = {f'{i["module"].lower()}!{i["symbol"]}': i["origin"] for i in plan["im
 assert origins["xs_guest_absent.dll!Absent"] == "missing", origins
 assert origins["kernel32.dll!GetModuleHandleW"] == "own", origins
 assert origins["kernel32.dll!VirtualAlloc"] == "host", origins
-assert plan["missing"] == 1 and plan["execution_supported_on_this_host"] is True
+assert plan["missing"] == 1
 
 # without --allow-missing it must refuse to start
 strict = run("exec", raw)

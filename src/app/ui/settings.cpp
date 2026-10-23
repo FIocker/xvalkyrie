@@ -1,6 +1,7 @@
 #include "app/ui/settings.hpp"
 #include "app/ui/widgets.hpp"
 #include "app/version.hpp"
+#include "backends/graphics/backend.hpp"
 #include "backends/input/input.hpp"
 #include <algorithm>
 #include <array>
@@ -12,9 +13,9 @@ struct PageEntry {
     Settings::Page page;
     const char *name;
 };
-constexpr std::array pages{PageEntry{Settings::Page::input, "Input"},
-                           PageEntry{Settings::Page::libraries, "Library"},
-                           PageEntry{Settings::Page::about, "About"}};
+constexpr std::array pages{
+    PageEntry{Settings::Page::input, "Input"}, PageEntry{Settings::Page::graphics, "Graphics"},
+    PageEntry{Settings::Page::libraries, "Library"}, PageEntry{Settings::Page::about, "About"}};
 
 std::string utf8(const std::filesystem::path &path) {
     const auto text = path.u8string();
@@ -84,6 +85,9 @@ void Settings::draw(const Fonts &fonts, const Host &host, Library library) {
         case Page::input:
             input(fonts, host);
             break;
+        case Page::graphics:
+            graphics(fonts, host);
+            break;
         case Page::libraries:
             libraries(fonts, host, library);
             break;
@@ -111,23 +115,18 @@ void Settings::input(const Fonts &fonts, const Host &host) {
             input_notice_ = std::string("Not saved: ") + e.what();
         }
     };
-    const bool direct = input::direct_capture_available();
     section(fonts, "Capture");
     if (begin_settings("capture")) {
         setting(fonts, "Method",
-                !direct ? "Window: the keyboard, from this window's events. Direct capture is "
-                          "not available on this host."
-                : settings.capture == input::Capture::direct
+                settings.capture == input::Capture::direct
                     ? "Direct: the gamepad (XInput) and the keyboard, read from the system."
                     : "Window: the keyboard, from this window's events.");
         static constexpr const char *methods[] = {"Window", "Direct"};
         int method = settings.capture == input::Capture::direct ? 1 : 0;
-        ImGui::BeginDisabled(!direct);
         if (segmented("method", methods, method)) {
             settings.capture = method ? input::Capture::direct : input::Capture::window;
             changed();
         }
-        ImGui::EndDisabled();
         setting(fonts, "Host gamepad", "With direct capture, also read the gamepad plugged in.");
         ImGui::BeginDisabled(settings.capture != input::Capture::direct);
         if (ImGui::Checkbox("##gamepad", &settings.host_gamepad))
@@ -193,6 +192,41 @@ void Settings::input(const Fonts &fonts, const Host &host) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", input_notice_.c_str());
     }
+}
+
+void Settings::graphics(const Fonts &fonts, const Host &host) {
+    const auto backend = graphics::selected_backend();
+    section(fonts, "Rendering");
+    if (begin_settings("rendering")) {
+        setting(fonts, "Backend",
+                backend == graphics::Backend::vulkan
+                    ? "Vulkan: Direct3D 11 translated to Vulkan, shipped with xscarlet."
+                    : "Direct3D 11: the host's own driver.");
+        static constexpr const char *backends[] = {"Direct3D 11", "Vulkan"};
+        int chosen = backend == graphics::Backend::vulkan ? 1 : 0;
+        if (segmented("backend", backends, chosen)) {
+            const auto picked = chosen ? graphics::Backend::vulkan : graphics::Backend::d3d11;
+            graphics_notice_.clear();
+            if (!graphics::backend_renders_titles(picked))
+                graphics_notice_ = std::string("Vulkan needs ") +
+                                   std::string(graphics::vulkan_d3d11_module) + " and " +
+                                   std::string(graphics::vulkan_dxgi_module) +
+                                   " next to xscarlet.exe. Build with -DXS_DXVK=ON.";
+            else {
+                graphics::select_backend(picked);
+                try {
+                    if (host.graphics_saved)
+                        host.graphics_saved();
+                } catch (const std::exception &e) {
+                    graphics_notice_ = std::string("Not saved: ") + e.what();
+                }
+            }
+        }
+        end_settings();
+    }
+    note(fonts, "Applies to the next title started.");
+    if (!graphics_notice_.empty())
+        ImGui::TextWrapped("%s", graphics_notice_.c_str());
 }
 
 void Settings::libraries(const Fonts &fonts, const Host &host, Library library) {

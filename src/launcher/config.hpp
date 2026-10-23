@@ -15,6 +15,8 @@ std::filesystem::path cache_directory();
 std::filesystem::path library_cache_file();
 void load_input_settings();
 void save_input_settings();
+void load_graphics_settings();
+void save_graphics_settings();
 LibrarySettings load_library_settings();
 void save_library_settings(const LibrarySettings &settings);
 } // namespace xs

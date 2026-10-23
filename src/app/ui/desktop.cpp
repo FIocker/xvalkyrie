@@ -10,10 +10,8 @@
 #include "launcher/launch.hpp"
 #include "launcher/library.hpp"
 #include <GLFW/glfw3.h>
-#ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
-#endif
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -82,13 +80,7 @@ std::string utf8(const std::filesystem::path &path) {
     return {text.begin(), text.end()};
 }
 
-void *native_window([[maybe_unused]] GLFWwindow *window) {
-#ifdef _WIN32
-    return glfwGetWin32Window(window);
-#else
-    return nullptr;
-#endif
-}
+void *native_window(GLFWwindow *window) { return glfwGetWin32Window(window); }
 
 class Desktop {
   public:
@@ -109,6 +101,7 @@ class Desktop {
         settings_host_.rescan = [this] { refresh_library(); };
         settings_host_.libraries_saved = [this](bool rescan) { save_libraries(rescan); };
         settings_host_.input_saved = hooks.input_changed;
+        settings_host_.graphics_saved = hooks.graphics_changed;
         // what the last scan found is on screen at once; the scan then brings it up to date
         titles_ = cached_library(libraries_.directories, library_cache_file());
         refresh_library();
@@ -334,6 +327,8 @@ class Desktop {
         if (ImGui::BeginMenu("Options")) {
             if (ImGui::MenuItem("Input..."))
                 settings_.show(ui::Settings::Page::input);
+            if (ImGui::MenuItem("Graphics..."))
+                settings_.show(ui::Settings::Page::graphics);
             if (ImGui::MenuItem("Game Libraries..."))
                 settings_.show(ui::Settings::Page::libraries);
             ImGui::EndMenu();

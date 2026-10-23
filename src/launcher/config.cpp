@@ -1,32 +1,23 @@
 #include "launcher/config.hpp"
+#include "backends/graphics/backend.hpp"
 #include "backends/input/input.hpp"
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <string>
-#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#endif
 
 namespace xs {
 std::filesystem::path config_directory() {
-#ifdef _WIN32
     const auto *const base = _wgetenv(L"APPDATA");
     const auto *const home = _wgetenv(L"USERPROFILE");
     const auto folder = base && *base   ? std::filesystem::path(base)
                         : home && *home ? std::filesystem::path(home)
                                         : std::filesystem::current_path();
     return folder / "xscarlet";
-#else
-    const auto *const base = std::getenv("XDG_CONFIG_HOME");
-    const auto *const home = std::getenv("HOME");
-    const auto folder = base && *base   ? std::filesystem::path(base)
-                        : home && *home ? std::filesystem::path(home) / ".config"
-                                        : std::filesystem::current_path();
-    return folder / "xscarlet";
-#endif
 }
 std::filesystem::path config_file() { return config_directory() / "config.ini"; }
 std::filesystem::path cache_directory() { return config_directory() / "cache"; }
@@ -47,23 +38,13 @@ std::string utf8(const std::filesystem::path &path) {
 struct Settings {
     input::Settings input = input::default_settings();
     LibrarySettings library;
+    std::optional<graphics::Backend> backend;
 };
 Settings read() {
     Settings result;
     std::ifstream file(config_file());
-    if (!file) {
-        // Existing installations used JSON; keep their controls when upgrading.
-        try {
-            std::ifstream old(config_directory() / "settings.json");
-            if (old) {
-                const auto json = nlohmann::json::parse(old);
-                if (json.is_object() && json.contains("input"))
-                    result.input = input::from_json(json.at("input"));
-            }
-        } catch (const std::exception &) {
-        }
+    if (!file)
         return result;
-    }
     std::string line, section;
     while (std::getline(file, line)) {
         line = trim(line);
@@ -95,6 +76,9 @@ Settings read() {
                         }
                         break;
                     }
+        } else if (section == "graphics") {
+            if (key == "backend")
+                result.backend = graphics::parse_backend(value);
         } else if (section == "libraries") {
             if (key == "view")
                 result.library.grid = value != "list";
@@ -122,31 +106,35 @@ void write(const Settings &settings) {
         for (std::size_t i = 0; i < input::control_count; ++i)
             file << input::control_id(static_cast<input::Control>(i)) << " = "
                  << settings.input.keys[i] << '\n';
+        if (settings.backend)
+            file << "\n[graphics]\nbackend = " << graphics::backend_name(*settings.backend) << '\n';
         file << "\n[libraries]\nview = " << (settings.library.grid ? "grid" : "list") << '\n';
         for (const auto &directory : settings.library.directories)
             file << "path = " << nlohmann::json(utf8(directory)).dump() << '\n';
         if (!file)
             throw std::runtime_error("Cannot write " + temp);
     }
-#ifdef _WIN32
     if (!MoveFileExW(std::filesystem::path(temp).c_str(), path.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         throw std::runtime_error("Cannot replace " + path.string());
-#else
-    std::filesystem::rename(temp, path);
-#endif
 }
 } // namespace
 
-void load_input_settings() {
-    auto settings = read().input;
-    if (settings.capture == input::Capture::direct && !input::direct_capture_available())
-        settings.capture = input::Capture::window;
-    input::configure(settings);
-}
+void load_input_settings() { input::configure(read().input); }
 void save_input_settings() {
     auto settings = read();
     settings.input = input::settings();
+    write(settings);
+}
+void load_graphics_settings() {
+    const auto backend = read().backend;
+    if (backend)
+        graphics::select_backend(*backend);
+}
+void save_graphics_settings() {
+    auto settings = read();
+    settings.input = input::settings();
+    settings.backend = graphics::selected_backend();
     write(settings);
 }
 LibrarySettings load_library_settings() { return read().library; }

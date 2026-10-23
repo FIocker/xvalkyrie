@@ -156,8 +156,7 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
     if (contents.contains("delay_imports"))
         for (const auto &entry : contents.at("delay_imports"))
             delayed.push_back(entry.at("module"));
-    return {{"execution_supported_on_this_host", execution_supported()},
-            {"imports", std::move(imports)},
+    return {{"imports", std::move(imports)},
             {"own", own},
             {"host", host},
             {"title", title},

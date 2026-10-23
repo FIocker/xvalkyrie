@@ -1,7 +1,6 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/runtime.hpp"
 
-#ifdef _WIN32
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -196,8 +195,3 @@ void install_kernelx(Registry &registry) {
         registry.add("kernelx.dll", name, reinterpret_cast<void *>(&xmem_free));
 }
 } // namespace xs::runtime::durango
-#else
-namespace xs::runtime::durango {
-void install_kernelx(Registry &) {}
-} // namespace xs::runtime::durango
-#endif

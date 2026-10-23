@@ -1,10 +1,12 @@
-#include "host/detail.hpp"
 #include "host/files.hpp"
+#include "host/memory.hpp"
 #include "host/module.hpp"
 #include "host/threading.hpp"
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <windows.h>
@@ -16,6 +18,15 @@ std::filesystem::path executable_directory() {
     return std::filesystem::path(path).parent_path();
 }
 namespace {
+void check_path(const std::filesystem::path &path) {
+    if (path.empty() || path.native().find('\0') != std::filesystem::path::string_type::npos)
+        throw std::invalid_argument("Expected nonempty path without embedded NUL");
+}
+std::size_t checked_size(std::uintmax_t bytes, std::size_t limit) {
+    if (bytes > limit)
+        throw std::length_error("File exceeds configured byte limit");
+    return static_cast<std::size_t>(bytes);
+}
 [[noreturn]] void fail(const char *operation, DWORD error = GetLastError()) {
     throw std::system_error(static_cast<int>(error), std::system_category(), operation);
 }
@@ -31,7 +42,7 @@ class Handle {
     HANDLE value;
 };
 Handle open_input(const std::filesystem::path &path) {
-    detail::check_path(path);
+    check_path(path);
     return Handle(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                               FILE_ATTRIBUTE_NORMAL, nullptr),
                   "CreateFileW");
@@ -44,7 +55,7 @@ std::size_t input_size(const Handle &file, std::size_t limit) {
         fail("GetFileSizeEx");
     if (size.QuadPart < 0)
         throw std::runtime_error("Invalid host file size");
-    return detail::checked_size(static_cast<std::uintmax_t>(size.QuadPart), limit);
+    return checked_size(static_cast<std::uintmax_t>(size.QuadPart), limit);
 }
 } // namespace
 
@@ -53,20 +64,27 @@ std::size_t page_size() {
     GetSystemInfo(&info);
     return info.dwPageSize;
 }
-std::byte *detail::reserve(std::size_t size) {
-    auto address = VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS);
-    if (!address)
+Reservation::Reservation(std::size_t bytes) : page_(page_size()) {
+    if (!bytes || bytes > std::numeric_limits<std::size_t>::max() - (page_ - 1))
+        throw std::invalid_argument("Invalid host reservation size");
+    size_ = ((bytes + page_ - 1) / page_) * page_;
+    address_ = static_cast<std::byte *>(VirtualAlloc(nullptr, size_, MEM_RESERVE, PAGE_NOACCESS));
+    if (!address_)
         fail("VirtualAlloc reserve");
-    return static_cast<std::byte *>(address);
 }
-void detail::release(std::byte *address, std::size_t) noexcept {
-    VirtualFree(address, 0, MEM_RELEASE);
-}
-void detail::commit(std::byte *address, std::size_t size) {
-    if (!VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE))
+Reservation::~Reservation() { VirtualFree(address_, 0, MEM_RELEASE); }
+void Reservation::commit() {
+    if (committed_)
+        throw std::logic_error("Reservation is already committed");
+    if (!VirtualAlloc(address_, size_, MEM_COMMIT, PAGE_READWRITE))
         fail("VirtualAlloc commit");
+    committed_ = true;
 }
-void detail::protect(std::byte *address, std::size_t size, Access access) {
+void Reservation::protect(std::size_t offset, std::size_t length, Access access) {
+    if (!committed_)
+        throw std::logic_error("Reservation is not committed");
+    if (!length || offset % page_ || length % page_ || offset > size_ || length > size_ - offset)
+        throw std::invalid_argument("Protection requires whole pages inside the reservation");
     DWORD flags, previous;
     switch (access) {
     case Access::none:
@@ -84,7 +102,7 @@ void detail::protect(std::byte *address, std::size_t size, Access access) {
     default:
         throw std::invalid_argument("Unknown host page access");
     }
-    if (!VirtualProtect(address, size, flags, &previous))
+    if (!VirtualProtect(address_ + offset, length, flags, &previous))
         fail("VirtualProtect");
 }
 
@@ -147,8 +165,26 @@ void *ThreadSlot::get() const {
     }
     return value;
 }
+void ManualEvent::signal() {
+    {
+        std::lock_guard lock(mutex_);
+        signaled_ = true;
+    }
+    changed_.notify_all();
+}
+void ManualEvent::reset() {
+    std::lock_guard lock(mutex_);
+    signaled_ = false;
+}
+bool ManualEvent::wait(std::stop_token stop) {
+    std::unique_lock lock(mutex_);
+    return changed_.wait(lock, stop, [this] { return signaled_; });
+}
+
 NativeModule::NativeModule(const std::filesystem::path &path) {
-    detail::check_module_path(path);
+    check_path(path);
+    if (!path.is_absolute())
+        throw std::invalid_argument("Trusted host module path must be absolute");
     handle_ = LoadLibraryExW(path.c_str(), nullptr,
                              LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!handle_)

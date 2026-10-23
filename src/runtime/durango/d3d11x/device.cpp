@@ -1,8 +1,9 @@
 #include "backends/graphics/backend.hpp"
 #include "backends/graphics/d3d11/host.hpp"
+#include "backends/graphics/dxvk/host.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/common/windows/com_forward.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
@@ -128,8 +129,9 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *context = nullptr;
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
-        std::fprintf(stderr, "[Runtime] the %s backend cannot render titles yet\n",
-                     std::string(graphics::backend_name(backend)).c_str());
+        std::fprintf(stderr,
+                     "[Runtime] the vulkan backend needs xs_d3d11.dll and xs_dxgi.dll next to "
+                     "xscarlet.exe\n");
         std::fflush(stderr);
         return DXGI_ERROR_UNSUPPORTED;
     }
@@ -139,13 +141,16 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
                  D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS);
     ID3D11Device1 *latest = nullptr;
     bool debug_layer = false;
-    const auto result =
-        graphics::d3d11::create_device(host_flags, std::getenv("XS_D3D_DEBUG") != nullptr, levels,
-                                       level_count, &latest, level, context, debug_layer);
+    const bool vulkan = backend == graphics::Backend::vulkan;
+    const auto result = vulkan ? graphics::dxvk::create_device(host_flags, levels, level_count,
+                                                               &latest, level, context)
+                               : graphics::d3d11::create_device(
+                                     host_flags, std::getenv("XS_D3D_DEBUG") != nullptr, levels,
+                                     level_count, &latest, level, context, debug_layer);
     if (debug_layer)
         d3d11x::watch_debug_messages(latest);
-    std::fprintf(stderr, "[Runtime] Direct3D 11 device on the host (flags 0x%x): 0x%08lx\n", flags,
-                 static_cast<unsigned long>(result));
+    std::fprintf(stderr, "[Runtime] Direct3D 11 device on %s (flags 0x%x): 0x%08lx\n",
+                 vulkan ? "Vulkan" : "the host", flags, static_cast<unsigned long>(result));
     std::fflush(stderr);
     if (FAILED(result)) {
         if (context && *context) {

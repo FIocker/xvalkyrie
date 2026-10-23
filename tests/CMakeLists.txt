@@ -18,12 +18,10 @@ set_tests_properties(host_runtime PROPERTIES TIMEOUT 20)
 add_test(NAME assess_cli COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/assess_cli.py"
   $<TARGET_FILE:xscarlet> "${fixture}" "${CMAKE_CURRENT_SOURCE_DIR}/corpus/game.config")
 set_tests_properties(assess_cli PROPERTIES FIXTURES_REQUIRED pe_file)
-if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  add_subdirectory(guest)
-  add_test(NAME guest_execution COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/guest/run_guests.py"
-    $<TARGET_FILE:xscarlet> $<TARGET_FILE:xs_guest_raw> $<TARGET_FILE:xs_guest_crt>)
-  set_tests_properties(guest_execution PROPERTIES TIMEOUT 60)
-endif()
+add_subdirectory(guest)
+add_test(NAME guest_execution COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/guest/run_guests.py"
+  $<TARGET_FILE:xscarlet> $<TARGET_FILE:xs_guest_raw> $<TARGET_FILE:xs_guest_crt>)
+set_tests_properties(guest_execution PROPERTIES TIMEOUT 60)
 if(XS_VULKAN)
   add_test(NAME vulkan_readback COMMAND xscarlet-vk-check)
   set_tests_properties(vulkan_readback PROPERTIES TIMEOUT 30 FAIL_REGULAR_EXPRESSION "Validation Error|VUID-")

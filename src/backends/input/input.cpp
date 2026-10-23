@@ -6,13 +6,11 @@
 #include <cstdlib>
 #include <iterator>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <string_view>
 
 namespace xs::input {
 namespace detail {
-// per-host: state of the system's keyboard and first gamepad, read directly
-bool direct_available();
+// state of the system's keyboard and first gamepad, read directly
 bool direct_key(int key);
 bool direct_gamepad(GamepadState &state);
 } // namespace detail
@@ -80,35 +78,6 @@ Settings default_settings() {
     Settings result;
     for (std::size_t index = 0; index < control_count; ++index)
         result.keys[index] = controls[index].default_key;
-    return result;
-}
-
-nlohmann::json to_json(const Settings &settings) {
-    auto keys = nlohmann::json::object();
-    for (std::size_t index = 0; index < control_count; ++index)
-        keys[controls[index].id] = settings.keys[index];
-    return {{"capture", settings.capture == Capture::direct ? "direct" : "window"},
-            {"host_gamepad", settings.host_gamepad},
-            {"keys", std::move(keys)}};
-}
-Settings from_json(const nlohmann::json &document) {
-    auto result = default_settings();
-    if (!document.is_object())
-        return result;
-    if (const auto capture = document.find("capture");
-        capture != document.end() && capture->is_string())
-        result.capture = *capture == "direct" ? Capture::direct : Capture::window;
-    if (const auto gamepad = document.find("host_gamepad");
-        gamepad != document.end() && gamepad->is_boolean())
-        result.host_gamepad = *gamepad;
-    if (const auto keys = document.find("keys"); keys != document.end() && keys->is_object())
-        for (std::size_t index = 0; index < control_count; ++index)
-            if (const auto key = keys->find(controls[index].id);
-                key != keys->end() && key->is_number_integer()) {
-                const auto value = key->get<std::int64_t>();
-                if (value >= 0 && value < 256)
-                    result.keys[index] = static_cast<int>(value);
-            }
     return result;
 }
 
@@ -237,7 +206,6 @@ void window_focus_lost() {
     const std::lock_guard lock(mutex);
     window_keys.reset();
 }
-bool direct_capture_available() { return detail::direct_available(); }
 
 namespace {
 GamepadState read();
@@ -283,7 +251,7 @@ GamepadState read() {
         bindings = current;
         keys = window_keys;
     }
-    if (bindings.capture == Capture::direct && detail::direct_available()) {
+    if (bindings.capture == Capture::direct) {
         auto state = from_keys(bindings, detail::direct_key);
         GamepadState gamepad;
         if (bindings.host_gamepad && detail::direct_gamepad(gamepad))

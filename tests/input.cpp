@@ -1,6 +1,5 @@
 #include "backends/input/input.hpp"
 #include <catch2/catch.hpp>
-#include <nlohmann/json.hpp>
 #include <set>
 
 using namespace xs::input;
@@ -47,23 +46,7 @@ TEST_CASE("input merge") {
     CHECK(both.left_trigger == .5f);
 }
 
-TEST_CASE("input settings file") {
-    auto settings = default_settings();
-    settings.capture = Capture::direct;
-    settings.host_gamepad = false;
-    settings.keys[static_cast<std::size_t>(Control::b)] = 'K';
-    const auto restored = from_json(to_json(settings));
-    CHECK(restored.capture == Capture::direct);
-    CHECK_FALSE(restored.host_gamepad);
-    CHECK(restored.keys == settings.keys);
-    // anything unusable keeps the default
-    const auto defaults = default_settings();
-    for (const auto *text : {"[]", "{}", R"({"capture": 3, "keys": []})",
-                             R"({"keys": {"a": 999, "b": "x", "y": -1, "nope": 5}})"}) {
-        const auto parsed = from_json(nlohmann::json::parse(text));
-        CHECK(parsed.capture == Capture::window);
-        CHECK(parsed.keys == defaults.keys);
-    }
+TEST_CASE("key names") {
     CHECK(key_name('W') == "W");
     CHECK(key_name(0x20) == "Space");
     CHECK(key_name(0x71) == "F2");

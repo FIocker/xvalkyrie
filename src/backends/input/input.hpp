@@ -2,7 +2,6 @@
 #include <array>
 #include <cstdint>
 #include <functional>
-#include <nlohmann/json_fwd.hpp>
 #include <string>
 
 // What the emulated gamepad reads, wherever it comes from. Console runtimes ask poll();
@@ -67,18 +66,15 @@ const char *control_id(Control control);   // for the settings file
 enum class Capture {
     window, // from the events of the xscarlet window: keyboard only, while it has the focus
     direct  // from the system: host gamepad (XInput) and keyboard, without going through
-            // the window. Windows only.
+            // the window
 };
-// Keys are Windows virtual-key codes on every host; 0 is "not bound".
+// Keys are Windows virtual-key codes; 0 is "not bound".
 struct Settings {
     Capture capture = Capture::window;
     std::array<int, control_count> keys{};
     bool host_gamepad = true; // direct capture: also read the first gamepad of the host
 };
 Settings default_settings();
-nlohmann::json to_json(const Settings &settings);
-// Unknown or malformed entries keep their default; never throws for a JSON object.
-Settings from_json(const nlohmann::json &document);
 std::string key_name(int key);
 
 // The gamepad state a set of pressed keys amounts to under these bindings.
@@ -92,6 +88,5 @@ Settings settings();
 // window capture: what the window saw
 void window_key(int key, bool pressed);
 void window_focus_lost();
-bool direct_capture_available();
 GamepadState poll();
 } // namespace xs::input

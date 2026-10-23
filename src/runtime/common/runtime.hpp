@@ -8,13 +8,6 @@
 #include <string_view>
 #include <utility>
 
-// Calling convention of guest code: the Microsoft x64 one, on every host.
-#if defined(_WIN32)
-#define XS_GUEST_ABI
-#else
-#define XS_GUEST_ABI __attribute__((ms_abi))
-#endif
-
 namespace xs::runtime {
 // exit codes produced by the runtime, not by the guest
 inline constexpr std::uint32_t exit_unimplemented_import = 0xE0585301;
@@ -38,7 +31,6 @@ class Registry {
 };
 
 // only true on Windows x64
-bool execution_supported();
 // Where each import would end up (own / host / title / missing). Does not run anything.
 // "title" is a DLL in `directory`, the folder of the executable, that exports the symbol;
 // without a directory there are no such DLLs.
@@ -77,7 +69,6 @@ struct Binding {
 };
 // The one place that decides where an import goes.
 Binding resolve(const Registry &registry, std::string_view module, std::string_view symbol);
-// per-host hooks, null = nothing available
 // replacement for a host function that cannot be used as is inside a guest
 void *runtime_override(std::string_view symbol);
 // export of a system DLL, by "Name" or "#ordinal"

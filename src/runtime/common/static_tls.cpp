@@ -1,4 +1,4 @@
-#include "runtime/common/windows/static_tls.hpp"
+#include "runtime/common/static_tls.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

@@ -1,7 +1,6 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/runtime.hpp"
 
-#ifdef _WIN32
 #include "runtime/durango/winrt/application.hpp"
 #include "runtime/durango/winrt/gamepad.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
@@ -58,8 +57,3 @@ void install_winrt(Registry &registry) {
                      reinterpret_cast<void *>(&activation_factory));
 }
 } // namespace xs::runtime::durango
-#else
-namespace xs::runtime::durango {
-void install_winrt(Registry &) {}
-} // namespace xs::runtime::durango
-#endif

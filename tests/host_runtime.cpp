@@ -4,24 +4,19 @@
 #include "host/threading.hpp"
 #include <bit>
 #include <catch2/catch.hpp>
-#include <fstream>
 #include <limits>
-#include <sstream>
 #include <thread>
 
-#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
-#endif
 
 namespace {
 using namespace xs::host;
 
 // Query the kernel's effective protections rather than deliberately faulting the runner.
 std::string page_permissions(const void *address) {
-#ifdef _WIN32
     MEMORY_BASIC_INFORMATION info{};
     if (!VirtualQuery(address, &info, sizeof(info)))
         throw std::runtime_error("VirtualQuery failed");
@@ -31,19 +26,6 @@ std::string page_permissions(const void *address) {
         return "rw-";
     if (info.Protect == PAGE_READONLY)
         return "r--";
-#else
-    const auto pointer = reinterpret_cast<std::uintptr_t>(address);
-    std::ifstream maps("/proc/self/maps");
-    for (std::string line; std::getline(maps, line);) {
-        std::istringstream row(line);
-        std::uintptr_t first, last;
-        char dash;
-        std::string permissions;
-        if (row >> std::hex >> first >> dash >> last >> permissions && dash == '-' &&
-            first <= pointer && pointer < last)
-            return permissions.substr(0, 3);
-    }
-#endif
     return "unknown";
 }
 

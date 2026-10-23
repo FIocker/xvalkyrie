@@ -1,4 +1,4 @@
-#include "runtime/common/windows/com_forward.hpp"
+#include "runtime/common/com_forward.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstring>

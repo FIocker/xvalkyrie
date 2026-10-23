@@ -2,17 +2,11 @@
 #include <atomic>
 #include <cstdio>
 #include <ctime>
-#include <stdexcept>
-#include <thread>
-#ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <stdexcept>
+#include <thread>
 #include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 // stdout and stderr are pointed at pipes, at the level of the OS handles so that a title,
 // which has a C runtime of its own, is caught too. A helper process reads the pipes and
@@ -25,18 +19,13 @@ std::filesystem::path log_path(const std::filesystem::path &directory) {
     std::filesystem::create_directories(directory);
     const auto now = std::time(nullptr);
     std::tm local{};
-#ifdef _WIN32
     localtime_s(&local, &now);
-#else
-    localtime_r(&now, &local);
-#endif
     char name[32];
     std::strftime(name, sizeof name, "%Y-%m-%d_%H-%M-%S.log", &local);
     return directory / name;
 }
 } // namespace
 
-#ifdef _WIN32
 namespace {
 HANDLE inheritable(HANDLE handle) {
     HANDLE copy = nullptr;
@@ -138,53 +127,4 @@ int session_log_helper(const std::vector<std::wstring> &arguments) {
     errors.join();
     return 0;
 }
-#else
-std::filesystem::path start_session_log(const std::filesystem::path &directory) {
-    if (active.exchange(true))
-        throw std::logic_error("The session log is already running");
-    const auto path = log_path(directory);
-    const int file = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
-    if (file < 0) {
-        active = false;
-        throw std::runtime_error("Cannot create " + path.string());
-    }
-    std::fflush(nullptr);
-    for (const int descriptor : {STDOUT_FILENO, STDERR_FILENO}) {
-        int ends[2];
-        if (pipe(ends) != 0)
-            throw std::runtime_error("Cannot create the session log pipes");
-        // one helper per stream; forked twice so that nobody has to wait for it
-        const auto child = fork();
-        if (child == 0) {
-            if (fork() != 0)
-                _exit(0);
-            close(ends[1]);
-            // only the read end, the file and this stream's old destination stay open here
-            for (const int other : {STDOUT_FILENO, STDERR_FILENO})
-                if (other != descriptor)
-                    close(other);
-            char buffer[8192];
-            for (;;) {
-                const auto count = read(ends[0], buffer, sizeof buffer);
-                if (count <= 0)
-                    break;
-                if (write(file, buffer, static_cast<std::size_t>(count)) < 0 ||
-                    write(descriptor, buffer, static_cast<std::size_t>(count)) < 0) {
-                    // keep draining so that the writer never blocks
-                }
-            }
-            _exit(0);
-        }
-        if (child > 0)
-            waitpid(child, nullptr, 0);
-        close(ends[0]);
-        dup2(ends[1], descriptor);
-        close(ends[1]);
-    }
-    close(file);
-    std::setvbuf(stdout, nullptr, _IOLBF, 0);
-    return path;
-}
-int session_log_helper(const std::vector<std::wstring> &) { return 2; }
-#endif
 } // namespace xs::host
