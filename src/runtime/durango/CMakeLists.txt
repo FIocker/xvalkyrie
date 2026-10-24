@@ -1,4 +1,4 @@
-add_library(xs_runtime_durango runtime.cpp kernelx.cpp memory.cpp system.cpp storage.cpp winrt/activation.cpp
+add_library(xs_runtime_durango runtime.cpp kernelx.cpp memory.cpp system.cpp acphal.cpp storage.cpp winrt/activation.cpp
   winrt/placeholder.cpp winrt/inert.cpp winrt/application.cpp winrt/async.cpp winrt/collection.cpp winrt/gamepad.cpp winrt/storage.cpp winrt/system_ui.cpp winrt/title_info.cpp
   d3d11x/device.cpp d3d11x/wrap.cpp d3d11x/layout.cpp)
 target_include_directories(xs_runtime_durango PUBLIC ${PROJECT_SOURCE_DIR}/src)

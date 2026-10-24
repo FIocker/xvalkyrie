@@ -2,32 +2,38 @@
 #include "runtime/durango/runtime.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unknwn.h>
 #include <windows.h>
 
-// Console system DLLs that are the desktop ones plus a few functions of their own. The
-// console-only functions of pixevt, toolhelpx, mmdevapi and
-// mfplat are answered here. Those whose arguments nobody has documented are only ever answered with an
-// HRESULT, never by writing through their arguments.
+// Console-only functions. Undocumented ones only return.
 namespace xs::runtime::durango {
 namespace {
-// mmdevapi.dll: the threads and the spatial audio of the console's audio engine
+HRESULT WINAPI activate_audio_interface(const wchar_t *device, const GUID &iid, void *parameters,
+                                        IUnknown *handler, void **operation) {
+    using Activate = HRESULT(WINAPI *)(const wchar_t *, const GUID &, void *, IUnknown *, void **);
+    static const auto host = reinterpret_cast<Activate>(
+        GetProcAddress(LoadLibraryExW(L"mmdevapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+                       "ActivateAudioInterfaceAsync"));
+    const auto result = host ? host(device, iid, parameters, handler, operation) : E_NOTIMPL;
+    std::fprintf(stderr, "[Runtime] ActivateAudioInterfaceAsync(%ls) -> 0x%08lx\n",
+                 device ? device : L"(null)", static_cast<unsigned long>(result));
+    return result;
+}
 DWORD_PTR WINAPI set_wasapi_thread_affinity_mask(DWORD_PTR mask) { return mask; }
 HRESULT WINAPI enable_spatial_audio() { return S_OK; }
 void WINAPI nothing() {}
 
-// mfplat.dll: the device manager of the console's video decoder is reset with the device
 HRESULT WINAPI succeeded() { return S_OK; }
 HRESULT WINAPI not_implemented() { return E_NOTIMPL; }
 
-// pixevt.dll: PIX captures and counters, with no PIX to talk to
 HRESULT WINAPI configure_counters(UINT, UINT, UINT, UINT) { return S_OK; }
 UINT64 WINAPI zero() { return 0; }
 void WINAPI report_counter(const wchar_t *, float) {}
 
-// toolhelpx.dll: names for addresses in the title's own crash reports, as far as modules
-// go; there are no symbols to say more
+// module+offset; there are no symbols
 using SymbolCallback = BOOL (*)(void *, ULONG_PTR, HRESULT, const wchar_t *, ULONG);
 HRESULT WINAPI get_symbol_from_address(int, DWORD count, ULONG_PTR *addresses,
                                        SymbolCallback callback, void *context) {
@@ -56,6 +62,7 @@ template <class F> void *erase(F *function) { return reinterpret_cast<void *>(fu
 
 void install_system(Registry &registry) {
     registry.forward("mmdevapi.dll", "mmdevapi.dll");
+    registry.add("mmdevapi.dll", "ActivateAudioInterfaceAsync", erase(activate_audio_interface));
     registry.add("mmdevapi.dll", "SetWasapiThreadAffinityMask",
                  erase(set_wasapi_thread_affinity_mask));
     registry.add("mmdevapi.dll", "EnableSpatialAudio", erase(enable_spatial_audio));

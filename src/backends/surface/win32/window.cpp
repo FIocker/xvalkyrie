@@ -22,7 +22,7 @@ namespace {
 constexpr wchar_t class_name[] = L"XScarletTitle";
 std::atomic<HWND> surface{nullptr};
 std::atomic<bool> shown{false};
-std::atomic<HWND> latest{nullptr}; // the last title window, for the windows that go over it
+std::atomic<HWND> latest{nullptr};
 std::atomic<bool> covered{false};
 
 LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wide, LPARAM value) {

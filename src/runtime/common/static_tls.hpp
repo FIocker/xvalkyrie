@@ -9,5 +9,7 @@ namespace xs::runtime {
 // whose addresses are for `image_base`; the image is mapped and relocated at `base`.
 // The system does the work: it loads a small DLL made here that has the same TLS template
 // (and the image's TLS callbacks), and the image gets that DLL's index. Throws on failure.
-void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint64_t image_base);
+// An `executable` gets index 0 instead (see static_tls.cpp).
+void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint64_t image_base,
+                        bool executable = false);
 } // namespace xs::runtime

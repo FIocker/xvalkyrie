@@ -18,10 +18,8 @@ void *make_failed_action(long error);
 void *make_completed_value(unsigned long long value, unsigned size);
 // An IAsyncOperation<T> that has already failed with this HRESULT.
 void *make_failed_operation(long error);
-// The same for IAsyncOperationWithProgress<T, P>, whose vtable has the progress handler first.
+// IAsyncOperationWithProgress<T, P>
 void *make_failed_progress_operation(long error);
-// An IAsyncOperation<HSTRING> that is still running: `start` gets the function that finishes
-// it with its text, which may be called later and on any thread. The Completed handler runs
-// there.
+// IAsyncOperation<HSTRING> finished by the function `start` gets, from any thread
 void *make_text_operation(std::function<void(std::function<void(std::wstring)>)> start);
 } // namespace xs::runtime::durango::winrt

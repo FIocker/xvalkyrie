@@ -21,7 +21,7 @@ class Settings {
         std::function<void(bool rescan)> libraries_saved; // `libraries` was changed
         std::function<void()> input_saved;                // input::settings() was; may throw
         std::function<void()> graphics_saved;
-        std::function<void()> console_saved; // the ConsoleSettings given to draw(); may throw
+        std::function<void()> console_saved;
     };
     // what the library page shows about the library itself
     struct Library {
@@ -57,7 +57,6 @@ class Settings {
     std::optional<std::size_t> binding_; // control waiting for a key
     int pressed_ = 0;                    // the key it got
     std::string input_notice_, graphics_notice_, console_notice_;
-    // what the text fields of the console page show while they are edited
     bool console_loaded_ = false;
     char gamertag_[64] = "", user_id_[32] = "";
 };

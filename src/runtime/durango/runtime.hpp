@@ -1,4 +1,6 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
 
 namespace xs::runtime {
 class Registry;
@@ -7,11 +9,10 @@ namespace durango {
 void install(Registry &registry);
 // kernelx.dll functions that are not Win32 ones.
 void install_kernelx(Registry &registry);
-// Console memory: VirtualAlloc with page sizes, physical pages, XMem, graphics and audio
-// processor memory (memory.cpp). Part of install_kernelx.
 void install_memory(Registry &registry);
-// System DLLs of the console with a few console-only functions on top of the desktop ones:
-// mmdevapi, mfplat, pixevt, toolhelpx (system.cpp).
+void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address);
+void install_acphal(Registry &registry);
+// mmdevapi, mfplat, pixevt, toolhelpx
 void install_system(Registry &registry);
 // WinRT activation for C++/CX titles.
 void install_winrt(Registry &registry);

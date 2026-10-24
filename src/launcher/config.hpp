@@ -9,16 +9,15 @@ struct LibrarySettings {
     std::vector<std::filesystem::path> directories;
     bool grid = true;
 };
-// The signed-in user and the console's accessories, as titles see them (UTF-8).
+// UTF-8
 struct ConsoleSettings {
     std::string gamertag = "Player";
     std::string xbox_user_id = "2814600000000001";
     std::uint32_t gamerscore = 0;
     std::uint32_t age_group = 3; // unknown, child, teen, adult
     bool headset = false;
-    bool keyboard_dialog = true; // the system keyboard asks on the host
+    bool keyboard_dialog = true;
 };
-// Gamertags are 1 to 15 characters, user ids 1 to 20 digits.
 bool valid_gamertag(const std::string &gamertag);
 bool valid_xbox_user_id(const std::string &id);
 // config.ini, logs/, saves/ and cache/ live in the per-user configuration folder.

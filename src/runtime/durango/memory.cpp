@@ -11,10 +11,7 @@
 #include <vector>
 #include <windows.h>
 
-// Console memory as titles ask for it: page sizes and memory types in VirtualAlloc, the
-// title's physical pages and the reservations they are mapped into, XMem, and the memory
-// Direct3D and the audio processor hand out. Physical pages are a 16 GiB
-// section committed as it is used, mapped in 64 KiB views over placeholders.
+// Physical pages: a 16 GiB section mapped in 64 KiB views over placeholders.
 namespace xs::runtime::durango {
 namespace {
 constexpr DWORD mem_large_pages = 0x20000000;
@@ -28,10 +25,9 @@ constexpr DWORD protections = 0xff | PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBI
 
 struct Mapping {
     ULONG_PTR page;
-    bool owned; // allocated here for a plain commit, freed with it
+    bool owned; // taken by a plain commit
 };
-// A reservation with large or 4 MiB pages: one placeholder per 64 KiB, each holding a view
-// of a physical page once something is mapped there.
+// large or 4 MiB pages: one placeholder per 64 KiB
 struct Reservation {
     std::uintptr_t size;
     std::map<std::uintptr_t, Mapping> views;
@@ -59,7 +55,6 @@ Reservation *reservation_at(Physical &state, std::uintptr_t address, std::uintpt
     *base = entry->first;
     return &entry->second;
 }
-// `count` free pages, `run` contiguous ones at a time
 bool take_pages(Physical &state, std::uintptr_t count, std::uintptr_t run, ULONG_PTR *pages) {
     std::uintptr_t taken = 0;
     for (std::uintptr_t i = 0; i + run <= state.used.size() && taken < count;) {
@@ -278,7 +273,7 @@ void *WINAPI map_title_physical_pages(void *address, ULONG_PTR count, DWORD type
     return address;
 }
 
-// TOOLINGMEMORYSTATUS: a retail console gives titles no tooling memory
+// TOOLINGMEMORYSTATUS: none on retail
 struct ToolingMemory {
     DWORD length, reserved;
     ULONGLONG total, available, peak, page_tables;
@@ -292,8 +287,7 @@ BOOL WINAPI tooling_memory_status(ToolingMemory *status) {
     return TRUE;
 }
 
-// The attributes ask for an alignment and a page size. A fresh 64K-aligned, zeroed region
-// satisfies any of them, at the cost of address space for small blocks.
+// a fresh 64K-aligned region satisfies any attributes
 void *WINAPI xmem_alloc_default(SIZE_T size, ULONGLONG) {
     return VirtualAlloc(nullptr, size ? size : 1, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }
@@ -324,16 +318,15 @@ SIZE_T WINAPI xmem_get_allocation_hysteresis() {
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return static_cast<SIZE_T>(-1);
 }
-// no memory beyond the title's own
 HANDLE WINAPI xmem_get_auxiliary_title_memory() {
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return nullptr;
 }
 void WINAPI xmem_release_auxiliary_title_memory(HANDLE) {}
 
-// d3d11_x.dll's own graphics memory: ordinary memory here, since the host's GPU never
-// reads the title's
-void *aligned_alloc(SIZE_T size, std::uint64_t alignment, void *address) {
+} // namespace
+
+void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address) {
     MEM_ADDRESS_REQUIREMENTS requirements{};
     requirements.Alignment = address || alignment <= page ? 0 : alignment;
     MEM_EXTENDED_PARAMETER parameter{};
@@ -342,66 +335,18 @@ void *aligned_alloc(SIZE_T size, std::uint64_t alignment, void *address) {
     return VirtualAlloc2(GetCurrentProcess(), address, size, MEM_RESERVE | MEM_COMMIT,
                          PAGE_READWRITE, &parameter, 1);
 }
+
+namespace {
 HRESULT WINAPI d3d_allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 address, UINT,
                                             void **result) {
     if (!result || alignment > 0x20000)
         return E_INVALIDARG;
-    *result = aligned_alloc(size, alignment, reinterpret_cast<void *>(address));
+    *result = allocate_aligned(size, alignment, reinterpret_cast<void *>(address));
     return *result ? S_OK : E_OUTOFMEMORY;
 }
 HRESULT WINAPI d3d_free_graphics_memory(void *address) {
     return VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
 }
-
-// acphal.dll: memory the audio processor can see. Its addresses are 32-bit;
-// here they are handed out in order and only ever given back to these functions.
-struct ApuRegion {
-    std::uintptr_t address;
-    std::uint32_t size, apu;
-};
-std::mutex apu_mutex;
-std::vector<ApuRegion> apu_regions;
-std::uint32_t next_apu = 0x10000000;
-std::uint32_t apu_address(std::uintptr_t address, std::uint32_t size) {
-    for (const auto &region : apu_regions)
-        if (address - region.address < region.size)
-            return region.apu + static_cast<std::uint32_t>(address - region.address);
-    const auto apu = next_apu;
-    next_apu += (std::max(size, 1u) + 0xfff) & ~0xfffu;
-    apu_regions.push_back({address, size, apu});
-    return apu;
-}
-HRESULT WINAPI apu_alloc(void **address, std::uint32_t *apu, std::uint32_t size,
-                         std::uint32_t alignment, std::uint32_t) {
-    if (!address)
-        return E_INVALIDARG;
-    *address = aligned_alloc(size, alignment, nullptr);
-    if (!*address)
-        return E_OUTOFMEMORY;
-    const std::lock_guard lock(apu_mutex);
-    const auto at = apu_address(reinterpret_cast<std::uintptr_t>(*address), size);
-    if (apu)
-        *apu = at;
-    return S_OK;
-}
-HRESULT WINAPI apu_free(void *address) {
-    {
-        const std::lock_guard lock(apu_mutex);
-        std::erase_if(apu_regions, [&](const ApuRegion &region) {
-            return region.address == reinterpret_cast<std::uintptr_t>(address);
-        });
-    }
-    return VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
-}
-HRESULT WINAPI apu_map_virtual_address(std::uint32_t *apu, void *address, std::uint32_t size) {
-    if (!apu)
-        return E_INVALIDARG;
-    const std::lock_guard lock(apu_mutex);
-    *apu = apu_address(reinterpret_cast<std::uintptr_t>(address), size);
-    return S_OK;
-}
-BOOL WINAPI apu_is_virtual_address_valid() { return TRUE; }
-HRESULT WINAPI apu_create_heap() { return S_OK; }
 
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 } // namespace
@@ -433,13 +378,5 @@ void install_memory(Registry &registry) {
         registry.add("kernelx.dll", name, function);
     registry.add("d3d11_x.dll", "D3DAllocateGraphicsMemory", erase(d3d_allocate_graphics_memory));
     registry.add("d3d11_x.dll", "D3DFreeGraphicsMemory", erase(d3d_free_graphics_memory));
-    const std::pair<const char *, void *> acphal[] = {
-        {"ApuAlloc", erase(apu_alloc)},
-        {"ApuFree", erase(apu_free)},
-        {"ApuCreateHeap", erase(apu_create_heap)},
-        {"ApuMapVirtualAddress", erase(apu_map_virtual_address)},
-        {"ApuIsVirtualAddressValid", erase(apu_is_virtual_address_valid)}};
-    for (const auto &[name, function] : acphal)
-        registry.add("acphal.dll", name, function);
 }
 } // namespace xs::runtime::durango

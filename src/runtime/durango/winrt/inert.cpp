@@ -159,6 +159,22 @@ constexpr Row rows[] = {
      guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
      7,
      {Inert::event_add}}, // package installed
+    // public ICoreAcceleratorKeys: AcceleratorKeyActivated
+    {L"Windows.UI.Core.CoreDispatcher",
+     guid("9ffdf7f5-b8c9-4ef0-b7d2-1de626561fc8"),
+     6,
+     {Inert::event_add}},
+    {L"Windows.UI.Core.CoreDispatcher",
+     guid("9ffdf7f5-b8c9-4ef0-b7d2-1de626561fc8"),
+     7,
+     {Inert::accept}},
+    // public IMouseDeviceStatics::GetForCurrentView and IMouseDevice::MouseMoved
+    {L"Windows.Devices.Input.MouseDevice",
+     guid("f5a82ce3-4a2d-4004-b386-c74dc69be979"),
+     6,
+     {Inert::shared, L"Windows.Devices.Input.MouseDevice"}},
+    {L"Windows.Devices.Input.MouseDevice", direct, 6, {Inert::event_add}},
+    {L"Windows.Devices.Input.MouseDevice", direct, 7, {Inert::accept}},
     // console addition to CoreApplication
     {L"Windows.ApplicationModel.Core.CoreApplication",
      guid("9ff3799e-6e83-468c-a5b0-501ce6bb0fa1"),

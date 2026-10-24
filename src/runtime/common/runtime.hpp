@@ -19,6 +19,7 @@ class Registry {
   public:
     void add(std::string_view module, std::string_view symbol, void *function);
     void *find(std::string_view module, std::string_view symbol) const;
+    bool has(std::string_view module) const;
     // Lets every import of `module` that has no entry here go to the export of
     // `host_module` with the same name or ordinal, whatever the host policy says.
     void forward(std::string_view module, std::string_view host_module);
@@ -36,16 +37,14 @@ class Registry {
 // without a directory there are no such DLLs.
 nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
                          const std::filesystem::path &directory = {});
-// What the console would know about its owner and its accessories. Options > Console.
+// Options > Console
 struct ConsoleSettings {
     std::wstring gamertag = L"Player";
     std::wstring xbox_user_id = L"2814600000000001";
     std::uint32_t gamerscore = 0;
     std::uint32_t age_group = 3; // UserAgeGroup: unknown, child, teen, adult
-    // the user has a headset: an audio device of theirs, the host's communications output
     bool headset = false;
-    // the system keyboard asks on the host; otherwise it answers with the title's default text
-    bool keyboard_dialog = true;
+    bool keyboard_dialog = true; // otherwise the keyboard returns the default text
 };
 struct ExecuteOptions {
     // start even if some imports can't be resolved; calling one of them ends the process
@@ -72,7 +71,6 @@ std::filesystem::path package_directory(const std::filesystem::path &directory);
 // The folder of the running title's saved games, from ExecuteOptions; empty before execute
 // or when none was given.
 const std::filesystem::path &save_directory();
-// The console settings of the running title, from ExecuteOptions
 const ConsoleSettings &console_settings();
 
 namespace detail {
@@ -96,13 +94,14 @@ bool title_provides(const Registry &registry, const std::filesystem::path &direc
                     std::string_view module, std::string_view symbol);
 // offset of an address inside the running guest image, 0 if it is not in it
 std::uint64_t guest_offset(const void *address);
-// whether the address is inside the running guest image or one of the title's DLLs
 bool in_title(const void *address);
-// "image+0x...", "<title dll>+0x..." or the plain address, for diagnostics
+// "image+0x...", "<dll>+0x..." or the address
 std::string guest_location(const void *address);
-// Export of the title's own DLL `module` while it runs, mapping the DLL and calling its
-// DllMain on first use. Null if the title has no such DLL or the DLL does not export it.
+// maps the title's DLL and runs its DllMain on first use
 void *title_export(std::string_view module, std::string_view symbol);
+// LoadLibrary and GetProcAddress for modules of ours and of the title; null for the host's
+void *guest_library(const wchar_t *path);
+void *guest_symbol(void *module, const char *symbol);
 bool host_policy_allows(std::string_view module, std::string_view symbol);
 } // namespace detail
 } // namespace xs::runtime

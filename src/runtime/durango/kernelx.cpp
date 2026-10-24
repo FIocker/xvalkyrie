@@ -13,10 +13,11 @@
 
 namespace xs::runtime::durango {
 namespace {
-// Libraries a title loads by name at run time come from the host for now. What it asks
-// for and gets is worth knowing.
+// ours and the title's first, then the host's
 HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
-    const auto module = LoadLibraryExW(name, file, flags);
+    auto module = static_cast<HMODULE>(detail::guest_library(name));
+    if (!module)
+        module = LoadLibraryExW(name, file, flags);
     const auto error = GetLastError();
     std::fprintf(stderr, "[Runtime] LoadLibraryEx(%ls) -> %p\n", name ? name : L"(null)",
                  static_cast<void *>(module));
@@ -42,7 +43,9 @@ FARPROC WINAPI get_proc_address(HMODULE module, const char *name) {
     const bool named = reinterpret_cast<std::uintptr_t>(name) >= 0x10000;
     if (named && !std::strcmp(name, "CreateXAudio2Object"))
         return reinterpret_cast<FARPROC>(&create_xaudio2);
-    const auto function = GetProcAddress(module, name);
+    auto function = reinterpret_cast<FARPROC>(detail::guest_symbol(module, name));
+    if (!function)
+        function = GetProcAddress(module, name);
     const auto error = GetLastError();
     const bool ordinal = reinterpret_cast<std::uintptr_t>(name) < 0x10000;
     std::fprintf(stderr, "[Runtime] GetProcAddress(%s%s) -> %p\n", ordinal ? "#" : name,
@@ -156,7 +159,6 @@ void WINAPI query_processor_scheduling_statistics(SchedulingStatistics *statisti
     if (GetSystemTimes(&idle, &kernel, &user))
         *statistics = {value(kernel) - value(idle) + value(user), value(idle), statistics->global};
 }
-// the console's cores are not the host's: the pool runs wherever the host puts it
 BOOL WINAPI set_threadpool_affinity_mask(PTP_POOL, DWORD_PTR) { return TRUE; }
 // TITLEMEMORYSTATUS: the memory of a title, from what the host has
 struct TitleMemory {
@@ -206,8 +208,7 @@ void install_kernelx(Registry &registry) {
     registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
-    // ETW and address waits are in kernelx on the console; on the desktop kernelbase has
-    // them, not kernel32
+    // in kernelbase on the desktop, not kernel32
     if (const auto base = LoadLibraryExW(L"kernelbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         for (const auto *name :
              {"EventRegister", "EventUnregister", "EventWrite", "EventWriteEx", "EventWriteString",

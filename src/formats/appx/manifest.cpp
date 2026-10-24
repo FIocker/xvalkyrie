@@ -71,7 +71,7 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
     const auto live = root.find_node([](pugi::xml_node node) {
         return std::string_view(node.name()).ends_with("XboxLive") && node.attribute("TitleId");
     });
-    // WinRT classes implemented by DLLs of the package: class name -> DLL path as written
+    // in-process servers: class -> DLL
     auto classes = json::object();
     for (auto extension : root.child("Extensions").children()) {
         if (std::string_view(extension.attribute("Category").value()) !=

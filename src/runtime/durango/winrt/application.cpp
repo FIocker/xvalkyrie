@@ -169,11 +169,11 @@ class Window final : public IConsoleWindow {
                               _ReturnAddress());                                                   \
     }
     XS_UNKNOWN(8) XS_UNKNOWN(9) XS_UNKNOWN(10)
-    XS_UNKNOWN(12) XS_UNKNOWN(13) XS_UNKNOWN(14) XS_UNKNOWN(15) XS_UNKNOWN(16) XS_UNKNOWN(18)
-    XS_UNKNOWN(20) XS_UNKNOWN(21) XS_UNKNOWN(22) XS_UNKNOWN(24) XS_UNKNOWN(26) XS_UNKNOWN(27)
+    XS_UNKNOWN(12) XS_UNKNOWN(13) XS_UNKNOWN(14) XS_UNKNOWN(16) XS_UNKNOWN(18)
+    XS_UNKNOWN(20) XS_UNKNOWN(21) XS_UNKNOWN(22) XS_UNKNOWN(24) XS_UNKNOWN(26)
     XS_UNKNOWN(28) XS_UNKNOWN(29) XS_UNKNOWN(30) XS_UNKNOWN(31) XS_UNKNOWN(32) XS_UNKNOWN(33)
-    XS_UNKNOWN(34) XS_UNKNOWN(35) XS_UNKNOWN(36) XS_UNKNOWN(37) XS_UNKNOWN(38) XS_UNKNOWN(39)
-    XS_UNKNOWN(40) XS_UNKNOWN(41) XS_UNKNOWN(42) XS_UNKNOWN(43) XS_UNKNOWN(44) XS_UNKNOWN(45)
+    XS_UNKNOWN(34) XS_UNKNOWN(35) XS_UNKNOWN(36) XS_UNKNOWN(38) XS_UNKNOWN(39)
+    XS_UNKNOWN(41) XS_UNKNOWN(43) XS_UNKNOWN(44) XS_UNKNOWN(45)
     XS_UNKNOWN(46) XS_UNKNOWN(47)
 #undef XS_UNKNOWN
     // Event registrations (handler, token). Which events they are is not known yet, so
@@ -183,7 +183,8 @@ class Window final : public IConsoleWindow {
         *static_cast<std::int64_t *>(token) = ++tokens_;                                           \
         return S_OK;                                                                               \
     }
-    XS_EVENT(17) XS_EVENT(19) XS_EVENT(23) XS_EVENT(25)
+    XS_EVENT(15) XS_EVENT(17) XS_EVENT(19) XS_EVENT(23) XS_EVENT(25) XS_EVENT(27) XS_EVENT(37)
+    XS_EVENT(40) XS_EVENT(42)
 #undef XS_EVENT
       // clang-format on
 

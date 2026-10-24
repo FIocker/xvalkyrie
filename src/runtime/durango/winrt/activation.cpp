@@ -28,14 +28,13 @@ namespace {
 bool host_class(std::wstring_view name) {
     for (const std::wstring_view prefix :
          {L"Windows.Foundation.", L"Windows.Storage.Streams.", L"Windows.Data.",
-          L"Windows.Globalization.", L"Windows.Security.Cryptography."})
+          L"Windows.Globalization.", L"Windows.Security.Cryptography.", L"Windows.Media.Devices."})
         if (name.starts_with(prefix))
             return true;
     return false;
 }
 
-// The classes the package implements itself (Xbox Live, game chat...), from the in-process
-// servers of its manifest: class name -> DLL file name
+// in-process servers of the manifest: class -> DLL
 const std::map<std::wstring, std::string, std::less<>> &title_classes() {
     static const auto classes = [] {
         std::map<std::wstring, std::string, std::less<>> result;
@@ -52,7 +51,6 @@ const std::map<std::wstring, std::string, std::less<>> &title_classes() {
     }();
     return classes;
 }
-// The factory of a class the title implements, from its DLL's DllGetActivationFactory
 HRESULT title_factory(const wchar_t *name, const GUID &iid, void **factory) {
     const auto entry = title_classes().find(std::wstring_view(name));
     if (entry == title_classes().end())
@@ -108,7 +106,7 @@ HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **
     *factory = winrt::make_placeholder(name, iid);
     return S_OK;
 }
-// combase's own way in, used by code that is not C++/CX (WRL in the title's DLLs)
+// what WRL code in the title's DLLs calls
 HRESULT WINAPI ro_get_activation_factory(HSTRING name, const GUID &iid, void **factory) {
     if (!factory)
         return E_POINTER;

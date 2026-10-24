@@ -4,9 +4,6 @@
 #include <utility>
 #include <windows.h>
 
-// The system keyboard of a console, as a small window of the host's: a title, a line that
-// says what is asked for, the text, OK and Cancel. It has a thread of its own, so the title
-// goes on running while it is up, as it does on a console.
 namespace xs::surface {
 namespace {
 constexpr wchar_t class_name[] = L"XScarletKeyboard";

@@ -31,7 +31,6 @@ struct DesktopHooks {
     std::function<void()> graphics_changed;
     LibrarySettings libraries;
     std::function<void(const LibrarySettings &)> libraries_changed;
-    // Options > Console; may throw
     ConsoleSettings console;
     std::function<void(const ConsoleSettings &)> console_changed;
 };

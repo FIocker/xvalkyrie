@@ -20,8 +20,6 @@ namespace {
 using Microsoft::WRL::Make;
 using Microsoft::WRL::Wrappers::HString;
 
-// IKeyboardOptions: a property bag the title fills before it
-// asks for the keyboard
 MIDL_INTERFACE("74782F58-DA5D-4E31-9E6E-BD10C91F1BE7")
 IKeyboardOptions : public IInspectable {
     virtual HRESULT STDMETHODCALLTYPE get_DefaultText(HSTRING * value) = 0;
@@ -97,7 +95,7 @@ std::wstring text(HSTRING value) {
     const auto *raw = WindowsGetStringRawBuffer(value, &length);
     return {raw, length};
 }
-// VirtualKeyboardInputScope: Number 0x1d, Password 0x1f, TelephoneNumber 0x20
+// input scopes: number 0x1d, password 0x1f, telephone number 0x20
 void *keyboard(surface::TextRequest request, std::uint32_t scope) {
     request.password = scope == 0x1f;
     request.digits = scope == 0x1d || scope == 0x20;
@@ -109,14 +107,14 @@ void *keyboard(surface::TextRequest request, std::uint32_t scope) {
         if (!ask)
             return finish(request.text);
         auto fallback = request.text;
-        // cancelled: the text the title suggested, so that it always gets a string back
+        // cancelled: the suggested text
         surface::ask_text(std::move(request),
                           [finish, fallback](std::optional<std::wstring> entered) {
                               finish(entered.value_or(fallback));
                           });
     });
 }
-// the id of the host's communications output, as WASAPI names it; COM on a thread of its own
+// on a thread of its own for COM
 std::wstring communications_output() {
     std::wstring id;
     std::thread([&] {

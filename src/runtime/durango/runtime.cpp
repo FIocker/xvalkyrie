@@ -20,6 +20,7 @@ void install(Registry &registry) {
     registry.forward("d3dcompiler_47.dll", "d3dcompiler_47.dll");
     install_kernelx(registry);
     install_system(registry);
+    install_acphal(registry);
     modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);
     install_d3d11x(registry);

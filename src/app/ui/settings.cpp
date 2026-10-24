@@ -235,8 +235,6 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
         ImGui::TextWrapped("%s", graphics_notice_.c_str());
 }
 
-// The signed-in user titles see, and what the console has plugged in. Text is applied when
-// the field is left, if it is valid.
 void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
     if (!console_loaded_) {
         std::snprintf(gamertag_, sizeof gamertag_, "%s", settings.gamertag.c_str());

@@ -45,6 +45,8 @@ struct Guest {
     std::filesystem::path directory;
     std::deque<TitleModule> modules; // dependencies before what needs them
     Resolver resolve;                // imports of the title's DLLs loaded while it runs
+    const Registry *registry = nullptr;
+    std::map<std::string, std::unique_ptr<std::string>> own_handles; // LoadLibrary of ours
     std::recursive_mutex loading;
     std::vector<std::string> missing; // "module!symbol", indexed by stub number
     std::uint8_t *stubs = nullptr;
@@ -204,8 +206,25 @@ LPTOP_LEVEL_EXCEPTION_FILTER WINAPI
 set_unhandled_exception_filter(LPTOP_LEVEL_EXCEPTION_FILTER filter) {
     return std::exchange(title_filter, filter);
 }
+// stdout and stderr are the session log's, the title's own included
+FILE *__cdecl wfreopen(const wchar_t *path, const wchar_t *mode, FILE *stream) {
+    if (stream != stdout && stream != stderr)
+        return _wfreopen(path, mode, stream);
+    std::fprintf(stderr, "[Runtime] the title sends std%s to %ls, kept in the log\n",
+                 stream == stdout ? "out" : "err", path ? path : L"(null)");
+    return stream;
+}
+FILE *__cdecl freopen_narrow(const char *path, const char *mode, FILE *stream) {
+    if (stream != stdout && stream != stderr)
+        return std::freopen(path, mode, stream);
+    std::fprintf(stderr, "[Runtime] the title sends std%s to %s, kept in the log\n",
+                 stream == stdout ? "out" : "err", path ? path : "(null)");
+    return stream;
+}
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 const Override overrides[] = {
+    {"_wfreopen", erase(wfreopen)},
+    {"freopen", erase(freopen_narrow)},
     {"GetModuleHandleW", erase(get_module_handle_w)},
     {"GetModuleHandleA", erase(get_module_handle_a)},
     {"GetModuleHandleExW", erase(get_module_handle_ex_w)},
@@ -504,9 +523,8 @@ std::string detail::guest_location(const void *address) {
     return text;
 }
 
-void *detail::title_export(std::string_view module, std::string_view symbol) {
-    if (!guest)
-        return nullptr;
+namespace {
+const TitleModule *load_title(std::string_view module) {
     const std::lock_guard lock(guest->loading);
     const auto loaded = guest->modules.size();
     // a DLL loaded now may need stubs or trace thunks of its own
@@ -529,11 +547,54 @@ void *detail::title_export(std::string_view module, std::string_view symbol) {
             reinterpret_cast<BOOL(WINAPI *)(void *, DWORD, void *)>(added.entry)(
                 reinterpret_cast<void *>(added.base), DLL_PROCESS_ATTACH, nullptr);
     }
+    return library;
+}
+void *export_of(const TitleModule *library, std::string_view symbol) {
     if (!library)
         return nullptr;
     const auto exported = library->exports.find(std::string(symbol));
     return exported == library->exports.end() ? nullptr
                                               : reinterpret_cast<void *>(exported->second);
+}
+} // namespace
+
+void *detail::title_export(std::string_view module, std::string_view symbol) {
+    return guest ? export_of(load_title(module), symbol) : nullptr;
+}
+
+void *detail::guest_library(const wchar_t *path) {
+    if (!guest || !path)
+        return nullptr;
+    auto name = lower(std::filesystem::path(path).filename().string());
+    if (name.find('.') == std::string::npos)
+        name += ".dll";
+    if (guest->registry->has(name)) {
+        const std::lock_guard lock(guest->loading);
+        auto &handle = guest->own_handles[name];
+        if (!handle)
+            handle = std::make_unique<std::string>(name);
+        return handle.get();
+    }
+    const auto *library = load_title(name);
+    return library ? reinterpret_cast<void *>(library->base) : nullptr;
+}
+
+void *detail::guest_symbol(void *module, const char *symbol) {
+    if (!guest || !module)
+        return nullptr;
+    const auto label = reinterpret_cast<std::uintptr_t>(symbol) < 0x10000
+                           ? "#" + std::to_string(reinterpret_cast<std::uintptr_t>(symbol))
+                           : std::string(symbol);
+    {
+        const std::lock_guard lock(guest->loading);
+        for (const auto &[name, handle] : guest->own_handles)
+            if (handle.get() == module)
+                return guest->registry->find(name, label);
+    }
+    const auto *library = module_at(module);
+    return library && library->base == reinterpret_cast<std::uint64_t>(module)
+               ? export_of(library, label)
+               : nullptr;
 }
 
 void *detail::runtime_override(std::string_view symbol) {
@@ -615,6 +676,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     };
     options.resolve = resolve;
     state.resolve = resolve;
+    state.registry = &registry;
     const loader::MappedImage image(file, pe, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())
@@ -632,7 +694,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     state.base = image.guest_base();
     state.size = layout.at("size_of_image");
     if (contents.contains("tls"))
-        install_static_tls(contents.at("tls"), state.base, pe.at("image_base"));
+        install_static_tls(contents.at("tls"), state.base, pe.at("image_base"), true);
 
     // needed for SEH and C++ exceptions inside the guest
     const auto &directories = pe.at("directory_descriptors");

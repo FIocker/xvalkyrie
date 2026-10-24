@@ -21,10 +21,10 @@ both consoles (`formats/pe`, `loader`, `runtime/common`).
 - [x] Console target detection from the import table (Xbox One, Series, PC)
 - [x] Unpacked title folders: executable taken from `AppxManifest.xml`
 - [x] Parses and maps a real ERA title (74k relocations, 502 imports)
-- [ ] Static TLS
+- [x] Static TLS, with index 0 for executables built with /GA
 - [x] Title-local DLLs: mapped like the executable, `DllMain` called before the entry point
 - [ ] Delay-load imports
-- [ ] `LoadLibrary` / `GetProcAddress` going through the resolver
+- [x] `LoadLibrary` / `GetProcAddress` going through the resolver
 - [ ] Guest command line
 
 ## Phase 2: Xbox One runtime
@@ -68,8 +68,9 @@ The test program is an unpacked ERA title kept outside the repository, in
   recognizers report that they are not there
 - [x] Title physical pages, large page reservations, XMem hooks, graphics and APU memory
 - [x] `mmdevapi`, `mfplat`, `pixevt` and `toolhelpx` with their console-only functions
-- [ ] `acphal.dll` beyond its memory (`AcpHalCreate`, SHAPE contexts): needs the driver's ABI
+- [x] `acphal.dll`: SHAPE contexts and a HAL that acknowledges commands and ticks frames; nothing is decoded
 - [ ] `XGCreateTextureComputer`: the layout of `XG_RESOURCE_DESC` is not known
+- [ ] `D3D11XCreateDeviceX` and `DXGIXPresentArray` (Unity titles)
 - [ ] Connected storage that stores: reads say "no such blob", writes succeed and are dropped
 - [x] The title draws inside the xscarlet window (16:9 between the menu and the status
   bar); `exec` still gives it a window of its own
