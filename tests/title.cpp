@@ -26,7 +26,11 @@ std::string package(std::string_view executable) {
            "<Logo>Assets/logo.png</Logo></Properties>"
            "<Prerequisites><mx:OSName>era</mx:OSName></Prerequisites>"
            "<Extensions><mx:XboxLive TitleId=\"34BA1DE0\" "
-           "PrimaryServiceConfigId=\"1fac0100-3c93-421f-8d16-536a34ba1de0\"/></Extensions>"
+           "PrimaryServiceConfigId=\"1fac0100-3c93-421f-8d16-536a34ba1de0\"/>"
+           "<Extension Category=\"windows.activatableClass.inProcessServer\"><InProcessServer>"
+           "<Path>Live.dll</Path><ActivatableClass ActivatableClassId=\"Sample.Live.Context\"/>"
+           "<ActivatableClass ActivatableClassId=\"Sample.Live.Settings\"/>"
+           "</InProcessServer></Extension></Extensions>"
            "<Applications><Application Id=\"App\" Executable=\"" +
            std::string(executable) +
            "\" EntryPoint=\"Sample.App\"><VisualElements>"
@@ -58,10 +62,23 @@ TEST_CASE("package manifest") {
     REQUIRE(report.at("applications").size() == 1);
     CHECK(report["applications"][0].at("executable") == "game.exe");
     CHECK(report["applications"][0].at("entry_point") == "Sample.App");
-    for (auto xml : {"", "<Package>", "<Other/>", "<Package/>",
-                     "<Package><Identity/><Applications/></Package>",
-                     "<Package><Identity/><Applications><Application/></Applications></Package>",
-                     "<!DOCTYPE Package><Package/>"})
+    CHECK(report.at("activatable_classes") == nlohmann::json{{"Sample.Live.Context", "Live.dll"},
+                                                             {"Sample.Live.Settings", "Live.dll"}});
+    const std::string application =
+        "<Package><Identity/><Applications><Application Executable=\"a.exe\"/></Applications>";
+    CHECK(manifest(application + "</Package>").at("activatable_classes").empty());
+    for (auto xml :
+         {std::string(), std::string("<Package>"), std::string("<Other/>"),
+          std::string("<Package/>"), std::string("<Package><Identity/><Applications/></Package>"),
+          std::string("<Package><Identity/><Applications><Application/></Applications></Package>"),
+          std::string("<!DOCTYPE Package><Package/>"),
+          application + "<Extensions><Extension Category=\"windows.activatableClass."
+                        "inProcessServer\"><InProcessServer><ActivatableClass "
+                        "ActivatableClassId=\"A\"/></InProcessServer></Extension></Extensions>"
+                        "</Package>",
+          application + "<Extensions><Extension Category=\"windows.activatableClass."
+                        "inProcessServer\"><InProcessServer><Path>a.dll</Path><ActivatableClass/>"
+                        "</InProcessServer></Extension></Extensions></Package>"})
         CHECK_THROWS(manifest(xml));
 }
 

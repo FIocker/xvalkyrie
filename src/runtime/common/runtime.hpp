@@ -81,6 +81,13 @@ bool title_provides(const Registry &registry, const std::filesystem::path &direc
                     std::string_view module, std::string_view symbol);
 // offset of an address inside the running guest image, 0 if it is not in it
 std::uint64_t guest_offset(const void *address);
+// whether the address is inside the running guest image or one of the title's DLLs
+bool in_title(const void *address);
+// "image+0x...", "<title dll>+0x..." or the plain address, for diagnostics
+std::string guest_location(const void *address);
+// Export of the title's own DLL `module` while it runs, mapping the DLL and calling its
+// DllMain on first use. Null if the title has no such DLL or the DLL does not export it.
+void *title_export(std::string_view module, std::string_view symbol);
 bool host_policy_allows(std::string_view module, std::string_view symbol);
 } // namespace detail
 } // namespace xs::runtime

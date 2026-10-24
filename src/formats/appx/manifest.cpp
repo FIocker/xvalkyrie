@@ -71,6 +71,25 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
     const auto live = root.find_node([](pugi::xml_node node) {
         return std::string_view(node.name()).ends_with("XboxLive") && node.attribute("TitleId");
     });
+    // WinRT classes implemented by DLLs of the package: class name -> DLL path as written
+    auto classes = json::object();
+    for (auto extension : root.child("Extensions").children()) {
+        if (std::string_view(extension.attribute("Category").value()) !=
+            "windows.activatableClass.inProcessServer")
+            continue;
+        const auto server = extension.child("InProcessServer");
+        const std::string_view path = server.child("Path").text().get();
+        if (path.empty())
+            throw std::runtime_error("Package manifest in-process server has no Path");
+        for (auto activatable : server.children("ActivatableClass")) {
+            if (classes.size() >= 4096)
+                throw std::runtime_error("Package manifest exceeds 4096 activatable classes");
+            const std::string_view id = activatable.attribute("ActivatableClassId").value();
+            if (id.empty())
+                throw std::runtime_error("Package manifest activatable class has no id");
+            classes[std::string(id)] = path;
+        }
+    }
     return {{"name", attribute(identity, "Name")},
             {"version", attribute(identity, "Version")},
             {"architecture", attribute(identity, "ProcessorArchitecture")},
@@ -81,6 +100,7 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
             {"environment", text(prerequisites.child("mx:ApplicationEnvironment"))},
             {"applications", std::move(applications)},
             {"xbox_live_title_id", attribute(live, "TitleId")},
-            {"service_config_id", attribute(live, "PrimaryServiceConfigId")}};
+            {"service_config_id", attribute(live, "PrimaryServiceConfigId")},
+            {"activatable_classes", std::move(classes)}};
 }
 } // namespace xs::appx

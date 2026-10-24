@@ -19,7 +19,6 @@ enum class Inert : std::uint8_t {
     lookup2,        // HRESULT get(key, key, T **result), likewise
     operation2,     // HRESULT start(argument, IAsyncOperation<T> **), finished at once likewise
     action2,        // HRESULT start(argument, IAsyncAction **), finished at once
-    action3,        // HRESULT start(argument, argument, IAsyncAction **), finished at once
     list_operation, // HRESULT start(IAsyncOperation<IVectorView<T>> **): finished, nothing found
     offline,        // HRESULT start(..., IAsyncOperation<T> **) of an online service: the operation
                     // fails at once. The result is argument number `argument`.
@@ -39,11 +38,16 @@ enum class Inert : std::uint8_t {
     no_items,       // IVectorView::GetMany of an empty collection
     event_add,      // HRESULT add(handler, EventRegistrationToken *token); never raised
     controllers,    // HRESULT get(IVectorView<IController> **): the one gamepad
+    object_at,      // HRESULT make(..., T **) returning an inert `result` in argument `argument`
+    vector,         // HRESULT get(IVector<T> **): a vector of the object's own, empty at first
+    zero_operation_at, // HRESULT start(..., IAsyncOperation<enum> **), finished at once with 0;
+                       // result in `argument`
 };
 struct InertMethod {
     Inert kind;
     const wchar_t *result = nullptr; // type or text, for the kinds that have one
-    unsigned argument = 0;           // Inert::offline: which argument is the result, from 1
+    unsigned argument = 0;           // the kinds `..._at` and offline: which argument is the
+                                     // result, from 1
 };
 // The interface a C++/CX caller uses without asking for it: the default interface of an
 // object it was handed.

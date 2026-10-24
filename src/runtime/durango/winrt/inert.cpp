@@ -38,6 +38,15 @@ constexpr wchar_t license[] = L"Windows.ApplicationModel.Store.LicenseInformatio
 constexpr wchar_t user[] = L"Windows.Xbox.System.User";
 
 constexpr wchar_t network[] = L"Windows.Networking.Connectivity.NetworkInformation";
+constexpr wchar_t achievements[] = L"Windows.Xbox.Achievements.AchievementNotifier";
+constexpr wchar_t achievement_source[] = L"Windows.Xbox.Achievements.AchievementSource";
+constexpr auto achievement_notifier_statics = guid("82ca180b-30e2-4ea0-a62e-b61697a2f334");
+constexpr auto achievement_source_interface = guid("3b7e45dc-086e-4535-9a5d-c6e42cdea33c");
+constexpr wchar_t chat_session[] = L"Windows.Xbox.Chat.ChatSession";
+constexpr wchar_t chat_session_state[] = L"Windows.Xbox.Chat.ChatSessionState";
+constexpr auto chat_session2 = guid("8840b65e-eb13-4629-8f63-2854624460ff");
+constexpr wchar_t product[] = L"Windows.Xbox.ApplicationModel.Store.Product";
+constexpr auto product_statics = guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7");
 
 constexpr Row rows[] = {
     {transport, game_transport_controls, 14, {Inert::accept}}, // (bool)
@@ -64,11 +73,51 @@ constexpr Row rows[] = {
     // public interface INetworkInformationStatics
     {network, network_statics, 12, {Inert::event_add}}, // NetworkStatusChanged
 
+    // IAchievementNotifierStatics: GetTitleIdFilteredSource, GetUnfilteredSource. The
+    // AchievementUnlocked event of IAchievementSource is never raised: nothing unlocks here.
+    {achievements, achievement_notifier_statics, 6, {Inert::object, achievement_source}},
+    {achievements, achievement_notifier_statics, 7, {Inert::object, achievement_source}},
+    {achievement_source, direct, 6, {Inert::event_add}},
+    {achievement_source, direct, 7, {Inert::accept}},
+    {achievement_source, achievement_source_interface, 6, {Inert::event_add}},
+    {achievement_source, achievement_source_interface, 7, {Inert::accept}},
+
+    // Chat with no microphone and no headset anywhere: sessions hold channels, their state
+    // has no capture source and no render target, and nothing changes.
+    // IChatSessionFactory: (TimeSpan, features, out) and (TimeSpan, affinity, features, out)
+    {chat_session,
+     guid("53cb6065-c211-4b21-a3ef-cd544d22aba1"),
+     6,
+     {Inert::object_at, chat_session, 3}},
+    {chat_session,
+     guid("53cb6065-c211-4b21-a3ef-cd544d22aba1"),
+     7,
+     {Inert::object_at, chat_session, 4}},
+    {chat_session, direct, 6, {Inert::vector}},    // Channels
+    {chat_session, direct, 7, {Inert::event_add}}, // StateChangedEvent
+    {chat_session, direct, 8, {Inert::accept}},
+    {chat_session, direct, 9, {Inert::operation, chat_session_state}}, // GetStateAsync
+    {chat_session_state, direct, 6, {Inert::empty_list}},              // CaptureSources
+    {chat_session_state, direct, 7, {Inert::empty_list}},              // RenderTargets
+    // IChatSession2: TranscriptionEnabled, TranscribedTextReadyEvent
+    {chat_session, chat_session2, 6, {Inert::zero32}},
+    {chat_session, chat_session2, 7, {Inert::accept}},
+    {chat_session, chat_session2, 9, {Inert::event_add}},
+    {chat_session, chat_session2, 10, {Inert::accept}},
+
+    // IProductStatics: the store dialogs close at once, every privilege is there, and
+    // nothing is ever purchased
+    {product, product_statics, 6, {Inert::action_at, nullptr, 3}},          // ShowPurchaseAsync
+    {product, product_statics, 7, {Inert::action_at, nullptr, 3}},          // ShowDetailsAsync
+    {product, product_statics, 8, {Inert::action_at, nullptr, 5}},          // ShowMarketplaceAsync
+    {product, product_statics, 9, {Inert::action_at, nullptr, 3}},          // ShowRedeemCodeAsync
+    {product, product_statics, 10, {Inert::action_at, nullptr, 4}},         // ShowSubscriptionAsync
+    {product, product_statics, 11, {Inert::zero_operation_at, nullptr, 5}}, // CheckPrivilegeAsync
+    {product, product_statics, 12, {Inert::zero_operation_at, nullptr, 5}}, // CheckPrivilegesAsync
+    {product, product_statics, 13, {Inert::event_add}},                     // ProductPurchased
+    {product, product_statics, 14, {Inert::accept}},
+
     // event registrations for things that never happen here
-    {L"Windows.Xbox.ApplicationModel.Store.Product",
-     guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7"),
-     13,
-     {Inert::event_add}}, // product purchased
     {L"Windows.Xbox.Management.Deployment.DownloadableContentPackageManager",
      guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
      7,
@@ -110,27 +159,6 @@ constexpr Row rows[] = {
      guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"),
      6,
      {Inert::lookup, L"Windows.Xbox.Networking.SecureDeviceAssociationTemplate"}},
-    {L"Microsoft.Xbox.GameChat.ChatManager",
-     guid("5ca654f2-7640-3bac-9c35-1a42a0e41f38"),
-     6,
-     {Inert::object, L"Microsoft.Xbox.GameChat.ChatManagerSettings"}},
-    {L"Microsoft.Xbox.GameChat.ChatManagerSettings", direct, 23, {Inert::accept}},
-    {L"Microsoft.Xbox.GameChat.ChatManagerSettings", direct, 25, {Inert::accept}},
-    {L"Microsoft.Xbox.GameChat.ChatManagerSettings", direct, 27, {Inert::accept}},
-    {L"Microsoft.Xbox.GameChat.ChatManagerSettings", direct, 29, {Inert::accept}},
-    {L"Microsoft.Xbox.GameChat.ChatManagerSettings", direct, 31, {Inert::accept}},
-    {L"Microsoft.Xbox.GameChat.ChatManager",
-     guid("5ca654f2-7640-3bac-9c35-1a42a0e41f38"),
-     7,
-     {Inert::event_add}},
-    {L"Microsoft.Xbox.GameChat.ChatManager",
-     guid("5ca654f2-7640-3bac-9c35-1a42a0e41f38"),
-     9,
-     {Inert::event_add}},
-    {L"Microsoft.Xbox.GameChat.ChatManager",
-     guid("5ca654f2-7640-3bac-9c35-1a42a0e41f38"),
-     11,
-     {Inert::event_add}},
     {L"Windows.Xbox.System.User",
      guid("b4f23a93-7fc6-4a50-b153-950016389e50"),
      18,
@@ -151,19 +179,6 @@ constexpr Row rows[] = {
      guid("9776ff56-9bfd-4581-ad45-b645bba526d6"),
      8,
      {Inert::shared, L"Windows.Xbox.System.User"}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext",
-     guid("bedc781e-a29e-3333-9d97-7af19812192d"),
-     6,
-     {Inert::lookup, L"Microsoft.Xbox.Services.XboxLiveContext"}},
-    {L"Microsoft.Xbox.Services.Presence.PresenceData",
-     guid("420b5889-6654-372f-9849-ddc556cd5864"),
-     6,
-     {Inert::lookup2, L"Microsoft.Xbox.Services.Presence.PresenceData"}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext",
-     direct,
-     16,
-     {Inert::object, L"Microsoft.Xbox.Services.Presence.PresenceService"}},
-    {L"Microsoft.Xbox.Services.Presence.PresenceService", direct, 7, {Inert::action3}},
     {L"Windows.Xbox.System.User", direct, 11, {Inert::true8}},
     {L"Windows.Xbox.System.User", direct, 10, {Inert::zero8}},
     {L"Windows.Xbox.System.User", direct, 15, {Inert::string, L"2814600000000001"}},
@@ -171,35 +186,13 @@ constexpr Row rows[] = {
      guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
      6,
      {Inert::empty_list2}},
+    // the display info of the one user, the same object every time it is asked for
     {L"Windows.Xbox.System.User",
      direct,
      9,
-     {Inert::object, L"Windows.Xbox.System.UserDisplayInfo"}},
+     {Inert::shared, L"Windows.Xbox.System.UserDisplayInfo"}},
     {L"Windows.Xbox.System.UserDisplayInfo", direct, 6, {Inert::string, L"Player"}},
     {L"Windows.Xbox.System.UserDisplayInfo", direct, 9, {Inert::string, L"Player"}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext",
-     direct,
-     15,
-     {Inert::object, L"Microsoft.Xbox.Services.Multiplayer.MultiplayerService"}},
-    {L"Microsoft.Xbox.Services.Multiplayer.MultiplayerService",
-     direct,
-     13,
-     {Inert::operation_at, L"Microsoft.Xbox.Services.Multiplayer.MultiplayerSession", 11}},
-    {L"Microsoft.Xbox.Services.Multiplayer.MultiplayerSession", direct, 7, {Inert::zero32}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext",
-     direct,
-     21,
-     {Inert::object, L"Microsoft.Xbox.Services.XboxLiveContext.Method21"}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext.Method21",
-     direct,
-     9,
-     {Inert::operation_at, L"Microsoft.Xbox.Services.XboxLiveContext.Method21.Result", 4}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext.Method21.Result", direct, 7, {Inert::zero32}},
-    {L"Microsoft.Xbox.Services.XboxLiveContext.Method21.Result", direct, 8, {Inert::zero8}},
-    {L"Microsoft.Xbox.GameChat.ChatManager",
-     guid("5ca654f2-7640-3bac-9c35-1a42a0e41f38"),
-     23,
-     {Inert::empty_list}},
     {L"Windows.Kinect.KinectSensor",
      guid("c421d46b-5084-45d6-bdf0-57151f81d0d9"),
      6,

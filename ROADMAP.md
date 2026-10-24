@@ -54,6 +54,10 @@ The test program is an unpacked ERA title kept outside the repository, in
   and the gamer tag "Player"
 - [x] Xbox Live, multiplayer session, presence and chat answer enough for the title to go
   from its main menu to the next screen; nothing goes online
+- [x] WinRT classes of the title's own DLLs (in-process servers of the manifest), loaded
+  when first asked for: Xbox Live and game chat run their own code
+- [x] Achievements (`AchievementNotifier`), chat sessions without a microphone and the store
+  statics (dialogs, privilege checks) of `Windows.Xbox.*`
 - [x] Session logs: everything xscarlet and the title print also goes to
   `logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable; lines start with `[Launcher]` or
   `[Runtime]`

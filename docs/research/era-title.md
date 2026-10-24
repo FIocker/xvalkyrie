@@ -184,5 +184,7 @@ these, so they have to be the same object.
 
 After that it creates a `Microsoft.Xbox.Services.XboxLiveContext` for the user,
 sets presence, asks connected storage for a container and a blob, and writes a
-multiplayer session. Those classes come from DLLs shipped with the title; here
-they are inert rows in `winrt/inert.cpp` like the system ones.
+multiplayer session. Those classes come from DLLs shipped with the title and
+named in the in-process servers of its manifest, and they run as they are:
+it is their own code that then asks for `Windows.Xbox.System.User`,
+`Windows.Xbox.Chat.ChatSession` and the rest of the console classes.

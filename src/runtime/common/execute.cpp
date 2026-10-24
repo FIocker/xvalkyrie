@@ -15,9 +15,11 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include <windows.h>
@@ -29,17 +31,21 @@ namespace {
 // A DLL shipped with the title, loaded from its folder the same way as the executable.
 struct TitleModule {
     std::string name; // lowercase file name
+    std::wstring path;
     std::unique_ptr<loader::MappedImage> image;
     std::uint64_t base = 0, size = 0, entry = 0;
     std::map<std::string, std::uint64_t> exports; // "Name" or "#ordinal" -> address
     PRUNTIME_FUNCTION functions = nullptr;
     DWORD function_count = 0;
 };
+using Resolver = std::function<std::optional<std::uint64_t>(std::string_view, std::string_view)>;
 struct Guest {
     std::uint64_t base = 0, size = 0;
     std::wstring path;
     std::filesystem::path directory;
-    std::deque<TitleModule> modules;  // dependencies before what needs them
+    std::deque<TitleModule> modules; // dependencies before what needs them
+    Resolver resolve;                // imports of the title's DLLs loaded while it runs
+    std::recursive_mutex loading;
     std::vector<std::string> missing; // "module!symbol", indexed by stub number
     std::uint8_t *stubs = nullptr;
     // --trace: one thunk per imported function, right after the stubs
@@ -56,6 +62,21 @@ bool is_guest(const void *address) {
     return value >= guest->base && value - guest->base < guest->size;
 }
 HMODULE guest_module() { return reinterpret_cast<HMODULE>(guest->base); }
+const TitleModule *module_at(const void *address) {
+    const auto value = reinterpret_cast<std::uint64_t>(address);
+    const std::lock_guard lock(guest->loading);
+    for (const auto &module : guest->modules)
+        if (value >= module.base && value - module.base < module.size)
+            return &module;
+    return nullptr;
+}
+// Path of the guest image or of one of the title's DLLs, null for a module of the host
+const std::wstring *guest_path(HMODULE module) {
+    if (!module || module == guest_module())
+        return &guest->path;
+    const auto *title = module_at(module);
+    return title && title->base == reinterpret_cast<std::uint64_t>(module) ? &title->path : nullptr;
+}
 
 // The process is xscarlet.exe, but the guest expects to be the main module.
 HMODULE WINAPI get_module_handle_w(LPCWSTR name) {
@@ -70,32 +91,38 @@ BOOL WINAPI get_module_handle_ex_w(DWORD flags, LPCWSTR name, HMODULE *module) {
         *module = guest_module();
         return TRUE;
     }
+    if (const auto *title = module && by_address ? module_at(name) : nullptr) {
+        *module = reinterpret_cast<HMODULE>(title->base);
+        return TRUE;
+    }
     return GetModuleHandleExW(flags, name, module);
 }
 DWORD WINAPI get_module_file_name_w(HMODULE module, LPWSTR buffer, DWORD size) {
-    if (module && module != guest_module())
+    const auto *path = guest_path(module);
+    if (!path)
         return GetModuleFileNameW(module, buffer, size);
     if (!buffer || !size) {
         SetLastError(ERROR_INSUFFICIENT_BUFFER);
         return 0;
     }
-    const auto count = std::min<std::size_t>(guest->path.size(), size - 1);
-    std::memcpy(buffer, guest->path.data(), count * sizeof(wchar_t));
+    const auto count = std::min<std::size_t>(path->size(), size - 1);
+    std::memcpy(buffer, path->data(), count * sizeof(wchar_t));
     buffer[count] = 0;
-    SetLastError(count < guest->path.size() ? ERROR_INSUFFICIENT_BUFFER : ERROR_SUCCESS);
-    return count < guest->path.size() ? size : static_cast<DWORD>(count);
+    SetLastError(count < path->size() ? ERROR_INSUFFICIENT_BUFFER : ERROR_SUCCESS);
+    return count < path->size() ? size : static_cast<DWORD>(count);
 }
 DWORD WINAPI get_module_file_name_a(HMODULE module, LPSTR buffer, DWORD size) {
-    if (module && module != guest_module())
+    const auto *path = guest_path(module);
+    if (!path)
         return GetModuleFileNameA(module, buffer, size);
     if (!buffer || !size) {
         SetLastError(ERROR_INSUFFICIENT_BUFFER);
         return 0;
     }
     const auto needed =
-        WideCharToMultiByte(CP_ACP, 0, guest->path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        WideCharToMultiByte(CP_ACP, 0, path->c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::vector<char> text(static_cast<std::size_t>(std::max(needed, 1)));
-    WideCharToMultiByte(CP_ACP, 0, guest->path.c_str(), -1, text.data(), needed, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, path->c_str(), -1, text.data(), needed, nullptr, nullptr);
     const auto length = std::strlen(text.data()), count = std::min<std::size_t>(length, size - 1);
     std::memcpy(buffer, text.data(), count);
     buffer[count] = 0;
@@ -108,6 +135,8 @@ DWORD WINAPI get_module_file_name_a(HMODULE module, LPSTR buffer, DWORD size) {
     void *base = nullptr;
     if (throw_info && is_guest(throw_info))
         base = guest_module();
+    else if (const auto *title = throw_info ? module_at(throw_info) : nullptr)
+        base = reinterpret_cast<void *>(title->base);
     else if (throw_info)
         RtlPcToFileHeader(throw_info, &base);
     std::uint32_t attributes = 0;
@@ -290,14 +319,6 @@ std::string lower(std::string_view text) {
             c = static_cast<char>(c + 32);
     return result;
 }
-const TitleModule *module_at(const void *address) {
-    const auto value = reinterpret_cast<std::uint64_t>(address);
-    for (const auto &module : guest->modules)
-        if (value >= module.base && value - module.base < module.size)
-            return &module;
-    return nullptr;
-}
-using Resolver = std::function<std::optional<std::uint64_t>(std::string_view, std::string_view)>;
 // The title's own DLL of this name, loading it on first use. Null if the title has none.
 const TitleModule *title_module(std::string_view file_name, const Resolver &resolve) {
     const auto name = lower(file_name);
@@ -319,6 +340,7 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     options.resolve = resolve;
     TitleModule module;
     module.name = name;
+    module.path = std::filesystem::absolute(path).wstring();
     module.image = std::make_unique<loader::MappedImage>(file, pe, options);
     const auto &layout = module.image->report();
     module.base = module.image->guest_base();
@@ -466,6 +488,54 @@ std::uint64_t detail::guest_offset(const void *address) {
     return guest && is_guest(address) ? reinterpret_cast<std::uint64_t>(address) - guest->base : 0;
 }
 
+bool detail::in_title(const void *address) {
+    return guest && (is_guest(address) || module_at(address));
+}
+
+std::string detail::guest_location(const void *address) {
+    char text[300];
+    const auto value = reinterpret_cast<unsigned long long>(address);
+    if (guest && is_guest(address))
+        std::snprintf(text, sizeof text, "image+0x%llx", value - guest->base);
+    else if (const auto *module = guest ? module_at(address) : nullptr)
+        std::snprintf(text, sizeof text, "%s+0x%llx", module->name.c_str(), value - module->base);
+    else
+        std::snprintf(text, sizeof text, "0x%llx", value);
+    return text;
+}
+
+void *detail::title_export(std::string_view module, std::string_view symbol) {
+    if (!guest)
+        return nullptr;
+    const std::lock_guard lock(guest->loading);
+    const auto loaded = guest->modules.size();
+    // a DLL loaded now may need stubs or trace thunks of its own
+    DWORD previous;
+    if (!VirtualProtect(guest->stubs, Stubs::size, PAGE_EXECUTE_READWRITE, &previous))
+        return nullptr;
+    const TitleModule *library = nullptr;
+    try {
+        library = title_module(module, guest->resolve);
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "[Runtime] cannot load the title's %.*s: %s\n",
+                     static_cast<int>(module.size()), module.data(), e.what());
+    }
+    VirtualProtect(guest->stubs, Stubs::size, PAGE_EXECUTE_READ, &previous);
+    for (auto i = loaded; i < guest->modules.size(); ++i) {
+        const auto &added = guest->modules[i];
+        std::fprintf(stderr, "[Runtime] loaded the title's %s\n", added.name.c_str());
+        std::fflush(stderr);
+        if (added.entry)
+            reinterpret_cast<BOOL(WINAPI *)(void *, DWORD, void *)>(added.entry)(
+                reinterpret_cast<void *>(added.base), DLL_PROCESS_ATTACH, nullptr);
+    }
+    if (!library)
+        return nullptr;
+    const auto exported = library->exports.find(std::string(symbol));
+    return exported == library->exports.end() ? nullptr
+                                              : reinterpret_cast<void *>(exported->second);
+}
+
 void *detail::runtime_override(std::string_view symbol) {
     for (const auto &entry : overrides)
         if (entry.symbol == symbol)
@@ -543,6 +613,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
                                : reinterpret_cast<std::uint64_t>(function);
     };
     options.resolve = resolve;
+    state.resolve = resolve;
     const loader::MappedImage image(file, pe, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())

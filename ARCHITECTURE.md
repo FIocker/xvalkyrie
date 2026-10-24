@@ -110,15 +110,24 @@ three kinds of console module:
   for the functions that only exist on the console.
 - `winrt/activation.cpp`: ERA titles are C++/CX applications that reach the
   system through WinRT classes, all of them looked up by name through one
-  function of `vccorlib110.dll`. That function is ours. It answers with our own
-  class, with the host's for a few namespaces that work in any process
-  (`Windows.Foundation`, `Windows.Storage.Streams`...), or with a placeholder.
+  function of `vccorlib110.dll`. That function is ours, and so is combase's
+  `RoGetActivationFactory`, which WRL code in the title's DLLs uses instead. It
+  answers with our own class, with the title's (below), with the host's for a
+  few namespaces that work in any process (`Windows.Foundation`,
+  `Windows.Storage.Streams`...), or with a placeholder. The title's classes
+  are the in-process servers of its `AppxManifest.xml` (Xbox Live in
+  `Microsoft.Xbox.Services.dll`, game chat...): the DLL is loaded the first
+  time one of its classes is asked for, and its `DllGetActivationFactory`
+  makes the factory. Those DLLs then reach the console classes the same way
+  the executable does.
 - `winrt/placeholder.cpp`: an object that answers every `QueryInterface`. A
   call to one of its methods prints the class, interface, method number and
   caller, and fails. That is how the next missing piece is found.
 - `winrt/inert.cpp`: table of methods of console classes whose feature is
-  absent (nobody signed in, no store, no party): accept the arguments, return
-  zero, hand out a token for an event that is never raised.
+  absent (no store, no party, no achievements, no microphone): accept the
+  arguments, return zero, hand out a token for an event that is never raised.
+  Method numbers and interface IDs come from the title's call sites and from
+  public interface descriptions of the console's WinRT classes.
 - `winrt/storage.cpp`: connected storage (`Windows.Xbox.Storage`), the way
   ERA titles save their games. The spaces, containers and container queries
   are ours and keep everything in files through `storage.cpp` (`SaveSpace`):
@@ -283,7 +292,11 @@ by `launcher/config` to `config.ini` in the per-user configuration folder.
 A DLL that sits next to the executable and is neither ours nor forwarded is
 the title's own (`xcompress.dll` in the test program). It is mapped like the
 executable, its imports go through the same resolver, its exception table is
-registered and its entry point is called before the title's.
+registered and its entry point is called before the title's. A title DLL that
+nothing imports, like the WinRT servers of the manifest, is mapped while the
+title runs (`detail::title_export`) and its `DllMain` is called then. C++
+exceptions, `GetModuleHandleEx` by address and `GetModuleFileName` know
+about every title DLL, not only the executable.
 
 ## Running
 

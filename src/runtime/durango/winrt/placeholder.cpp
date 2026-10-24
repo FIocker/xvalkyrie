@@ -28,6 +28,8 @@ struct Placeholder {
     std::atomic<unsigned long> references{1};
     std::wstring name;
     GUID iid;
+    std::mutex mutex;
+    std::map<std::size_t, void *> members; // by method: what Inert::vector handed out
 };
 std::string text(const GUID &iid) {
     char buffer[40];
@@ -74,7 +76,7 @@ HRESULT STDMETHODCALLTYPE get_trust_level(Placeholder *, int *level) {
     *level = 0;
     return S_OK;
 }
-// (delegate, token *): an object whose vtable is in the guest image, and a stack slot
+// (delegate, token *): an object whose vtable is in the title, and a stack slot
 bool looks_like_event_add(void *first, void *second) {
     const auto *tib = reinterpret_cast<const NT_TIB *>(NtCurrentTeb());
     if (second < tib->StackLimit || second >= tib->StackBase)
@@ -83,7 +85,7 @@ bool looks_like_event_add(void *first, void *second) {
     if (!first || !VirtualQuery(first, &memory, sizeof memory) || memory.State != MEM_COMMIT ||
         !(memory.Protect & (PAGE_READWRITE | PAGE_READONLY)))
         return false;
-    return detail::guest_offset(*static_cast<void **>(first)) != 0;
+    return detail::in_title(*static_cast<void **>(first));
 }
 
 template <std::size_t Index>
@@ -91,6 +93,10 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
                                  void *fourth, void *a5, void *a6, void *a7, void *a8, void *a9,
                                  void *a10, void *a11) {
     if (const auto *known = inert_method(self->name.c_str(), self->iid, Index)) {
+        void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
+        void **const at = known->argument >= 1 && known->argument <= std::size(arguments)
+                              ? static_cast<void **>(arguments[known->argument - 1])
+                              : nullptr;
         switch (known->kind) {
         case Inert::accept:
             break;
@@ -122,35 +128,34 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::action2:
             *static_cast<void **>(second) = make_completed_action();
             break;
-        case Inert::action3:
-            *static_cast<void **>(third) = make_completed_action();
-            break;
         case Inert::list_operation:
             *static_cast<void **>(first) = make_completed_operation(make_vector_view({}));
             break;
-        case Inert::offline: { // "the network is not connected", which is the truth
-            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
-            if (known->argument < 1 || known->argument > std::size(arguments))
+        case Inert::offline: // "the network is not connected", which is the truth
+            if (!at)
                 return E_NOTIMPL;
-            *static_cast<void **>(arguments[known->argument - 1]) =
-                make_failed_operation(HRESULT_FROM_WIN32(ERROR_NETWORK_UNREACHABLE));
+            *at = make_failed_operation(HRESULT_FROM_WIN32(ERROR_NETWORK_UNREACHABLE));
             break;
-        }
-        case Inert::action_at: {
-            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
-            if (known->argument < 1 || known->argument > std::size(arguments))
+        case Inert::action_at:
+            if (!at)
                 return E_NOTIMPL;
-            *static_cast<void **>(arguments[known->argument - 1]) = make_completed_action();
+            *at = make_completed_action();
             break;
-        }
-        case Inert::operation_at: {
-            void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
-            if (known->argument < 1 || known->argument > std::size(arguments))
+        case Inert::operation_at:
+            if (!at)
                 return E_NOTIMPL;
-            *static_cast<void **>(arguments[known->argument - 1]) =
-                make_completed_operation(make_placeholder(known->result, inspectable));
+            *at = make_completed_operation(make_placeholder(known->result, inspectable));
             break;
-        }
+        case Inert::object_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = make_placeholder(known->result, inspectable);
+            break;
+        case Inert::zero_operation_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = make_completed_value(0, 4);
+            break;
         case Inert::operation:
             *static_cast<void **>(first) =
                 make_completed_operation(make_placeholder(known->result, inspectable));
@@ -182,6 +187,15 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::empty_list:
             *static_cast<void **>(first) = make_vector_view({});
             break;
+        case Inert::vector: {
+            const std::lock_guard lock(self->mutex);
+            auto &member = self->members[Index];
+            if (!member)
+                member = make_vector();
+            static_cast<IUnknown *>(member)->AddRef();
+            *static_cast<void **>(first) = member;
+            break;
+        }
         case Inert::empty_list2:
             *static_cast<void **>(second) = make_vector_view({});
             break;
@@ -231,9 +245,8 @@ const std::array<void *, method_count> factory_vtable = [] {
 long unknown_method(const wchar_t *type, const char *iid, unsigned method, void *first,
                     void *second, void *caller) {
     const bool event = looks_like_event_add(first, second);
-    std::fprintf(stderr,
-                 "[Runtime] unimplemented WinRT call %ls {%s} method %u from image+0x%llx%s\n",
-                 type, iid, method, static_cast<unsigned long long>(detail::guest_offset(caller)),
+    std::fprintf(stderr, "[Runtime] unimplemented WinRT call %ls {%s} method %u from %s%s\n", type,
+                 iid, method, detail::guest_location(caller).c_str(),
                  event ? " (arguments look like an event registration)" : "");
     std::fflush(stderr);
     // XS_WINRT_GUESS: keep going on that guess to collect several unknown methods per run
