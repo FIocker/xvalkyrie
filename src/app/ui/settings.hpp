@@ -11,7 +11,7 @@ namespace xs::ui {
 // page is an entry in `pages` (settings.cpp) and a function that draws it.
 class Settings {
   public:
-    enum class Page { input, graphics, libraries, about };
+    enum class Page { input, graphics, console, libraries, about };
     // What the settings need done by whoever owns the window. All of them are called
     // from draw().
     struct Host {
@@ -21,6 +21,7 @@ class Settings {
         std::function<void(bool rescan)> libraries_saved; // `libraries` was changed
         std::function<void()> input_saved;                // input::settings() was; may throw
         std::function<void()> graphics_saved;
+        std::function<void()> console_saved; // the ConsoleSettings given to draw(); may throw
     };
     // what the library page shows about the library itself
     struct Library {
@@ -34,6 +35,7 @@ class Settings {
         page_ = page;
         open_ = true;
         raise_ = true;
+        console_loaded_ = false;
     }
     bool shown() const { return open_; }
     // While the input page is up the keyboard is for choosing keys, not for the title.
@@ -41,11 +43,12 @@ class Settings {
     // true while a control waits for the key to bind to it: give the next one to key()
     bool wants_key() const { return binding_.has_value(); }
     void key(int virtual_key) { pressed_ = virtual_key; }
-    void draw(const Fonts &fonts, const Host &host, Library library);
+    void draw(const Fonts &fonts, const Host &host, Library library, ConsoleSettings &profile);
 
   private:
     void input(const Fonts &fonts, const Host &host);
     void graphics(const Fonts &fonts, const Host &host);
+    void console(const Fonts &fonts, const Host &host, ConsoleSettings &settings);
     void libraries(const Fonts &fonts, const Host &host, Library library);
     void about(const Fonts &fonts);
 
@@ -53,6 +56,9 @@ class Settings {
     Page page_ = Page::input;
     std::optional<std::size_t> binding_; // control waiting for a key
     int pressed_ = 0;                    // the key it got
-    std::string input_notice_, graphics_notice_;
+    std::string input_notice_, graphics_notice_, console_notice_;
+    // what the text fields of the console page show while they are edited
+    bool console_loaded_ = false;
+    char gamertag_[64] = "", user_id_[32] = "";
 };
 } // namespace xs::ui

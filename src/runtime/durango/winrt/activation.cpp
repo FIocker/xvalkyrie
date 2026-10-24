@@ -7,6 +7,7 @@
 #include "runtime/durango/winrt/gamepad.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
 #include "runtime/durango/winrt/storage.hpp"
+#include "runtime/durango/winrt/system_ui.hpp"
 #include <activation.h>
 #include <cstdio>
 #include <filesystem>
@@ -89,6 +90,8 @@ HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **
     if (auto *const own = winrt::input_class(name))
         return own->QueryInterface(iid, factory);
     if (auto *const own = winrt::storage_class(name))
+        return own->QueryInterface(iid, factory);
+    if (auto *const own = winrt::system_ui_class(name))
         return own->QueryInterface(iid, factory);
     if (const auto result = title_factory(name, iid, factory); result != REGDB_E_CLASSNOTREG)
         return result;

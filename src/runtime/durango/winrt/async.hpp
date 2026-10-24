@@ -1,4 +1,6 @@
 #pragma once
+#include <functional>
+#include <string>
 
 struct IUnknown;
 
@@ -16,4 +18,10 @@ void *make_failed_action(long error);
 void *make_completed_value(unsigned long long value, unsigned size);
 // An IAsyncOperation<T> that has already failed with this HRESULT.
 void *make_failed_operation(long error);
+// The same for IAsyncOperationWithProgress<T, P>, whose vtable has the progress handler first.
+void *make_failed_progress_operation(long error);
+// An IAsyncOperation<HSTRING> that is still running: `start` gets the function that finishes
+// it with its text, which may be called later and on any thread. The Completed handler runs
+// there.
+void *make_text_operation(std::function<void(std::function<void(std::wstring)>)> start);
 } // namespace xs::runtime::durango::winrt

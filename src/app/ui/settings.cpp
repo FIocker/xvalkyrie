@@ -5,6 +5,7 @@
 #include "backends/input/input.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <exception>
 
 namespace xs::ui {
@@ -15,7 +16,8 @@ struct PageEntry {
 };
 constexpr std::array pages{
     PageEntry{Settings::Page::input, "Input"}, PageEntry{Settings::Page::graphics, "Graphics"},
-    PageEntry{Settings::Page::libraries, "Library"}, PageEntry{Settings::Page::about, "About"}};
+    PageEntry{Settings::Page::console, "Console"}, PageEntry{Settings::Page::libraries, "Library"},
+    PageEntry{Settings::Page::about, "About"}};
 
 std::string utf8(const std::filesystem::path &path) {
     const auto text = path.u8string();
@@ -50,7 +52,8 @@ constexpr std::array control_groups{
 };
 } // namespace
 
-void Settings::draw(const Fonts &fonts, const Host &host, Library library) {
+void Settings::draw(const Fonts &fonts, const Host &host, Library library,
+                    ConsoleSettings &profile) {
     if (!input_shown())
         binding_.reset();
     if (!open_)
@@ -87,6 +90,9 @@ void Settings::draw(const Fonts &fonts, const Host &host, Library library) {
             break;
         case Page::graphics:
             graphics(fonts, host);
+            break;
+        case Page::console:
+            console(fonts, host, profile);
             break;
         case Page::libraries:
             libraries(fonts, host, library);
@@ -227,6 +233,88 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
     note(fonts, "Applies to the next title started.");
     if (!graphics_notice_.empty())
         ImGui::TextWrapped("%s", graphics_notice_.c_str());
+}
+
+// The signed-in user titles see, and what the console has plugged in. Text is applied when
+// the field is left, if it is valid.
+void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
+    if (!console_loaded_) {
+        std::snprintf(gamertag_, sizeof gamertag_, "%s", settings.gamertag.c_str());
+        std::snprintf(user_id_, sizeof user_id_, "%s", settings.xbox_user_id.c_str());
+        console_loaded_ = true;
+    }
+    const auto changed = [&] {
+        console_notice_.clear();
+        try {
+            if (host.console_saved)
+                host.console_saved();
+        } catch (const std::exception &e) {
+            console_notice_ = std::string("Not saved: ") + e.what();
+        }
+    };
+    constexpr float field = 220;
+    section(fonts, "Profile");
+    if (begin_settings("profile")) {
+        setting(fonts, "Gamertag", "1 to 15 characters, shown by titles as the player's name.");
+        ImGui::SetNextItemWidth(field);
+        ImGui::InputText("##gamertag", gamertag_, sizeof gamertag_);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (valid_gamertag(gamertag_)) {
+                settings.gamertag = gamertag_;
+                changed();
+            } else
+                console_notice_ = "A gamertag has 1 to 15 characters.";
+        }
+        setting(fonts, "User ID",
+                "The Xbox user ID (XUID). Some titles name their saves after it, so changing "
+                "it hides those saves.");
+        ImGui::SetNextItemWidth(field);
+        ImGui::InputText("##xuid", user_id_, sizeof user_id_, ImGuiInputTextFlags_CharsDecimal);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (valid_xbox_user_id(user_id_)) {
+                settings.xbox_user_id = user_id_;
+                changed();
+            } else
+                console_notice_ = "A user ID has 1 to 20 digits.";
+        }
+        setting(fonts, "Gamerscore");
+        ImGui::SetNextItemWidth(field);
+        ImGui::InputScalar("##gamerscore", ImGuiDataType_U32, &settings.gamerscore);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            changed();
+        setting(fonts, "Age group", "Titles with age ratings or chat limits look at it.");
+        static constexpr const char *ages[] = {"Unknown", "Child", "Teen", "Adult"};
+        int age = static_cast<int>(std::min(settings.age_group, 3u));
+        if (segmented("age", ages, age)) {
+            settings.age_group = static_cast<std::uint32_t>(age);
+            changed();
+        }
+        end_settings();
+    }
+    section(fonts, "Accessories");
+    if (begin_settings("accessories")) {
+        setting(fonts, "Headset",
+                "The user has an audio device of their own: this PC's communications output.");
+        if (ImGui::Checkbox("##headset", &settings.headset))
+            changed();
+        end_settings();
+    }
+    section(fonts, "System keyboard");
+    if (begin_settings("keyboard")) {
+        setting(fonts, "When a title asks for text",
+                settings.keyboard_dialog ? "A window on this PC asks for it."
+                                         : "The title gets the text it suggested, unchanged.");
+        static constexpr const char *modes[] = {"Ask", "Default text"};
+        int mode = settings.keyboard_dialog ? 0 : 1;
+        if (segmented("keyboard", modes, mode)) {
+            settings.keyboard_dialog = mode == 0;
+            changed();
+        }
+        end_settings();
+    }
+    note(fonts, "Applies to the next title started.");
+    if (!console_notice_.empty())
+        ImGui::TextWrapped("%s", console_notice_.c_str());
 }
 
 void Settings::libraries(const Fonts &fonts, const Host &host, Library library) {

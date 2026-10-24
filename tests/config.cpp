@@ -54,7 +54,32 @@ TEST_CASE("user configuration persists libraries and controls") {
     xs::save_library_settings(libraries);
     std::ifstream file(xs::config_file());
     const std::string text{std::istreambuf_iterator<char>(file), {}};
+    file.close();
     CHECK(text.find("[graphics]\nbackend = vulkan\n") != std::string::npos);
     xs::load_graphics_settings();
     CHECK(xs::graphics::selected_backend() == xs::graphics::Backend::vulkan);
+
+    CHECK(xs::load_console_settings().gamertag == "Player");
+    xs::ConsoleSettings console{"Señor = Cat", "123", 4500, 2, true, false};
+    xs::save_console_settings(console);
+    xs::save_library_settings(libraries);
+    const auto saved = xs::load_console_settings();
+    CHECK(saved.gamertag == console.gamertag);
+    CHECK(saved.xbox_user_id == "123");
+    CHECK(saved.gamerscore == 4500);
+    CHECK(saved.age_group == 2);
+    CHECK(saved.headset);
+    CHECK_FALSE(saved.keyboard_dialog);
+    std::ofstream(xs::config_file(), std::ios::trunc)
+        << "[console]\ngamertag = \"a gamertag far too long\"\nxbox_user_id = 12a\n"
+           "gamerscore = -1\nage_group = 9\nheadset = maybe\nkeyboard\n";
+    const auto broken = xs::load_console_settings();
+    CHECK(broken.gamertag == "Player");
+    CHECK(broken.xbox_user_id == "2814600000000001");
+    CHECK(broken.gamerscore == 0);
+    CHECK(broken.age_group == 3);
+    CHECK_FALSE(broken.headset);
+    CHECK(broken.keyboard_dialog);
+    CHECK_FALSE(xs::valid_gamertag(""));
+    CHECK(xs::valid_gamertag("\xc3\xb1\xc3\xb1\xc3\xb1\xc3\xb1\xc3\xb1\xc3\xb1\xc3\xb1\xc3\xb1"));
 }

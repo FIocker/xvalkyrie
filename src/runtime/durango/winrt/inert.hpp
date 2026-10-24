@@ -40,14 +40,25 @@ enum class Inert : std::uint8_t {
     controllers,    // HRESULT get(IVectorView<IController> **): the one gamepad
     object_at,      // HRESULT make(..., T **) returning an inert `result` in argument `argument`
     vector,         // HRESULT get(IVector<T> **): a vector of the object's own, empty at first
-    zero_operation_at, // HRESULT start(..., IAsyncOperation<enum> **), finished at once with 0;
-                       // result in `argument`
+    zero_operation_at,  // HRESULT start(..., IAsyncOperation<enum> **), finished at once with 0;
+                        // result in `argument`
+    null_at,            // HRESULT get(..., T **): nothing, in argument `argument`
+    list_operation_at,  // like list_operation, with the result in argument `argument`
+    failed_action_at,   // HRESULT start(..., IAsyncAction **) that fails with `error` at once
+    failed_progress_at, // likewise, IAsyncOperationWithProgress<T, P> **
+    number32,           // HRESULT get(T *result) with the 4-byte value `argument`
+    console_string,     // HRESULT get(HSTRING *result): the console_string() named `result`
+    console32,          // HRESULT get(T *result): the 4-byte console_number() named `result`
+    audio_devices,      // HRESULT get(IVectorView<AudioDeviceInfo> **): the user's headset
+    keyboard, // ShowVirtualKeyboardAsync(text, title, description, scope, IAsyncOperation **)
+    keyboard_options, // ShowVirtualKeyboardWithOptionsAsync(options, IAsyncOperation **)
 };
 struct InertMethod {
     Inert kind;
     const wchar_t *result = nullptr; // type or text, for the kinds that have one
     unsigned argument = 0;           // the kinds `..._at` and offline: which argument is the
-                                     // result, from 1
+                                     // result, from 1; number32: the value
+    long error = 0;                  // the failed kinds: the HRESULT
 };
 // The interface a C++/CX caller uses without asking for it: the default interface of an
 // object it was handed.

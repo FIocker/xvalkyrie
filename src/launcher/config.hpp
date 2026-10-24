@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace xs {
@@ -7,6 +9,18 @@ struct LibrarySettings {
     std::vector<std::filesystem::path> directories;
     bool grid = true;
 };
+// The signed-in user and the console's accessories, as titles see them (UTF-8).
+struct ConsoleSettings {
+    std::string gamertag = "Player";
+    std::string xbox_user_id = "2814600000000001";
+    std::uint32_t gamerscore = 0;
+    std::uint32_t age_group = 3; // unknown, child, teen, adult
+    bool headset = false;
+    bool keyboard_dialog = true; // the system keyboard asks on the host
+};
+// Gamertags are 1 to 15 characters, user ids 1 to 20 digits.
+bool valid_gamertag(const std::string &gamertag);
+bool valid_xbox_user_id(const std::string &id);
 // config.ini, logs/, saves/ and cache/ live in the per-user configuration folder.
 std::filesystem::path config_directory();
 std::filesystem::path config_file();
@@ -19,4 +33,6 @@ void load_graphics_settings();
 void save_graphics_settings();
 LibrarySettings load_library_settings();
 void save_library_settings(const LibrarySettings &settings);
+ConsoleSettings load_console_settings();
+void save_console_settings(const ConsoleSettings &settings);
 } // namespace xs

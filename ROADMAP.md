@@ -61,7 +61,15 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [x] Session logs: everything xscarlet and the title print also goes to
   `logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable; lines start with `[Launcher]` or
   `[Runtime]`
-- [ ] Choose the gamer tag in the options
+- [x] Options > Console: gamertag, user ID, gamerscore, age group, headset and how the system
+  keyboard answers, saved in `config.ini`
+- [x] System keyboard (`ShowVirtualKeyboardAsync`, `KeyboardOptions`) as a window on the host
+- [x] Party, party chat, secure device associations, quality of service, game DVR and speech
+  recognizers report that they are not there
+- [x] Title physical pages, large page reservations, XMem hooks, graphics and APU memory
+- [x] `mmdevapi`, `mfplat`, `pixevt` and `toolhelpx` with their console-only functions
+- [ ] `acphal.dll` beyond its memory (`AcpHalCreate`, SHAPE contexts): needs the driver's ABI
+- [ ] `XGCreateTextureComputer`: the layout of `XG_RESOURCE_DESC` is not known
 - [ ] Connected storage that stores: reads say "no such blob", writes succeed and are dropped
 - [x] The title draws inside the xscarlet window (16:9 between the menu and the status
   bar); `exec` still gives it a window of its own

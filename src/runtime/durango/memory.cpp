@@ -1,0 +1,445 @@
+#include "runtime/common/runtime.hpp"
+#include "runtime/durango/runtime.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <vector>
+#include <windows.h>
+
+// Console memory as titles ask for it: page sizes and memory types in VirtualAlloc, the
+// title's physical pages and the reservations they are mapped into, XMem, and the memory
+// Direct3D and the audio processor hand out. Physical pages are a 16 GiB
+// section committed as it is used, mapped in 64 KiB views over placeholders.
+namespace xs::runtime::durango {
+namespace {
+constexpr DWORD mem_large_pages = 0x20000000;
+constexpr DWORD mem_4mb_pages = 0x80000000;
+constexpr DWORD page_sizes = mem_large_pages | mem_4mb_pages;
+constexpr std::uintptr_t page = 1 << 16;
+constexpr std::uint64_t physical_size = 16ull << 30;
+constexpr DWORD allocation_types =
+    MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET_UNDO;
+constexpr DWORD protections = 0xff | PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE;
+
+struct Mapping {
+    ULONG_PTR page;
+    bool owned; // allocated here for a plain commit, freed with it
+};
+// A reservation with large or 4 MiB pages: one placeholder per 64 KiB, each holding a view
+// of a physical page once something is mapped there.
+struct Reservation {
+    std::uintptr_t size;
+    std::map<std::uintptr_t, Mapping> views;
+};
+struct Physical {
+    std::mutex mutex;
+    HANDLE section =
+        CreateFileMapping2(INVALID_HANDLE_VALUE, nullptr, FILE_MAP_READ | FILE_MAP_WRITE,
+                           PAGE_READWRITE, SEC_RESERVE, physical_size, nullptr, nullptr, 0);
+    std::vector<bool> used = std::vector<bool>(physical_size / page),
+                      dirty = std::vector<bool>(physical_size / page);
+    std::map<std::uintptr_t, Reservation> reservations;
+};
+Physical &physical() {
+    static Physical state;
+    return state;
+}
+Reservation *reservation_at(Physical &state, std::uintptr_t address, std::uintptr_t *base) {
+    auto entry = state.reservations.upper_bound(address);
+    if (entry == state.reservations.begin())
+        return nullptr;
+    --entry;
+    if (address - entry->first >= entry->second.size)
+        return nullptr;
+    *base = entry->first;
+    return &entry->second;
+}
+// `count` free pages, `run` contiguous ones at a time
+bool take_pages(Physical &state, std::uintptr_t count, std::uintptr_t run, ULONG_PTR *pages) {
+    std::uintptr_t taken = 0;
+    for (std::uintptr_t i = 0; i + run <= state.used.size() && taken < count;) {
+        std::uintptr_t free = 0;
+        while (free < run && !state.used[i + free])
+            ++free;
+        if (free < run) {
+            i += free + 1;
+            continue;
+        }
+        for (std::uintptr_t j = 0; j < run; ++j) {
+            state.used[i + j] = true;
+            pages[taken++] = i + j;
+        }
+        i += run;
+    }
+    if (taken == count)
+        return true;
+    for (std::uintptr_t j = 0; j < taken; ++j)
+        state.used[pages[j]] = false;
+    return false;
+}
+void release_page(Physical &state, ULONG_PTR number) {
+    state.used[number] = false;
+    state.dirty[number] = true;
+}
+void unmap(Physical &state, Reservation &reservation, std::uintptr_t address) {
+    const auto view = reservation.views.find(address);
+    if (view == reservation.views.end())
+        return;
+    UnmapViewOfFile2(GetCurrentProcess(), reinterpret_cast<void *>(address),
+                     MEM_PRESERVE_PLACEHOLDER);
+    if (view->second.owned)
+        release_page(state, view->second.page);
+    reservation.views.erase(view);
+}
+bool map(Physical &state, Reservation &reservation, std::uintptr_t address, ULONG_PTR number,
+         DWORD protect, bool owned) {
+    unmap(state, reservation, address);
+    auto *const at = reinterpret_cast<void *>(address);
+    if (!MapViewOfFile3(state.section, nullptr, at, number * page, page, MEM_REPLACE_PLACEHOLDER,
+                        PAGE_READWRITE, nullptr, 0) ||
+        !VirtualAlloc(at, page, MEM_COMMIT, PAGE_READWRITE))
+        return false;
+    if (owned && state.dirty[number])
+        std::memset(at, 0, page);
+    state.dirty[number] = false;
+    DWORD previous;
+    if ((protect & protections) != PAGE_READWRITE)
+        VirtualProtect(at, page, protect & protections, &previous);
+    reservation.views[address] = {number, owned};
+    return true;
+}
+void *reserve(void *address, std::uintptr_t size, DWORD type) {
+    auto &state = physical();
+    if (!state.section)
+        return nullptr;
+    size = (size + page - 1) & ~(page - 1);
+    MEM_ADDRESS_REQUIREMENTS requirements{};
+    requirements.Alignment = type & mem_4mb_pages && !address ? 4u << 20 : 0;
+    MEM_EXTENDED_PARAMETER parameter{};
+    parameter.Type = MemExtendedParameterAddressRequirements;
+    parameter.Pointer = &requirements;
+    auto *const base =
+        VirtualAlloc2(GetCurrentProcess(), address, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+                      PAGE_NOACCESS, &parameter, 1);
+    if (!base)
+        return nullptr;
+    const auto start = reinterpret_cast<std::uintptr_t>(base);
+    for (std::uintptr_t offset = 0; offset + page < size; offset += page)
+        VirtualFree(reinterpret_cast<void *>(start + offset), page,
+                    MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+    const std::lock_guard lock(state.mutex);
+    state.reservations[start] = {size, {}};
+    return base;
+}
+bool commit(std::uintptr_t address, std::uintptr_t size, DWORD protect) {
+    auto &state = physical();
+    const std::lock_guard lock(state.mutex);
+    std::uintptr_t base = 0;
+    auto *const reservation = reservation_at(state, address, &base);
+    if (!reservation)
+        return false;
+    const auto end = std::min(address + size, base + reservation->size);
+    for (auto at = address & ~(page - 1); at < end; at += page) {
+        if (reservation->views.contains(at)) {
+            DWORD previous;
+            VirtualProtect(reinterpret_cast<void *>(at), page, protect & protections, &previous);
+            continue;
+        }
+        ULONG_PTR number;
+        if (!take_pages(state, 1, 1, &number) ||
+            !map(state, *reservation, at, number, protect, true)) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return false;
+        }
+    }
+    return true;
+}
+
+void *WINAPI virtual_alloc_ex(HANDLE process, void *address, SIZE_T size, DWORD type,
+                              DWORD protect) {
+    if (GetProcessId(process) == GetCurrentProcessId()) {
+        if (type & MEM_RESERVE && type & page_sizes) {
+            auto *const base = reserve(address, size, type);
+            if (base && type & MEM_COMMIT &&
+                !commit(reinterpret_cast<std::uintptr_t>(base), size, protect))
+                return nullptr;
+            return base;
+        }
+        if (type & MEM_COMMIT && commit(reinterpret_cast<std::uintptr_t>(address), size, protect))
+            return address;
+    }
+    const auto result =
+        VirtualAllocEx(process, address, size, type & allocation_types, protect & protections);
+    if (!result && (type & ~(allocation_types | page_sizes) || protect & ~protections)) {
+        const auto error = GetLastError();
+        std::fprintf(stderr,
+                     "[Runtime] VirtualAlloc of %zu bytes, type 0x%lx protect 0x%lx failed: %lu\n",
+                     static_cast<std::size_t>(size), type, protect, error);
+        std::fflush(stderr);
+        SetLastError(error);
+    }
+    return result;
+}
+void *WINAPI virtual_alloc(void *address, SIZE_T size, DWORD type, DWORD protect) {
+    return virtual_alloc_ex(GetCurrentProcess(), address, size, type, protect);
+}
+BOOL WINAPI virtual_free_ex(HANDLE process, void *address, SIZE_T size, DWORD type) {
+    if (GetProcessId(process) == GetCurrentProcessId()) {
+        auto &state = physical();
+        const std::lock_guard lock(state.mutex);
+        const auto at = reinterpret_cast<std::uintptr_t>(address);
+        std::uintptr_t base = 0;
+        if (auto *const reservation = reservation_at(state, at, &base)) {
+            const bool release = type & MEM_RELEASE;
+            if (release && at != base) {
+                SetLastError(ERROR_INVALID_PARAMETER);
+                return FALSE;
+            }
+            const auto end = release || !size ? base + reservation->size : at + size;
+            for (auto view = at & ~(page - 1); view < end; view += page)
+                unmap(state, *reservation, view);
+            if (release) {
+                for (auto piece = base; piece < end; piece += page)
+                    VirtualFree(reinterpret_cast<void *>(piece), 0, MEM_RELEASE);
+                state.reservations.erase(base);
+            }
+            return TRUE;
+        }
+    }
+    return VirtualFreeEx(process, address, size, type);
+}
+BOOL WINAPI virtual_free(void *address, SIZE_T size, DWORD type) {
+    return virtual_free_ex(GetCurrentProcess(), address, size, type);
+}
+BOOL WINAPI virtual_protect(void *address, SIZE_T size, DWORD protect, DWORD *previous) {
+    return VirtualProtect(address, size, protect & protections, previous);
+}
+
+BOOL WINAPI allocate_title_physical_pages(HANDLE, DWORD type, ULONG_PTR *count, ULONG_PTR *pages) {
+    const auto sizes = type & page_sizes;
+    if (!count || !pages || !sizes || sizes == page_sizes ||
+        (type & mem_4mb_pages && *count & 63)) {
+        if (count)
+            *count = 0;
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    auto &state = physical();
+    const std::lock_guard lock(state.mutex);
+    if (!state.section || !take_pages(state, *count, type & mem_4mb_pages ? 64 : 1, pages)) {
+        *count = 0;
+        SetLastError(ERROR_OUTOFMEMORY);
+        return FALSE;
+    }
+    return TRUE;
+}
+BOOL WINAPI free_title_physical_pages(HANDLE, ULONG_PTR count, ULONG_PTR *pages) {
+    if (count && !pages) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    auto &state = physical();
+    const std::lock_guard lock(state.mutex);
+    for (ULONG_PTR i = 0; i < count; ++i)
+        if (pages[i] < state.used.size())
+            release_page(state, pages[i]);
+    return TRUE;
+}
+void *WINAPI map_title_physical_pages(void *address, ULONG_PTR count, DWORD type, DWORD protect,
+                                      ULONG_PTR *pages) {
+    const auto sizes = type & page_sizes;
+    if (!pages || !sizes || sizes == page_sizes || (type & mem_4mb_pages && count & 63) ||
+        reinterpret_cast<std::uintptr_t>(address) & (page - 1)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    auto &state = physical();
+    if (!address && !(address = reserve(nullptr, count * page, type)))
+        return nullptr;
+    const std::lock_guard lock(state.mutex);
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    std::uintptr_t base = 0;
+    auto *const reservation = reservation_at(state, start, &base);
+    if (!reservation || start + count * page > base + reservation->size) {
+        SetLastError(ERROR_INVALID_ADDRESS);
+        return nullptr;
+    }
+    for (ULONG_PTR i = 0; i < count; ++i)
+        if (pages[i] >= state.used.size() ||
+            !map(state, *reservation, start + i * page, pages[i], protect, false)) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return nullptr;
+        }
+    return address;
+}
+
+// TOOLINGMEMORYSTATUS: a retail console gives titles no tooling memory
+struct ToolingMemory {
+    DWORD length, reserved;
+    ULONGLONG total, available, peak, page_tables;
+};
+BOOL WINAPI tooling_memory_status(ToolingMemory *status) {
+    if (!status || status->length < sizeof *status) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *status = {sizeof *status, 0, 0, 0, 0, 0};
+    return TRUE;
+}
+
+// The attributes ask for an alignment and a page size. A fresh 64K-aligned, zeroed region
+// satisfies any of them, at the cost of address space for small blocks.
+void *WINAPI xmem_alloc_default(SIZE_T size, ULONGLONG) {
+    return VirtualAlloc(nullptr, size ? size : 1, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+void WINAPI xmem_free_default(void *address, ULONGLONG) {
+    if (address)
+        VirtualFree(address, 0, MEM_RELEASE);
+}
+using XMemAlloc = void *(WINAPI *)(SIZE_T, ULONGLONG);
+using XMemFree = void(WINAPI *)(void *, ULONGLONG);
+std::atomic<XMemAlloc> xmem_alloc_hook{&xmem_alloc_default};
+std::atomic<XMemFree> xmem_free_hook{&xmem_free_default};
+void *WINAPI xmem_alloc(SIZE_T size, ULONGLONG attributes) {
+    return xmem_alloc_hook.load()(size, attributes);
+}
+void WINAPI xmem_free(void *address, ULONGLONG attributes) {
+    xmem_free_hook.load()(address, attributes);
+}
+void WINAPI xmem_set_allocation_hooks(XMemAlloc alloc, XMemFree free) {
+    xmem_alloc_hook = alloc ? alloc : &xmem_alloc_default;
+    xmem_free_hook = alloc ? free : &xmem_free_default;
+}
+void WINAPI xmem_check_default_heaps() {}
+BOOL WINAPI not_implemented() {
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+SIZE_T WINAPI xmem_get_allocation_hysteresis() {
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return static_cast<SIZE_T>(-1);
+}
+// no memory beyond the title's own
+HANDLE WINAPI xmem_get_auxiliary_title_memory() {
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return nullptr;
+}
+void WINAPI xmem_release_auxiliary_title_memory(HANDLE) {}
+
+// d3d11_x.dll's own graphics memory: ordinary memory here, since the host's GPU never
+// reads the title's
+void *aligned_alloc(SIZE_T size, std::uint64_t alignment, void *address) {
+    MEM_ADDRESS_REQUIREMENTS requirements{};
+    requirements.Alignment = address || alignment <= page ? 0 : alignment;
+    MEM_EXTENDED_PARAMETER parameter{};
+    parameter.Type = MemExtendedParameterAddressRequirements;
+    parameter.Pointer = &requirements;
+    return VirtualAlloc2(GetCurrentProcess(), address, size, MEM_RESERVE | MEM_COMMIT,
+                         PAGE_READWRITE, &parameter, 1);
+}
+HRESULT WINAPI d3d_allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 address, UINT,
+                                            void **result) {
+    if (!result || alignment > 0x20000)
+        return E_INVALIDARG;
+    *result = aligned_alloc(size, alignment, reinterpret_cast<void *>(address));
+    return *result ? S_OK : E_OUTOFMEMORY;
+}
+HRESULT WINAPI d3d_free_graphics_memory(void *address) {
+    return VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
+}
+
+// acphal.dll: memory the audio processor can see. Its addresses are 32-bit;
+// here they are handed out in order and only ever given back to these functions.
+struct ApuRegion {
+    std::uintptr_t address;
+    std::uint32_t size, apu;
+};
+std::mutex apu_mutex;
+std::vector<ApuRegion> apu_regions;
+std::uint32_t next_apu = 0x10000000;
+std::uint32_t apu_address(std::uintptr_t address, std::uint32_t size) {
+    for (const auto &region : apu_regions)
+        if (address - region.address < region.size)
+            return region.apu + static_cast<std::uint32_t>(address - region.address);
+    const auto apu = next_apu;
+    next_apu += (std::max(size, 1u) + 0xfff) & ~0xfffu;
+    apu_regions.push_back({address, size, apu});
+    return apu;
+}
+HRESULT WINAPI apu_alloc(void **address, std::uint32_t *apu, std::uint32_t size,
+                         std::uint32_t alignment, std::uint32_t) {
+    if (!address)
+        return E_INVALIDARG;
+    *address = aligned_alloc(size, alignment, nullptr);
+    if (!*address)
+        return E_OUTOFMEMORY;
+    const std::lock_guard lock(apu_mutex);
+    const auto at = apu_address(reinterpret_cast<std::uintptr_t>(*address), size);
+    if (apu)
+        *apu = at;
+    return S_OK;
+}
+HRESULT WINAPI apu_free(void *address) {
+    {
+        const std::lock_guard lock(apu_mutex);
+        std::erase_if(apu_regions, [&](const ApuRegion &region) {
+            return region.address == reinterpret_cast<std::uintptr_t>(address);
+        });
+    }
+    return VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
+}
+HRESULT WINAPI apu_map_virtual_address(std::uint32_t *apu, void *address, std::uint32_t size) {
+    if (!apu)
+        return E_INVALIDARG;
+    const std::lock_guard lock(apu_mutex);
+    *apu = apu_address(reinterpret_cast<std::uintptr_t>(address), size);
+    return S_OK;
+}
+BOOL WINAPI apu_is_virtual_address_valid() { return TRUE; }
+HRESULT WINAPI apu_create_heap() { return S_OK; }
+
+template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
+} // namespace
+
+void install_memory(Registry &registry) {
+    const std::pair<const char *, void *> kernelx[] = {
+        {"VirtualAlloc", erase(virtual_alloc)},
+        {"VirtualAllocEx", erase(virtual_alloc_ex)},
+        {"VirtualFree", erase(virtual_free)},
+        {"VirtualFreeEx", erase(virtual_free_ex)},
+        {"VirtualProtect", erase(virtual_protect)},
+        {"AllocateTitlePhysicalPages", erase(allocate_title_physical_pages)},
+        {"FreeTitlePhysicalPages", erase(free_title_physical_pages)},
+        {"MapTitlePhysicalPages", erase(map_title_physical_pages)},
+        {"ToolingMemoryStatus", erase(tooling_memory_status)},
+        {"XMemAllocDefault", erase(xmem_alloc_default)},
+        {"XMemFreeDefault", erase(xmem_free_default)},
+        {"XMemAlloc", erase(xmem_alloc)},
+        {"XMemFree", erase(xmem_free)},
+        {"XMemSetAllocationHooks", erase(xmem_set_allocation_hooks)},
+        {"XMemCheckDefaultHeaps", erase(xmem_check_default_heaps)},
+        {"XMemSetAllocationHysteresis", erase(not_implemented)},
+        {"XMemGetAllocationHysteresis", erase(xmem_get_allocation_hysteresis)},
+        {"XMemPreallocateFreeSpace", erase(not_implemented)},
+        {"XMemGetAllocationStatistics", erase(not_implemented)},
+        {"XMemGetAuxiliaryTitleMemory", erase(xmem_get_auxiliary_title_memory)},
+        {"XMemReleaseAuxiliaryTitleMemory", erase(xmem_release_auxiliary_title_memory)}};
+    for (const auto &[name, function] : kernelx)
+        registry.add("kernelx.dll", name, function);
+    registry.add("d3d11_x.dll", "D3DAllocateGraphicsMemory", erase(d3d_allocate_graphics_memory));
+    registry.add("d3d11_x.dll", "D3DFreeGraphicsMemory", erase(d3d_free_graphics_memory));
+    const std::pair<const char *, void *> acphal[] = {
+        {"ApuAlloc", erase(apu_alloc)},
+        {"ApuFree", erase(apu_free)},
+        {"ApuCreateHeap", erase(apu_create_heap)},
+        {"ApuMapVirtualAddress", erase(apu_map_virtual_address)},
+        {"ApuIsVirtualAddressValid", erase(apu_is_virtual_address_valid)}};
+    for (const auto &[name, function] : acphal)
+        registry.add("acphal.dll", name, function);
+}
+} // namespace xs::runtime::durango

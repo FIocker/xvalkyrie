@@ -108,6 +108,19 @@ three kinds of console module:
 
 - `kernelx.cpp`: `kernelx.dll` is forwarded to the host's `kernel32.dll`, except
   for the functions that only exist on the console.
+- `memory.cpp`: console memory. `VirtualAlloc` with large or 4 MiB pages
+  reserves placeholders, and the title's physical pages
+  (`AllocateTitlePhysicalPages`, `MapTitlePhysicalPages`) are 64 KiB views of
+  one 16 GiB section committed as it is used. Also XMem and its
+  hooks, `D3DAllocateGraphicsMemory` and the `Apu*` memory of `acphal.dll`.
+- `system.cpp`: `mmdevapi.dll`, `mfplat.dll` and `toolhelpx.dll` go to the host,
+  plus the console-only functions of those and of `pixevt.dll`. Functions whose
+  arguments nobody has documented only ever return an HRESULT.
+- `winrt/system_ui.cpp`: the system keyboard (`ShowVirtualKeyboardAsync` and
+  `KeyboardOptions`), answered by a window of the host
+  (`backends/surface/win32/prompt.cpp`) on a thread of its own, and what
+  Options > Console says about the user: gamertag, user ID, gamerscore, age
+  group, and a headset that is the host's communications output.
 - `winrt/activation.cpp`: ERA titles are C++/CX applications that reach the
   system through WinRT classes, all of them looked up by name through one
   function of `vccorlib110.dll`. That function is ours, and so is combase's
@@ -124,7 +137,8 @@ three kinds of console module:
   call to one of its methods prints the class, interface, method number and
   caller, and fails. That is how the next missing piece is found.
 - `winrt/inert.cpp`: table of methods of console classes whose feature is
-  absent (no store, no party, no achievements, no microphone): accept the
+  absent (no store, no party, no achievements, no microphone, no network, no
+  game DVR, no speech recognizer): accept the
   arguments, return zero, hand out a token for an event that is never raised.
   Method numbers and interface IDs come from the title's call sites and from
   public interface descriptions of the console's WinRT classes.

@@ -4,6 +4,7 @@
 #include "runtime/durango/winrt/collection.hpp"
 #include "runtime/durango/winrt/gamepad.hpp"
 #include "runtime/durango/winrt/inert.hpp"
+#include "runtime/durango/winrt/system_ui.hpp"
 #include "runtime/durango/winrt/title_info.hpp"
 #include <array>
 #include <atomic>
@@ -155,6 +156,49 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             if (!at)
                 return E_NOTIMPL;
             *at = make_completed_value(0, 4);
+            break;
+        case Inert::null_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = nullptr;
+            break;
+        case Inert::list_operation_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = make_completed_operation(make_vector_view({}));
+            break;
+        case Inert::failed_action_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = make_failed_action(known->error);
+            break;
+        case Inert::failed_progress_at:
+            if (!at)
+                return E_NOTIMPL;
+            *at = make_failed_progress_operation(known->error);
+            break;
+        case Inert::number32:
+            *static_cast<std::uint32_t *>(first) = known->argument;
+            break;
+        case Inert::console_string: {
+            const auto value = winrt::console_string(known->result);
+            return WindowsCreateString(value.c_str(), static_cast<UINT32>(value.size()),
+                                       static_cast<HSTRING *>(first));
+        }
+        case Inert::console32:
+            *static_cast<std::uint32_t *>(first) = console_number(known->result);
+            break;
+        case Inert::audio_devices:
+            *static_cast<void **>(first) = audio_devices();
+            break;
+        case Inert::keyboard:
+            *static_cast<void **>(a5) =
+                show_keyboard(static_cast<HSTRING>(first), static_cast<HSTRING>(second),
+                              static_cast<HSTRING>(third),
+                              static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(fourth)));
+            break;
+        case Inert::keyboard_options:
+            *static_cast<void **>(second) = show_keyboard_with_options(first);
             break;
         case Inert::operation:
             *static_cast<void **>(first) =

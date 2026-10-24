@@ -85,7 +85,8 @@ void *native_window(GLFWwindow *window) { return glfwGetWin32Window(window); }
 class Desktop {
   public:
     Desktop(GLFWwindow *window, const Interface &ui, const DesktopHooks &hooks)
-        : window_(window), ui_(ui), hooks_(hooks), libraries_(hooks.libraries) {
+        : window_(window), ui_(ui), hooks_(hooks), libraries_(hooks.libraries),
+          console_(hooks.console) {
         glfwSetWindowUserPointer(window, this);
         glfwSetDropCallback(window, [](GLFWwindow *target, int count, const char **paths) {
             if (count > 0) {
@@ -102,6 +103,10 @@ class Desktop {
         settings_host_.libraries_saved = [this](bool rescan) { save_libraries(rescan); };
         settings_host_.input_saved = hooks.input_changed;
         settings_host_.graphics_saved = hooks.graphics_changed;
+        settings_host_.console_saved = [this] {
+            if (hooks_.console_changed)
+                hooks_.console_changed(console_);
+        };
         // what the last scan found is on screen at once; the scan then brings it up to date
         titles_ = cached_library(libraries_.directories, library_cache_file());
         refresh_library();
@@ -189,7 +194,7 @@ class Desktop {
         status_bar();
         content();
         settings_.draw(ui_.fonts, settings_host_,
-                       {libraries_, titles_.size(), discovery_.valid(), library_notice_});
+                       {libraries_, titles_.size(), discovery_.valid(), library_notice_}, console_);
         // the title is a native window over the interface: out of the way of what is open
         const bool covered =
             settings_.shown() ||
@@ -329,6 +334,8 @@ class Desktop {
                 settings_.show(ui::Settings::Page::input);
             if (ImGui::MenuItem("Graphics..."))
                 settings_.show(ui::Settings::Page::graphics);
+            if (ImGui::MenuItem("Console..."))
+                settings_.show(ui::Settings::Page::console);
             if (ImGui::MenuItem("Game Libraries..."))
                 settings_.show(ui::Settings::Page::libraries);
             ImGui::EndMenu();
@@ -904,6 +911,7 @@ class Desktop {
     std::size_t replace_index_ = 0;
     std::filesystem::path dropped_;
     LibrarySettings libraries_;
+    ConsoleSettings console_;
     std::vector<LibraryTitle> titles_;
     std::future<std::vector<LibraryTitle>> discovery_;
     bool refresh_pending_ = false;

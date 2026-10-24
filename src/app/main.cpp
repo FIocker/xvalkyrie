@@ -36,6 +36,15 @@ std::string text(const std::filesystem::path &path) {
     const auto utf8 = path.u8string();
     return {utf8.begin(), utf8.end()};
 }
+std::wstring wide(const std::string &utf8) {
+    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end())).wstring();
+}
+// what config.ini says, the way the runtime takes it
+xs::runtime::ConsoleSettings console_settings() {
+    const auto saved = xs::load_console_settings();
+    return {wide(saved.gamertag), wide(saved.xbox_user_id), saved.gamerscore, saved.age_group,
+            saved.headset,        saved.keyboard_dialog};
+}
 constexpr std::string_view usage =
     "Usage: xscarlet [TITLE]\n"
     "Targets: Xbox One (Durango), Xbox Series X|S (Scarlett)\n\n"
@@ -153,6 +162,7 @@ int wmain(int argc, wchar_t **argv) {
             }
             const auto bytes = read_title(argv[2]);
             options.save_directory = xs::title_save_directory(argv[2]);
+            options.console = console_settings();
             return static_cast<int>(xs::runtime::execute(
                 xs::title_executable(argv[2]), bytes, xs::runtime::title_registry(bytes), options));
         }
@@ -178,6 +188,12 @@ int wmain(int argc, wchar_t **argv) {
         xs::DesktopHooks hooks;
         hooks.libraries = xs::load_library_settings();
         hooks.libraries_changed = xs::save_library_settings;
+        hooks.console = xs::load_console_settings();
+        hooks.console_changed = [](const xs::ConsoleSettings &settings) {
+            xs::save_console_settings(settings);
+            std::cerr << "[Launcher] console: " << settings.gamertag << ", saved to "
+                      << text(xs::config_file()) << std::endl;
+        };
         hooks.load = [](const std::filesystem::path &path) {
             std::cerr << "[Launcher] opening " << text(path) << std::endl;
             auto title = xs::launch_title(path);
@@ -193,6 +209,7 @@ int wmain(int argc, wchar_t **argv) {
             const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
             xs::runtime::ExecuteOptions options;
             options.save_directory = xs::title_save_directory(path);
+            options.console = console_settings();
             std::cerr << "[Launcher] saves in " << text(options.save_directory) << std::endl;
             const auto code =
                 xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes), options);

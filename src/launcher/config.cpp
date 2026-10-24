@@ -1,6 +1,7 @@
 #include "launcher/config.hpp"
 #include "backends/graphics/backend.hpp"
 #include "backends/input/input.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -39,7 +40,28 @@ struct Settings {
     input::Settings input = input::default_settings();
     LibrarySettings library;
     std::optional<graphics::Backend> backend;
+    ConsoleSettings console;
 };
+std::optional<std::uint32_t> number(const std::string &value) {
+    if (value.empty() || value.size() > 10 ||
+        !std::all_of(value.begin(), value.end(), [](char c) { return c >= '0' && c <= '9'; }))
+        return std::nullopt;
+    try {
+        std::size_t used = 0;
+        const auto parsed = std::stoul(value, &used);
+        if (used == value.size() && parsed <= 0xffffffffu)
+            return static_cast<std::uint32_t>(parsed);
+    } catch (const std::exception &) {
+    }
+    return std::nullopt;
+}
+std::string json_string(const std::string &value) {
+    try {
+        return nlohmann::json::parse(value).get<std::string>();
+    } catch (const std::exception &) {
+        return {};
+    }
+}
 Settings read() {
     Settings result;
     std::ifstream file(config_file());
@@ -79,6 +101,20 @@ Settings read() {
         } else if (section == "graphics") {
             if (key == "backend")
                 result.backend = graphics::parse_backend(value);
+        } else if (section == "console") {
+            auto &console = result.console;
+            if (key == "gamertag" && valid_gamertag(json_string(value)))
+                console.gamertag = json_string(value);
+            else if (key == "xbox_user_id" && valid_xbox_user_id(value))
+                console.xbox_user_id = value;
+            else if (key == "gamerscore" && number(value))
+                console.gamerscore = *number(value);
+            else if (key == "age_group" && number(value) && *number(value) <= 3)
+                console.age_group = *number(value);
+            else if (key == "headset")
+                console.headset = value == "true";
+            else if (key == "keyboard")
+                console.keyboard_dialog = value != "default_text";
         } else if (section == "libraries") {
             if (key == "view")
                 result.library.grid = value != "list";
@@ -108,6 +144,12 @@ void write(const Settings &settings) {
                  << settings.input.keys[i] << '\n';
         if (settings.backend)
             file << "\n[graphics]\nbackend = " << graphics::backend_name(*settings.backend) << '\n';
+        const auto &console = settings.console;
+        file << "\n[console]\ngamertag = " << nlohmann::json(console.gamertag).dump()
+             << "\nxbox_user_id = " << console.xbox_user_id
+             << "\ngamerscore = " << console.gamerscore << "\nage_group = " << console.age_group
+             << "\nheadset = " << (console.headset ? "true" : "false")
+             << "\nkeyboard = " << (console.keyboard_dialog ? "dialog" : "default_text") << '\n';
         file << "\n[libraries]\nview = " << (settings.library.grid ? "grid" : "list") << '\n';
         for (const auto &directory : settings.library.directories)
             file << "path = " << nlohmann::json(utf8(directory)).dump() << '\n';
@@ -135,6 +177,25 @@ void save_graphics_settings() {
     auto settings = read();
     settings.input = input::settings();
     settings.backend = graphics::selected_backend();
+    write(settings);
+}
+bool valid_gamertag(const std::string &gamertag) {
+    const auto characters = std::count_if(gamertag.begin(), gamertag.end(), [](char c) {
+        return (static_cast<unsigned char>(c) & 0xc0) != 0x80;
+    });
+    return characters >= 1 && characters <= 15 &&
+           std::none_of(gamertag.begin(), gamertag.end(),
+                        [](char c) { return static_cast<unsigned char>(c) < 0x20; });
+}
+bool valid_xbox_user_id(const std::string &id) {
+    return !id.empty() && id.size() <= 20 &&
+           std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+ConsoleSettings load_console_settings() { return read().console; }
+void save_console_settings(const ConsoleSettings &console) {
+    auto settings = read();
+    settings.input = input::settings();
+    settings.console = console;
     write(settings);
 }
 LibrarySettings load_library_settings() { return read().library; }

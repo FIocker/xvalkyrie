@@ -36,6 +36,17 @@ class Registry {
 // without a directory there are no such DLLs.
 nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
                          const std::filesystem::path &directory = {});
+// What the console would know about its owner and its accessories. Options > Console.
+struct ConsoleSettings {
+    std::wstring gamertag = L"Player";
+    std::wstring xbox_user_id = L"2814600000000001";
+    std::uint32_t gamerscore = 0;
+    std::uint32_t age_group = 3; // UserAgeGroup: unknown, child, teen, adult
+    // the user has a headset: an audio device of theirs, the host's communications output
+    bool headset = false;
+    // the system keyboard asks on the host; otherwise it answers with the title's default text
+    bool keyboard_dialog = true;
+};
 struct ExecuteOptions {
     // start even if some imports can't be resolved; calling one of them ends the process
     bool allow_missing = false;
@@ -46,6 +57,7 @@ struct ExecuteOptions {
     bool mute = false;
     // host folder where the title's saved games go, see save_directory()
     std::filesystem::path save_directory{};
+    ConsoleSettings console{};
 };
 // Maps and runs the image, returns its exit code. No sandbox!
 // A guest that faults ends the process with exit_guest_fault.
@@ -60,9 +72,12 @@ std::filesystem::path package_directory(const std::filesystem::path &directory);
 // The folder of the running title's saved games, from ExecuteOptions; empty before execute
 // or when none was given.
 const std::filesystem::path &save_directory();
+// The console settings of the running title, from ExecuteOptions
+const ConsoleSettings &console_settings();
 
 namespace detail {
 void set_save_directory(std::filesystem::path directory);
+void set_console_settings(ConsoleSettings settings);
 struct Binding {
     void *function;     // null if missing
     const char *origin; // "own", "host" or "missing"

@@ -13,15 +13,6 @@
 
 namespace xs::runtime::durango {
 namespace {
-// The attributes ask for an alignment and a page size. A fresh 64K-aligned, zeroed region
-// satisfies any of them, at the cost of address space for small blocks.
-void *WINAPI xmem_alloc(SIZE_T size, ULONGLONG) {
-    return VirtualAlloc(nullptr, size ? size : 1, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-}
-void WINAPI xmem_free(void *address, ULONGLONG) {
-    if (address)
-        VirtualFree(address, 0, MEM_RELEASE);
-}
 // Libraries a title loads by name at run time come from the host for now. What it asks
 // for and gets is worth knowing.
 HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
@@ -85,32 +76,6 @@ HANDLE WINAPI create_file2(const wchar_t *name, DWORD access, DWORD share, DWORD
     note_music(name, file);
     return file;
 }
-// The console's VirtualAlloc takes more: where the memory goes (MEM_GRAPHICS 0x10000000,
-// MEM_TITLE 0x40000000), page sizes the desktop only grants with a privilege, and GPU
-// protections above the desktop ones. Here it is all ordinary memory.
-constexpr DWORD allocation_types =
-    MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET_UNDO;
-constexpr DWORD protections = 0xff | PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE;
-void *WINAPI virtual_alloc_ex(HANDLE process, void *address, SIZE_T size, DWORD type,
-                              DWORD protect) {
-    const auto result =
-        VirtualAllocEx(process, address, size, type & allocation_types, protect & protections);
-    if (!result && (type & ~allocation_types || protect & ~protections)) {
-        const auto error = GetLastError();
-        std::fprintf(stderr,
-                     "[Runtime] VirtualAlloc of %zu bytes, type 0x%lx protect 0x%lx failed: %lu\n",
-                     static_cast<std::size_t>(size), type, protect, error);
-        std::fflush(stderr);
-        SetLastError(error);
-    }
-    return result;
-}
-void *WINAPI virtual_alloc(void *address, SIZE_T size, DWORD type, DWORD protect) {
-    return virtual_alloc_ex(GetCurrentProcess(), address, size, type, protect);
-}
-BOOL WINAPI virtual_protect(void *address, SIZE_T size, DWORD protect, DWORD *previous) {
-    return VirtualProtect(address, size, protect & protections, previous);
-}
 // What a title writes for a debugger: its own log, which is what says why it gives up.
 // Lines go to stderr as they come, without the trailing newline titles usually add.
 void WINAPI output_debug_string_w(const wchar_t *text) {
@@ -137,6 +102,62 @@ int WINAPI get_console_type() { return 3; }
 BOOL WINAPI set_thread_name(HANDLE thread, const wchar_t *name) {
     return SUCCEEDED(SetThreadDescription(thread, name));
 }
+BOOL WINAPI get_thread_name(HANDLE thread, wchar_t *name, SIZE_T capacity, SIZE_T *length) {
+    if (!length) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    wchar_t *description = nullptr;
+    if (const auto result = GetThreadDescription(thread, &description); FAILED(result)) {
+        *length = 0;
+        SetLastError(HRESULT_CODE(result));
+        return FALSE;
+    }
+    *length = wcslen(description);
+    const bool fits = name && *length < capacity;
+    if (fits)
+        std::memcpy(name, description, (*length + 1) * sizeof(wchar_t));
+    LocalFree(description);
+    SetLastError(fits ? ERROR_SUCCESS : ERROR_INSUFFICIENT_BUFFER);
+    return fits;
+}
+// SYSTEMOSVERSIONINFO: the host's version
+struct SystemVersion {
+    BYTE major, minor;
+    WORD build, revision;
+};
+void WINAPI get_system_os_version(SystemVersion *version) {
+    using Get = LONG(WINAPI *)(OSVERSIONINFOW *);
+    OSVERSIONINFOW host{sizeof host};
+    if (const auto get =
+            reinterpret_cast<Get>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")))
+        get(&host);
+    DWORD revision = 0, size = sizeof revision;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"UBR",
+                     RRF_RT_REG_DWORD, nullptr, &revision, &size) != ERROR_SUCCESS)
+        revision = 0;
+    *version = {static_cast<BYTE>(host.dwMajorVersion), static_cast<BYTE>(host.dwMinorVersion),
+                static_cast<WORD>(host.dwBuildNumber), static_cast<WORD>(revision)};
+}
+// PROCESSOR_SCHEDULING_STATISTICS, in 100 ns units
+struct SchedulingStatistics {
+    ULONGLONG running, idle, global;
+};
+void WINAPI query_processor_scheduling_statistics(SchedulingStatistics *statistics) {
+    LARGE_INTEGER frequency, counter;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    FILETIME idle, kernel, user;
+    const auto value = [](FILETIME time) {
+        return ULARGE_INTEGER{{time.dwLowDateTime, time.dwHighDateTime}}.QuadPart;
+    };
+    *statistics = {0, 0,
+                   static_cast<ULONGLONG>(counter.QuadPart / (frequency.QuadPart / 10000000))};
+    if (GetSystemTimes(&idle, &kernel, &user))
+        *statistics = {value(kernel) - value(idle) + value(user), value(idle), statistics->global};
+}
+// the console's cores are not the host's: the pool runs wherever the host puts it
+BOOL WINAPI set_threadpool_affinity_mask(PTP_POOL, DWORD_PTR) { return TRUE; }
 // TITLEMEMORYSTATUS: the memory of a title, from what the host has
 struct TitleMemory {
     DWORD length, reserved;
@@ -171,27 +192,30 @@ void install_kernelx(Registry &registry) {
                  reinterpret_cast<void *>(&output_debug_string_w));
     registry.add("kernelx.dll", "OutputDebugStringA",
                  reinterpret_cast<void *>(&output_debug_string_a));
-    registry.add("kernelx.dll", "VirtualAlloc", reinterpret_cast<void *>(&virtual_alloc));
-    registry.add("kernelx.dll", "VirtualAllocEx", reinterpret_cast<void *>(&virtual_alloc_ex));
-    registry.add("kernelx.dll", "VirtualProtect", reinterpret_cast<void *>(&virtual_protect));
     registry.add("kernelx.dll", "SetThreadName", reinterpret_cast<void *>(&set_thread_name));
+    registry.add("kernelx.dll", "GetThreadName", reinterpret_cast<void *>(&get_thread_name));
+    registry.add("kernelx.dll", "GetSystemOSVersion",
+                 reinterpret_cast<void *>(&get_system_os_version));
+    registry.add("kernelx.dll", "QueryProcessorSchedulingStatistics",
+                 reinterpret_cast<void *>(&query_processor_scheduling_statistics));
+    registry.add("kernelx.dll", "SetThreadpoolAffinityMask",
+                 reinterpret_cast<void *>(&set_threadpool_affinity_mask));
     for (const auto *name : {"TitleMemoryStatus", "JobTitleMemoryStatus"})
         registry.add("kernelx.dll", name, reinterpret_cast<void *>(&title_memory_status));
     registry.add("kernelx.dll", "CreateFileW", reinterpret_cast<void *>(&create_file_w));
     registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
-    // ETW is in kernelx on the console; on the desktop kernelbase has it, not kernel32
+    // ETW and address waits are in kernelx on the console; on the desktop kernelbase has
+    // them, not kernel32
     if (const auto base = LoadLibraryExW(L"kernelbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         for (const auto *name :
              {"EventRegister", "EventUnregister", "EventWrite", "EventWriteEx", "EventWriteString",
               "EventWriteTransfer", "EventEnabled", "EventProviderEnabled", "EventSetInformation",
-              "EventActivityIdControl", "TraceEvent"})
+              "EventActivityIdControl", "TraceEvent", "WaitOnAddress", "WakeByAddressSingle",
+              "WakeByAddressAll"})
             if (const auto function = GetProcAddress(base, name))
                 registry.add("kernelx.dll", name, reinterpret_cast<void *>(function));
-    for (const auto *name : {"XMemAllocDefault", "XMemAlloc"})
-        registry.add("kernelx.dll", name, reinterpret_cast<void *>(&xmem_alloc));
-    for (const auto *name : {"XMemFreeDefault", "XMemFree"})
-        registry.add("kernelx.dll", name, reinterpret_cast<void *>(&xmem_free));
+    install_memory(registry);
 }
 } // namespace xs::runtime::durango

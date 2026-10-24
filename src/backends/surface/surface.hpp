@@ -1,7 +1,18 @@
 #pragma once
+#include <functional>
+#include <optional>
 #include <string>
 
 namespace xs::surface {
+// A line of text to ask for, as the system keyboard of a console would.
+struct TextRequest {
+    std::wstring title, description, text; // `text` is there to start with
+    bool password = false, digits = false;
+    unsigned max_length = 0; // 0: no limit
+};
+// Asks in a window of its own, over the title's, and calls `done` from another thread with
+// what was entered, or with nothing if the window was cancelled or closed.
+void ask_text(TextRequest request, std::function<void(std::optional<std::wstring>)> done);
 // Makes titles draw inside `parent`, a native window of the calling thread, instead of in
 // a window of their own: creates the surface for them there, hidden. Call before a title
 // starts, from the thread that runs the parent's message loop.
@@ -42,4 +53,8 @@ class TitleWindow {
     struct Thread;
     Thread *thread_ = nullptr;
 };
+namespace detail {
+// the top-level window the last title window belongs to (HWND), null before there is one
+void *title_owner();
+} // namespace detail
 } // namespace xs::surface

@@ -31,6 +31,9 @@ struct DesktopHooks {
     std::function<void()> graphics_changed;
     LibrarySettings libraries;
     std::function<void(const LibrarySettings &)> libraries_changed;
+    // Options > Console; may throw
+    ConsoleSettings console;
+    std::function<void(const ConsoleSettings &)> console_changed;
 };
 // Opens the main window, loading `initial` unless it is empty, and returns once it is closed.
 // The result is the process exit code: that of the last title run, 1 if the last file opened

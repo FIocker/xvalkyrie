@@ -47,6 +47,43 @@ constexpr wchar_t chat_session_state[] = L"Windows.Xbox.Chat.ChatSessionState";
 constexpr auto chat_session2 = guid("8840b65e-eb13-4629-8f63-2854624460ff");
 constexpr wchar_t product[] = L"Windows.Xbox.ApplicationModel.Store.Product";
 constexpr auto product_statics = guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7");
+constexpr wchar_t display_info[] = L"Windows.Xbox.System.UserDisplayInfo";
+constexpr wchar_t audio_device[] = L"Windows.Xbox.System.AudioDeviceInfo";
+
+constexpr wchar_t system_ui[] = L"Windows.Xbox.UI.SystemUI";
+constexpr auto system_ui_statics = guid("1a0dd80e-3f9d-4cfa-8e50-0e2ebd1aa72f");
+constexpr auto system_ui_statics7 = guid("01f75706-9df0-44d8-837c-a930da05a74a");
+
+constexpr wchar_t party[] = L"Windows.Xbox.Multiplayer.Party";
+constexpr wchar_t party_view[] = L"Windows.Xbox.Multiplayer.PartyView";
+constexpr wchar_t party_chat[] = L"Windows.Xbox.Multiplayer.PartyChat";
+constexpr wchar_t party_chat_view[] = L"Windows.Xbox.Multiplayer.PartyChatView";
+constexpr auto party_statics = guid("e6110c4c-3660-4230-9880-208b149a3ca4");
+constexpr auto party_statics2 = guid("87521843-2298-43c4-81f1-c7c50ab794e1");
+constexpr auto party_statics3 = guid("15946429-17a1-4fdf-9d67-766ed0f4b868");
+constexpr auto party_statics4 = guid("4b907f32-9165-4193-9cce-1d5ccddd060e");
+constexpr auto party_chat_statics = guid("cc1bcf39-99f3-42a2-afb6-cdc07b29755f");
+
+constexpr wchar_t association_template[] =
+    L"Windows.Xbox.Networking.SecureDeviceAssociationTemplate";
+constexpr wchar_t association[] = L"Windows.Xbox.Networking.SecureDeviceAssociation";
+constexpr wchar_t device_address[] = L"Windows.Xbox.Networking.SecureDeviceAddress";
+constexpr wchar_t quality_of_service[] = L"Windows.Xbox.Networking.QualityOfService";
+constexpr wchar_t network_cache[] = L"Windows.Xbox.Networking.NetworkCache";
+constexpr wchar_t error_messages[] = L"Windows.Xbox.Networking.ErrorMessages";
+
+constexpr wchar_t clip_capture[] = L"Windows.Xbox.Media.Capture.ApplicationClipCapture";
+constexpr wchar_t clip_content[] = L"Windows.Xbox.Media.Capture.ClipContentAttributes";
+constexpr wchar_t clip_info[] = L"Windows.Xbox.Media.Capture.ApplicationClipInfo";
+constexpr wchar_t clip[] = L"Windows.Xbox.Media.Capture.ApplicationClip";
+constexpr wchar_t clip_query[] = L"Windows.Xbox.Media.Capture.ApplicationClipQuery";
+constexpr wchar_t clip_event[] = L"Windows.Xbox.Media.Capture.ApplicationClipEventData";
+constexpr wchar_t clip_metadata[] = L"Windows.Xbox.Media.Capture.ApplicationClipUpdateMetadataInfo";
+constexpr wchar_t diagnostic_capture[] = L"Windows.Xbox.Media.Capture.DiagnosticCapture";
+// ApplicationClipError::ServiceNotRunning: game DVR is not there
+constexpr long no_recording = -2110640127;
+// HRESULT_FROM_WIN32(ERROR_NETWORK_UNREACHABLE)
+constexpr long network_unreachable = static_cast<long>(0x800704CF);
 
 constexpr Row rows[] = {
     {transport, game_transport_controls, 14, {Inert::accept}}, // (bool)
@@ -181,7 +218,7 @@ constexpr Row rows[] = {
      {Inert::shared, L"Windows.Xbox.System.User"}},
     {L"Windows.Xbox.System.User", direct, 11, {Inert::true8}},
     {L"Windows.Xbox.System.User", direct, 10, {Inert::zero8}},
-    {L"Windows.Xbox.System.User", direct, 15, {Inert::string, L"2814600000000001"}},
+    {L"Windows.Xbox.System.User", direct, 15, {Inert::console_string, L"xbox_user_id"}},
     {L"Windows.Xbox.Management.Deployment.DownloadableContentPackageManager",
      guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
      6,
@@ -191,13 +228,26 @@ constexpr Row rows[] = {
      direct,
      9,
      {Inert::shared, L"Windows.Xbox.System.UserDisplayInfo"}},
-    {L"Windows.Xbox.System.UserDisplayInfo", direct, 6, {Inert::string, L"Player"}},
-    {L"Windows.Xbox.System.UserDisplayInfo", direct, 9, {Inert::string, L"Player"}},
+    // IUserDisplayInfo: Gamertag, GamerScore, ApplicationDisplayName, GameDisplayName,
+    // Reputation, AgeGroup, all from Options > Console
+    {display_info, direct, 6, {Inert::console_string, L"gamertag"}},
+    {display_info, direct, 7, {Inert::console32, L"gamerscore"}},
+    {display_info, direct, 8, {Inert::console_string, L"gamertag"}},
+    {display_info, direct, 9, {Inert::console_string, L"gamertag"}},
+    {display_info, direct, 10, {Inert::zero32}},
+    {display_info, direct, 11, {Inert::console32, L"age_group"}},
     {L"Windows.Kinect.KinectSensor",
      guid("c421d46b-5084-45d6-bdf0-57151f81d0d9"),
      6,
      {Inert::zero64}},
-    {L"Windows.Xbox.System.User", direct, 7, {Inert::empty_list}},
+    {L"Windows.Xbox.System.User", direct, 7, {Inert::audio_devices}},
+    // IAudioDeviceInfo of the headset: the host's communications output, shared, with no
+    // microphone to unmute
+    {audio_device, direct, 6, {Inert::console_string, L"audio_device_id"}},
+    {audio_device, direct, 7, {Inert::number32, nullptr, 1}}, // DeviceType: render
+    {audio_device, direct, 8, {Inert::number32, nullptr, 2}}, // Sharing: shared
+    {audio_device, direct, 9, {Inert::zero32}},               // Category: communications
+    {audio_device, direct, 10, {Inert::true8}},               // IsMicrophoneMuted
     // ShowAccountPickerAsync(controller, options, IAsyncOperation<AccountPickerResult> **)
     {L"Windows.Xbox.UI.SystemUI",
      guid("1a0dd80e-3f9d-4cfa-8e50-0e2ebd1aa72f"),
@@ -269,6 +319,221 @@ constexpr Row rows[] = {
      xbox_live_statics,
      8,
      {Inert::title_string, L"sandbox_id"}},
+
+    // ISystemUIStatics: the guide, profile cards, invites, party and achievements are not
+    // there and close at once; the keyboard is a window of the host (system_ui.cpp)
+    {system_ui, system_ui_statics, 6, {Inert::action_at, nullptr, 3}},  // ShowEpgAsync
+    {system_ui, system_ui_statics, 7, {Inert::action_at, nullptr, 2}},  // ShowMiniguideAsync
+    {system_ui, system_ui_statics, 8, {Inert::action_at, nullptr, 3}},  // ShowProfileCardAsync
+    {system_ui, system_ui_statics, 9, {Inert::action_at, nullptr, 2}},  // ShowSendInvitesAsync
+    {system_ui, system_ui_statics, 11, {Inert::keyboard}},              // ShowVirtualKeyboardAsync
+    {system_ui, system_ui_statics, 12, {Inert::action_at, nullptr, 2}}, // LaunchPartyAsync
+    {system_ui, system_ui_statics, 13, {Inert::action_at, nullptr, 3}}, // LaunchAchievementsAsync
+    {system_ui, system_ui_statics7, 6, {Inert::keyboard_options}},
+    {system_ui, system_ui_statics7, 7, {Inert::action_at, nullptr, 4}}, // ShowSendGameInvites
+    {system_ui, system_ui_statics7, 8, {Inert::action_at, nullptr, 5}},
+    {system_ui, guid("197625d0-af45-4f9c-b068-d5bda0e60958"), 6, {Inert::accept}},
+
+    // IPartyStatics..4: no party. Its view is empty, registering sessions succeeds and the
+    // events are never raised.
+    {party, party_statics, 6, {Inert::action_at, nullptr, 3}},          // RegisterGameSessionAsync
+    {party, party_statics, 7, {Inert::action_at, nullptr, 3}},          // RegisterMatchSessionAsync
+    {party, party_statics, 8, {Inert::action_at, nullptr, 3}},          // InviteToPartyAsync
+    {party, party_statics, 9, {Inert::operation, party_view}},          // GetPartyViewAsync
+    {party, party_statics, 10, {Inert::action_at, nullptr, 3}},         // AddLocalUsersAsync
+    {party, party_statics, 11, {Inert::action_at, nullptr, 3}},         // PullInactivePlayersAsync
+    {party, party_statics, 12, {Inert::action_at, nullptr, 3}},         // PullReservedPlayersAsync
+    {party, party_statics, 13, {Inert::list_operation_at, nullptr, 2}}, // GetAvailableGamePlayers
+    {party, party_statics, 14, {Inert::list_operation_at, nullptr, 2}}, // ...GroupedByDevice
+    {party, party_statics, 15, {Inert::action_at, nullptr, 2}},         // SwitchPartyTitleAsync
+    {party, party_statics, 16, {Inert::event_add}},                     // GameSessionReady
+    {party, party_statics, 17, {Inert::accept}},
+    {party, party_statics, 18, {Inert::event_add}}, // PartyStateChanged
+    {party, party_statics, 19, {Inert::accept}},
+    {party, party_statics, 20, {Inert::event_add}}, // PartyRosterChanged
+    {party, party_statics, 21, {Inert::accept}},
+    {party, party_statics, 22, {Inert::event_add}}, // MatchStatusChanged
+    {party, party_statics, 23, {Inert::accept}},
+    {party, party_statics, 24, {Inert::event_add}}, // GamePlayersChanged
+    {party, party_statics, 25, {Inert::accept}},
+    {party, party_statics2, 6, {Inert::operation_at, party_view, 2}}, // GetPartyViewAsyncEx
+    {party, party_statics3, 6, {Inert::action_at, nullptr, 2}},       // RemoveLocalUsersAsync
+    {party, party_statics3, 7, {Inert::zero64}},                      // PartyId: none
+    {party, party_statics3, 8, {Inert::action_at, nullptr, 3}}, // DisassociateGameSessionAsync
+    {party, party_statics4, 6, {Inert::action_at, nullptr, 4}}, // RegisterGameSessionCompare
+    {party, party_statics4, 7, {Inert::action_at, nullptr, 4}}, // RegisterMatchSessionCompare
+    {party, party_statics4, 8, {Inert::list_operation_at, nullptr, 3}}, // GetUserPartyAssociations
+    {party, party_statics4, 9, {Inert::operation_at, party_view, 3}},   // GetPartyViewByPartyId
+    {party, party_statics4, 10, {Inert::action_at, nullptr, 3}},        // JoinPartyByIdAsync
+    {party, party_statics4, 11, {Inert::zero32}},                       // Joinability
+    {party, party_statics4, 12, {Inert::accept}},
+    // IPartyView: no members, no sessions, not in another title
+    {party_view, direct, 6, {Inert::empty_list}},
+    {party_view, direct, 7, {Inert::empty_list}},
+    {party_view, direct, 8, {Inert::empty_list}},
+    {party_view, direct, 9, {Inert::zero64}},
+    {party_view, direct, 10, {Inert::zero64}},
+    {party_view, direct, 11, {Inert::zero8}},
+    // IPartyChatStatics: party chat is off and stays so
+    {party_chat, party_chat_statics, 6, {Inert::operation, party_chat_view}},
+    {party_chat, party_chat_statics, 7, {Inert::event_add}},
+    {party_chat, party_chat_statics, 8, {Inert::accept}},
+    {party_chat, party_chat_statics, 9, {Inert::zero8}},  // IsPartyChatActive
+    {party_chat, party_chat_statics, 10, {Inert::zero8}}, // IsPartyChatSuppressed
+    {party_chat, party_chat_statics, 11, {Inert::accept}},
+    {party_chat, party_chat_statics, 12, {Inert::event_add}},
+    {party_chat, party_chat_statics, 13, {Inert::accept}},
+    {party_chat, party_chat_statics, 14, {Inert::event_add}},
+    {party_chat, party_chat_statics, 15, {Inert::accept}},
+    {party_chat_view, direct, 6, {Inert::empty_list}}, // Members
+    // PartyConfig getters, next to the setters above
+    {L"Windows.Xbox.Multiplayer.PartyConfig",
+     guid("2fcec780-2e70-437a-ae46-72298ae2bac2"),
+     6,
+     {Inert::zero8}},
+    {L"Windows.Xbox.Multiplayer.PartyConfig",
+     guid("6938fc66-ed0c-4b86-a240-009da675a0ec"),
+     6,
+     {Inert::zero32}},
+
+    // Secure device associations without a network: templates exist, creating an
+    // association fails as unreachable, there is no association to look up, and the local
+    // address is one object with strict NAT
+    {association_template, direct, 6, {Inert::event_add}}, // AssociationIncoming
+    {association_template, direct, 7, {Inert::accept}},
+    {association_template, direct, 8, {Inert::offline, nullptr, 3}},  // CreateAssociationAsync
+    {association_template, direct, 9, {Inert::offline, nullptr, 5}},  // ...ForPortsAsync
+    {association_template, direct, 10, {Inert::offline, nullptr, 2}}, // CreateCertificateRequest
+    {association_template, direct, 11, {Inert::failed_action_at, nullptr, 2, network_unreachable}},
+    {association_template, direct, 20, {Inert::empty_list}}, // Associations
+    {association,
+     guid("15661441-f13a-46e4-8ac2-f474d59b1f0c"),
+     6,
+     {Inert::null_at, nullptr, 5}}, // GetAssociationBySocketAddressBytes
+    {association,
+     guid("15661441-f13a-46e4-8ac2-f474d59b1f0c"),
+     7,
+     {Inert::null_at, nullptr, 5}}, // GetAssociationByHostNamesAndPorts
+    {device_address,
+     guid("02addb0f-4880-4b1e-98b8-ee638ad89b55"),
+     9,
+     {Inert::shared, device_address}},               // GetLocal
+    {device_address, direct, 6, {Inert::event_add}}, // BufferChanged
+    {device_address, direct, 7, {Inert::accept}},
+    {device_address, direct, 10, {Inert::zero64}},               // GetBase64String: empty
+    {device_address, direct, 11, {Inert::true8}},                // IsLocal
+    {device_address, direct, 12, {Inert::number32, nullptr, 2}}, // NetworkAccessType: strict
+    {quality_of_service,
+     guid("d7d51fb8-4e8e-4e11-b2a4-930f9c344a6a"),
+     6,
+     {Inert::offline, nullptr, 5}}, // MeasureQualityOfServiceAsync
+    {quality_of_service, guid("d7d51fb8-4e8e-4e11-b2a4-930f9c344a6a"), 7, {Inert::accept}},
+    {quality_of_service, guid("d7d51fb8-4e8e-4e11-b2a4-930f9c344a6a"), 8, {Inert::accept}},
+    {quality_of_service, guid("d7d51fb8-4e8e-4e11-b2a4-930f9c344a6a"), 9, {Inert::accept}},
+    {network_cache, guid("bfff4b75-05a4-49b0-9383-c29df62a8da2"), 6, {Inert::accept}},
+    {network_cache, guid("bfff4b75-05a4-49b0-9383-c29df62a8da2"), 7, {Inert::accept}},
+    // GetMessageForError(code, HSTRING *): no message, the title shows its own
+    {error_messages, guid("0759380d-a6d3-443a-9441-e45edc7677e6"), 6, {Inert::null_at, nullptr, 2}},
+
+    // Game DVR is not running: recording fails as the console says when it is off, there
+    // are no clips, and the metadata a title sets is accepted and forgotten
+    {clip_capture, guid("82845b56-3150-4058-947a-b567537de0c2"), 6, {Inert::action}},
+    {clip_capture, guid("82845b56-3150-4058-947a-b567537de0c2"), 7, {Inert::action}},
+    {clip_capture, guid("2ac83090-107a-4cd7-8376-5188d3fcfa4e"), 6, {Inert::shared, clip_content}},
+    {clip_capture, guid("2ac83090-107a-4cd7-8376-5188d3fcfa4e"), 7, {Inert::accept}},
+    {clip_content, direct, 6, {Inert::zero32}},
+    {clip_content, direct, 7, {Inert::accept}},
+    {clip_capture, direct, 6, {Inert::failed_action_at, nullptr, 2, no_recording}},
+    {clip_capture, direct, 7, {Inert::failed_progress_at, nullptr, 2, no_recording}},
+    {clip_capture, direct, 8, {Inert::failed_progress_at, nullptr, 5, no_recording}},
+    {clip_capture, direct, 9, {Inert::accept}},     // CancelRecord
+    {clip_capture, direct, 10, {Inert::event_add}}, // Failed
+    {clip_capture, direct, 11, {Inert::accept}},
+    {clip_capture, direct, 12, {Inert::event_add}}, // RecordLimitationExceeded
+    {clip_capture, direct, 13, {Inert::accept}},
+    {clip_info, guid("509ccd19-fee4-45ab-8daa-7895328d452f"), 6, {Inert::lookup, clip_info}},
+    {clip_info, direct, 6, {Inert::zero64}},
+    {clip_info, direct, 7, {Inert::accept}},
+    {clip_info, direct, 8, {Inert::empty_list}},
+    {clip_info, direct, 9, {Inert::accept}},
+    {clip_info, direct, 10, {Inert::zero64}},
+    {clip_info, direct, 11, {Inert::accept}},
+    {clip_info, direct, 12, {Inert::zero64}},
+    {clip_info, direct, 13, {Inert::accept}},
+    {clip_info, direct, 14, {Inert::zero64}},
+    {clip_info, direct, 15, {Inert::accept}},
+    {clip_info, direct, 16, {Inert::zero64}},
+    {clip_info, direct, 17, {Inert::accept}},
+    {clip_info, direct, 18, {Inert::zero64}},
+    {clip_info, direct, 19, {Inert::accept}},
+    {clip,
+     guid("c0c846ba-0d69-4b4b-ac8b-dba211322f1d"),
+     6,
+     {Inert::failed_action_at, nullptr, 6, no_recording}}, // UpdateClipMetadataAsync
+    {clip,
+     guid("c0c846ba-0d69-4b4b-ac8b-dba211322f1d"),
+     7,
+     {Inert::failed_action_at, nullptr, 5, no_recording}},           // DeleteClipAsync
+    {clip_query, direct, 6, {Inert::list_operation_at, nullptr, 2}}, // GetClipsAsync
+    {clip_query, direct, 7, {Inert::list_operation_at, nullptr, 3}},
+    {clip_query, direct, 8, {Inert::list_operation_at, nullptr, 1}}, // GetNextClipsAsync
+    {clip_query,
+     guid("c2d95416-127e-4342-b433-d95e7dc31baa"),
+     6,
+     {Inert::list_operation_at, nullptr, 3}},
+    {clip_metadata, direct, 6, {Inert::zero64}},
+    {clip_metadata, direct, 7, {Inert::accept}},
+    {clip_metadata, direct, 8, {Inert::zero64}},
+    {clip_metadata, direct, 9, {Inert::accept}},
+    {clip_metadata, direct, 10, {Inert::zero32}},
+    // IApplicationClipEventData: Int32 SectionId, String PlayerSessionId, then four Int32
+    // and three Single, each a getter and a setter
+    {clip_event, direct, 6, {Inert::zero32}},
+    {clip_event, direct, 7, {Inert::accept}},
+    {clip_event, direct, 8, {Inert::zero64}},
+    {clip_event, direct, 9, {Inert::accept}},
+    {clip_event, direct, 10, {Inert::zero32}},
+    {clip_event, direct, 11, {Inert::accept}},
+    {clip_event, direct, 12, {Inert::zero32}},
+    {clip_event, direct, 13, {Inert::accept}},
+    {clip_event, direct, 14, {Inert::zero32}},
+    {clip_event, direct, 15, {Inert::accept}},
+    {clip_event, direct, 16, {Inert::zero32}},
+    {clip_event, direct, 17, {Inert::accept}},
+    {clip_event, direct, 18, {Inert::zero32}},
+    {clip_event, direct, 19, {Inert::accept}},
+    {clip_event, direct, 20, {Inert::zero32}},
+    {clip_event, direct, 21, {Inert::accept}},
+    {clip_event, direct, 22, {Inert::zero32}},
+    {clip_event, direct, 23, {Inert::accept}},
+    {diagnostic_capture,
+     guid("39f20721-379c-4255-b558-c133e3359857"),
+     6,
+     {Inert::failed_action_at, nullptr, 3, no_recording}}, // RecordTemporaryClipAsync
+
+    // IInstalledSpeechRecognizersStatic: no microphone, so no recognizer
+    {L"Windows.Xbox.Speech.Recognition.InstalledSpeechRecognizers",
+     guid("606a630f-c5c3-4dfa-9950-d98bfe772c8f"),
+     6,
+     {Inert::empty_list}},
+    {L"Windows.Xbox.Speech.Recognition.InstalledSpeechRecognizers",
+     guid("606a630f-c5c3-4dfa-9950-d98bfe772c8f"),
+     7,
+     {Inert::zero64}},
+
+    // IControllerStatics: ControllerOrderChanged; IController::Type of the one gamepad
+    {L"Windows.Xbox.Input.Controller",
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     13,
+     {Inert::event_add}},
+    {L"Windows.Xbox.Input.Controller",
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     14,
+     {Inert::accept}},
+    {L"Windows.Xbox.Input.Gamepad",
+     guid("9776ff56-9bfd-4581-ad45-b645bba526d6"),
+     7,
+     {Inert::string, L"Windows.Xbox.Input.Gamepad"}},
 };
 } // namespace
 

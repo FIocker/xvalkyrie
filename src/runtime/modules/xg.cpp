@@ -55,8 +55,10 @@ struct TextureDescription {
         bind_flags, cpu_access, misc_flags, esram_offset, esram_usage, tile_mode, pitch;
 };
 // Titles read the total size from the start of XG_RESOURCE_LAYOUT. The structure goes on
-// with per-plane and per-mip tables, 0xd40 bytes in all, which are left zeroed.
-constexpr std::size_t layout_bytes = 0xd40;
+// with per-plane and per-mip tables, 0xd40 bytes in all, which are left zeroed but for the
+// row pitch of the first mip in bytes, at 0x5c: a title multiplies it by the height to
+// size a copy of the texture.
+constexpr std::size_t layout_bytes = 0xd40, first_pitch = 0x5c;
 struct Computer {
     void *const *vtable;
     std::atomic<std::uint32_t> references;
@@ -69,15 +71,24 @@ std::uint32_t release(Computer *self) {
         delete self;
     return left;
 }
-std::int32_t resource_layout(Computer *self, void *layout) {
+std::int32_t texture2d_layout(const TextureDescription *description, void *layout) {
+    if (!description || !layout)
+        return static_cast<std::int32_t>(0x80070057); // E_INVALIDARG
     std::memset(layout, 0, layout_bytes);
-    const auto &d = self->description;
+    const auto &d = *description;
     const std::uint64_t header[2] = {
         texture_bytes(d.width, d.height, d.mips, d.array_size, d.format), 4096};
     std::memcpy(layout, header, sizeof header);
     const std::uint32_t counts[2] = {d.mips, 1}; // mip levels, planes
     std::memcpy(static_cast<char *>(layout) + sizeof header, counts, sizeof counts);
+    const auto size = format_size(d.format);
+    const std::uint32_t pitch = size.blocks ? (std::max(d.width, 1u) + 3) / 4 * size.bytes
+                                            : std::max(d.width, 1u) * size.bytes;
+    std::memcpy(static_cast<char *>(layout) + first_pitch, &pitch, sizeof pitch);
     return 0;
+}
+std::int32_t resource_layout(Computer *self, void *layout) {
+    return texture2d_layout(&self->description, layout);
 }
 template <int Slot> std::int32_t unknown(Computer *) {
     std::fprintf(stderr, "[Runtime] unimplemented xg_x.dll texture computer method %d\n", Slot);
@@ -118,6 +129,7 @@ std::int32_t optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std:
 void install_xg(Registry &registry, std::string_view module) {
     registry.add(module, "XGCreateTexture2DComputer",
                  reinterpret_cast<void *>(&create_texture2d_computer));
+    registry.add(module, "XGComputeTexture2DLayout", reinterpret_cast<void *>(&texture2d_layout));
     registry.add(module, "XGComputeOptimalTileMode", reinterpret_cast<void *>(&optimal_tile_mode));
     registry.add(module, "XGComputeOptimalDepthStencilTileModes",
                  reinterpret_cast<void *>(&optimal_depth_stencil_tile_modes));
