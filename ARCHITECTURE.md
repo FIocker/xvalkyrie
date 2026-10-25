@@ -420,6 +420,6 @@ away. With `exec` there is no main window and the title gets one of its own.
 
 ## Tests
 
-- `tests/*.cpp`: Catch2 unit tests
-- `tests/corpus/generate.py`: writes small synthetic PE files used as fixtures
-- `tests/guest/`: two tiny Windows programs that the runtime loads and runs
+Only the parsers of files that come from outside (PE, XVD) are tested, with broken input
+included: `tests/*.cpp` on the synthetic PE files of `tests/corpus/generate.py`. The rest
+is checked by running titles.

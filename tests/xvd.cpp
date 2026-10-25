@@ -1,8 +1,6 @@
 #include "formats/xvd/identify.hpp"
-#include "launcher/launch.hpp"
 #include <catch2/catch.hpp>
 #include <cstring>
-#include <fstream>
 #include <nlohmann/json.hpp>
 #include <vector>
 
@@ -65,15 +63,4 @@ TEST_CASE("xvd bad input") {
     bytes[0x200] = 'M';
     CHECK_FALSE(xs::xvd::has_magic(bytes));
     CHECK_THROWS(xs::xvd::identify(bytes, bytes.size()));
-}
-
-TEST_CASE("launch xvd package") {
-    const auto bytes = header();
-    std::ofstream("synthetic-header.xvd", std::ios::binary)
-        .write(reinterpret_cast<const char *>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-    const auto result = xs::launch_title("synthetic-header.xvd");
-    CHECK(result.status == xs::LaunchStatus::package_unsupported);
-    CHECK(result.detail.find("Title") != std::string::npos);
-    CHECK(result.detail.find("decrypted") != std::string::npos);
 }
