@@ -1,26 +1,158 @@
+#include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/runtime.hpp"
 
+#include <atomic>
+#include <audioclient.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <mmdeviceapi.h>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <unknwn.h>
 #include <windows.h>
 
 // Console-only functions. Undocumented ones only return.
 namespace xs::runtime::durango {
 namespace {
-HRESULT WINAPI activate_audio_interface(const wchar_t *device, const GUID &iid, void *parameters,
-                                        IUnknown *handler, void **operation) {
-    using Activate = HRESULT(WINAPI *)(const wchar_t *, const GUID &, void *, IUnknown *, void **);
-    static const auto host = reinterpret_cast<Activate>(
-        GetProcAddress(LoadLibraryExW(L"mmdevapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
-                       "ActivateAudioInterfaceAsync"));
-    const auto result = host ? host(device, iid, parameters, handler, operation) : E_NOTIMPL;
-    std::fprintf(stderr, "[Runtime] ActivateAudioInterfaceAsync(%ls) -> 0x%08lx\n",
-                 device ? device : L"(null)", static_cast<unsigned long>(result));
+class Activation final : public IActivateAudioInterfaceAsyncOperation {
+  public:
+    Activation(HRESULT result, IUnknown *audio) : result_(result), audio_(audio) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = nullptr;
+        if (iid != __uuidof(IUnknown) && iid != __uuidof(IActivateAudioInterfaceAsyncOperation) &&
+            iid != __uuidof(IAgileObject))
+            return E_NOINTERFACE;
+        *object = this;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left) {
+            if (audio_)
+                audio_->Release();
+            delete this;
+        }
+        return left;
+    }
+    void finish(HRESULT result, IUnknown *audio) {
+        result_ = result;
+        audio_ = audio;
+    }
+    STDMETHODIMP GetActivateResult(HRESULT *result, IUnknown **audio) override {
+        *result = result_;
+        *audio = audio_;
+        if (audio_)
+            audio_->AddRef();
+        return S_OK;
+    }
+
+  private:
+    std::atomic<ULONG> references_{1};
+    HRESULT result_;
+    IUnknown *audio_;
+};
+// The console mixes any PCM format; the host does in shared mode when asked to convert
+HRESULT STDMETHODCALLTYPE initialize(Forwarder *self, AUDCLNT_SHAREMODE mode, DWORD flags,
+                                     REFERENCE_TIME duration, REFERENCE_TIME period,
+                                     const WAVEFORMATEX *format, const GUID *session) {
+    auto *const client = static_cast<IAudioClient *>(forwarder_host(self));
+    if (mode == AUDCLNT_SHAREMODE_SHARED)
+        flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+    const auto result = client->Initialize(mode, flags, duration, period, format, session);
+    std::fprintf(stderr,
+                 "[Runtime] audio client: %u channels, %lu Hz, %u bits, flags 0x%lx: 0x%08lx\n",
+                 format ? format->nChannels : 0, format ? format->nSamplesPerSec : 0,
+                 format ? format->wBitsPerSample : 0, flags, static_cast<unsigned long>(result));
     return result;
+}
+HRESULT STDMETHODCALLTYPE format_supported(Forwarder *, AUDCLNT_SHAREMODE mode,
+                                           const WAVEFORMATEX *, WAVEFORMATEX **closest) {
+    if (closest)
+        *closest = nullptr;
+    return mode == AUDCLNT_SHAREMODE_SHARED ? S_OK : AUDCLNT_E_UNSUPPORTED_FORMAT;
+}
+// the console's AudioClientProperties are not the desktop's
+HRESULT STDMETHODCALLTYPE client_properties(Forwarder *, const void *) { return S_OK; }
+HRESULT audio_client_query(Forwarder *self, REFIID iid, void **object) {
+    if (iid == __uuidof(IUnknown) || iid == __uuidof(IAudioClient) ||
+        iid == __uuidof(IAudioClient2) || iid == __uuidof(IAudioClient3)) {
+        forwarder_add_ref(self);
+        *object = self;
+        return S_OK;
+    }
+    return forwarder_host(self)->QueryInterface(iid, object);
+}
+IUnknown *audio_client(IUnknown *host) {
+    IAudioClient3 *client = nullptr;
+    if (!host || FAILED(host->QueryInterface(IID_PPV_ARGS(&client))))
+        return host;
+    host->Release();
+    return reinterpret_cast<IUnknown *>(
+        make_forwarder(client, 21, &audio_client_query,
+                       {{3, reinterpret_cast<void *>(&initialize)},
+                        {7, reinterpret_cast<void *>(&format_supported)},
+                        {16, reinterpret_cast<void *>(&client_properties)}}));
+}
+// "\\?\SWD#MMDEVAPI#{endpoint id}#{interface class}": the endpoint, or the default output
+IMMDevice *endpoint(IMMDeviceEnumerator *devices, const wchar_t *path) {
+    IMMDevice *device = nullptr;
+    const std::wstring_view text = path ? path : L"";
+    constexpr std::wstring_view marker = L"MMDEVAPI#";
+    if (const auto at = text.find(marker); at != text.npos) {
+        const auto start = at + marker.size(), end = text.find(L'#', start);
+        const std::wstring id(text.substr(start, end - start));
+        if (SUCCEEDED(devices->GetDevice(id.c_str(), &device)))
+            return device;
+    }
+    devices->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    return device;
+}
+HRESULT WINAPI activate_audio_interface(const wchar_t *path, const GUID &iid, PROPVARIANT *,
+                                        IActivateAudioInterfaceCompletionHandler *handler,
+                                        IActivateAudioInterfaceAsyncOperation **operation) {
+    if (!handler || !operation)
+        return E_INVALIDARG;
+    handler->AddRef();
+    // the title may read the result from the operation it got back here
+    auto *const shared = new Activation(E_PENDING, nullptr);
+    shared->AddRef();
+    std::thread([path = std::wstring(path ? path : L""), iid, handler, shared] {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        IMMDeviceEnumerator *devices = nullptr;
+        IUnknown *audio = nullptr;
+        auto result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                       IID_PPV_ARGS(&devices));
+        if (SUCCEEDED(result)) {
+            auto *const device = endpoint(devices, path.c_str());
+            result = device ? device->Activate(iid, CLSCTX_ALL, nullptr,
+                                               reinterpret_cast<void **>(&audio))
+                            : E_NOTFOUND;
+            if (device)
+                device->Release();
+            devices->Release();
+        }
+        wchar_t name[40];
+        StringFromGUID2(iid, name, 40);
+        std::fprintf(stderr, "[Runtime] audio interface %ls for %ls: 0x%08lx\n", name, path.c_str(),
+                     static_cast<unsigned long>(result));
+        if (SUCCEEDED(result) && (iid == __uuidof(IAudioClient) || iid == __uuidof(IAudioClient2) ||
+                                  iid == __uuidof(IAudioClient3)))
+            audio = audio_client(audio);
+        shared->finish(result, audio);
+        handler->ActivateCompleted(shared);
+        shared->Release();
+        handler->Release();
+        CoUninitialize();
+    }).detach();
+    *operation = shared;
+    return S_OK;
 }
 DWORD_PTR WINAPI set_wasapi_thread_affinity_mask(DWORD_PTR mask) { return mask; }
 HRESULT WINAPI enable_spatial_audio() { return S_OK; }
