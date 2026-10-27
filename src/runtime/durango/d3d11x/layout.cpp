@@ -116,8 +116,9 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     return result;
 }
 
-// the readable format of a depth texture's family, which the console lets views name loosely
-DXGI_FORMAT depth_view_format(ID3D11Resource *resource) {
+// the readable or the depth format of a depth texture's family, which the console lets
+// views name loosely
+DXGI_FORMAT depth_family_format(ID3D11Resource *resource, bool depth) {
     ID3D11Texture2D *texture = nullptr;
     if (!resource || FAILED(resource->QueryInterface(&texture)))
         return DXGI_FORMAT_UNKNOWN;
@@ -126,16 +127,45 @@ DXGI_FORMAT depth_view_format(ID3D11Resource *resource) {
     texture->Release();
     switch (description.Format) {
     case DXGI_FORMAT_R24G8_TYPELESS:
-        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case DXGI_FORMAT_D24_UNORM_S8_UINT:
+        return depth ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
     case DXGI_FORMAT_R32_TYPELESS:
-        return DXGI_FORMAT_R32_FLOAT;
+    case DXGI_FORMAT_D32_FLOAT:
+        return depth ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_R32_FLOAT;
     case DXGI_FORMAT_R16_TYPELESS:
-        return DXGI_FORMAT_R16_UNORM;
+    case DXGI_FORMAT_D16_UNORM:
+        return depth ? DXGI_FORMAT_D16_UNORM : DXGI_FORMAT_R16_UNORM;
     case DXGI_FORMAT_R32G8X24_TYPELESS:
-        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+        return depth ? DXGI_FORMAT_D32_FLOAT_S8X24_UINT : DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
     default:
         return DXGI_FORMAT_UNKNOWN;
     }
+}
+HRESULT STDMETHODCALLTYPE create_depth_stencil_view(void *self, void *resource,
+                                                    const D3D11_DEPTH_STENCIL_VIEW_DESC *desc,
+                                                    ID3D11DepthStencilView **view) {
+    auto *const host = static_cast<ID3D11Resource *>(unwrap(resource));
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+    ID3D11DepthStencilView *created = nullptr;
+    auto result = device->CreateDepthStencilView(host, desc, view ? &created : nullptr);
+    if (result == E_INVALIDARG && desc) {
+        auto retry = *desc;
+        retry.Flags &= D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+        if (const auto format = depth_family_format(host, true); format != DXGI_FORMAT_UNKNOWN)
+            retry.Format = format;
+        result = device->CreateDepthStencilView(host, &retry, view ? &created : nullptr);
+        if (result == E_INVALIDARG)
+            result = device->CreateDepthStencilView(host, nullptr, view ? &created : nullptr);
+    }
+    if (FAILED(result))
+        std::fprintf(stderr, "[Runtime] CreateDepthStencilView format %u dimension %u: 0x%08lx\n",
+                     desc ? static_cast<unsigned>(desc->Format) : 0u,
+                     desc ? static_cast<unsigned>(desc->ViewDimension) : 0u,
+                     static_cast<unsigned long>(result));
+    else if (view)
+        *view = static_cast<ID3D11DepthStencilView *>(wrap(created, Kind::view));
+    return result;
 }
 // CreateShaderResourceView, which says what it was given when the host refuses it
 HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource,
@@ -147,7 +177,7 @@ HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource
     auto result = device->CreateShaderResourceView(host, desc, view ? &created : nullptr);
     if (result == E_INVALIDARG && desc) {
         auto retry = *desc;
-        retry.Format = depth_view_format(host);
+        retry.Format = depth_family_format(host, false);
         if (retry.Format != DXGI_FORMAT_UNKNOWN && retry.Format != desc->Format)
             result = device->CreateShaderResourceView(host, &retry, view ? &created : nullptr);
     }
@@ -185,6 +215,7 @@ Layout device() {
     for (std::size_t slot = 7; slot <= 10; ++slot) // views of a resource
         set(slot, {in(1), created(3, Kind::view)});
     result.vtable[7] = custom(&create_shader_resource_view);
+    result.vtable[10] = custom(&create_depth_stencil_view);
     set(11, {created(5, Kind::child)});               // input layout
     for (std::size_t slot : {12, 13, 15, 16, 17, 18}) // shaders
         set(slot, {in(3), created(4, Kind::child)});
