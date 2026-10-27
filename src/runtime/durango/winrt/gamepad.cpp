@@ -59,7 +59,7 @@ template <class Interface> class Object : public Interface {
 
 // IGamepad, the default interface: the reading is its third method.
 struct IGamepad : IInspectable {
-    virtual HRESULT STDMETHODCALLTYPE unknown6(void *, void *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetVibration(const float *motors) = 0;
     virtual HRESULT STDMETHODCALLTYPE unknown7(void *, void *) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetRawCurrentReading(RawReading *reading) = 0;
     virtual HRESULT STDMETHODCALLTYPE unknown9(void *, void *) = 0;
@@ -89,11 +89,12 @@ class Gamepad final : public Object<IGamepad> {
                     state.right_y};
         return S_OK;
     }
+    STDMETHODIMP SetVibration(const float *) override { return S_OK; }
 #define XS_UNKNOWN(Index)                                                                          \
     STDMETHODIMP unknown##Index(void *first, void *second) override {                              \
         return unknown_method(class_name, "IGamepad", Index, first, second, _ReturnAddress());     \
     }
-    XS_UNKNOWN(6) XS_UNKNOWN(7) XS_UNKNOWN(9) XS_UNKNOWN(10) XS_UNKNOWN(11)
+    XS_UNKNOWN(7) XS_UNKNOWN(9) XS_UNKNOWN(10) XS_UNKNOWN(11)
 #undef XS_UNKNOWN
 };
 Gamepad gamepad;

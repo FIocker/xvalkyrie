@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ksmedia.h>
 #include <mmdeviceapi.h>
 #include <string>
 #include <string_view>
@@ -78,6 +79,31 @@ HRESULT STDMETHODCALLTYPE format_supported(Forwarder *, AUDCLNT_SHAREMODE mode,
         *closest = nullptr;
     return mode == AUDCLNT_SHAREMODE_SHARED ? S_OK : AUDCLNT_E_UNSUPPORTED_FORMAT;
 }
+// the console always mixes 7.1 in float; titles check for eight channels
+HRESULT STDMETHODCALLTYPE mix_format(Forwarder *self, WAVEFORMATEX **format) {
+    if (!format)
+        return E_POINTER;
+    WAVEFORMATEX *host = nullptr;
+    const auto result = static_cast<IAudioClient *>(forwarder_host(self))->GetMixFormat(&host);
+    if (FAILED(result))
+        return result;
+    auto *const mix =
+        static_cast<WAVEFORMATEXTENSIBLE *>(CoTaskMemAlloc(sizeof(WAVEFORMATEXTENSIBLE)));
+    *mix = {};
+    mix->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    mix->Format.nChannels = 8;
+    mix->Format.nSamplesPerSec = host->nSamplesPerSec;
+    mix->Format.wBitsPerSample = 32;
+    mix->Format.nBlockAlign = 8 * 4;
+    mix->Format.nAvgBytesPerSec = mix->Format.nSamplesPerSec * mix->Format.nBlockAlign;
+    mix->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+    mix->Samples.wValidBitsPerSample = 32;
+    mix->dwChannelMask = KSAUDIO_SPEAKER_7POINT1_SURROUND;
+    mix->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    CoTaskMemFree(host);
+    *format = &mix->Format;
+    return S_OK;
+}
 // the console's AudioClientProperties are not the desktop's
 HRESULT STDMETHODCALLTYPE client_properties(Forwarder *, const void *) { return S_OK; }
 HRESULT audio_client_query(Forwarder *self, REFIID iid, void **object) {
@@ -98,6 +124,7 @@ IUnknown *audio_client(IUnknown *host) {
         make_forwarder(client, 21, &audio_client_query,
                        {{3, reinterpret_cast<void *>(&initialize)},
                         {7, reinterpret_cast<void *>(&format_supported)},
+                        {8, reinterpret_cast<void *>(&mix_format)},
                         {16, reinterpret_cast<void *>(&client_properties)}}));
 }
 // "\\?\SWD#MMDEVAPI#{endpoint id}#{interface class}": the endpoint, or the default output
