@@ -116,14 +116,41 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     return result;
 }
 
+// the readable format of a depth texture's family, which the console lets views name loosely
+DXGI_FORMAT depth_view_format(ID3D11Resource *resource) {
+    ID3D11Texture2D *texture = nullptr;
+    if (!resource || FAILED(resource->QueryInterface(&texture)))
+        return DXGI_FORMAT_UNKNOWN;
+    D3D11_TEXTURE2D_DESC description;
+    texture->GetDesc(&description);
+    texture->Release();
+    switch (description.Format) {
+    case DXGI_FORMAT_R24G8_TYPELESS:
+        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case DXGI_FORMAT_R32_TYPELESS:
+        return DXGI_FORMAT_R32_FLOAT;
+    case DXGI_FORMAT_R16_TYPELESS:
+        return DXGI_FORMAT_R16_UNORM;
+    case DXGI_FORMAT_R32G8X24_TYPELESS:
+        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    default:
+        return DXGI_FORMAT_UNKNOWN;
+    }
+}
 // CreateShaderResourceView, which says what it was given when the host refuses it
 HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource,
                                                       const D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
                                                       ID3D11ShaderResourceView **view) {
     auto *const host = static_cast<ID3D11Resource *>(unwrap(resource));
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
     ID3D11ShaderResourceView *created = nullptr;
-    const auto result = static_cast<ID3D11Device *>(unwrap(self))
-                            ->CreateShaderResourceView(host, desc, view ? &created : nullptr);
+    auto result = device->CreateShaderResourceView(host, desc, view ? &created : nullptr);
+    if (result == E_INVALIDARG && desc) {
+        auto retry = *desc;
+        retry.Format = depth_view_format(host);
+        if (retry.Format != DXGI_FORMAT_UNKNOWN && retry.Format != desc->Format)
+            result = device->CreateShaderResourceView(host, &retry, view ? &created : nullptr);
+    }
     if (FAILED(result)) {
         D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
         if (host)
