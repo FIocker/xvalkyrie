@@ -8,6 +8,7 @@
 #include <cstring>
 #include <d3d11_1.h>
 #include <initializer_list>
+#include <intrin.h>
 #include <iterator>
 
 // Where each method is. Host slots are the desktop vtable indices of d3d11_1.h; the
@@ -71,8 +72,6 @@ Layout view() {
     result.vtable[9] = forward(7, {out(1, Kind::resource)}); // GetResource
     return result;
 }
-
-constexpr std::size_t extra_device_slot = 40;
 
 // CreateTexture2D: the console description has flags and values the host rejects
 HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DESC *description,
@@ -201,6 +200,67 @@ HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource
     return result;
 }
 
+// Placement resources live at memory the title allocated; the host's live where the host
+// puts them, so the address is not used: what the title writes there is not seen.
+HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER_DESC *desc, void *,
+                                                  ID3D11Buffer **buffer) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
+    ID3D11Buffer *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateBuffer(&host, nullptr, buffer ? &created : nullptr);
+    if (SUCCEEDED(result) && buffer)
+        *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
+    return result;
+}
+HRESULT STDMETHODCALLTYPE create_placement_texture1d(void *self, const D3D11_TEXTURE1D_DESC *desc,
+                                                     UINT, UINT, void *,
+                                                     ID3D11Texture1D **texture) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
+    ID3D11Texture1D *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateTexture1D(&host, nullptr, texture ? &created : nullptr);
+    if (SUCCEEDED(result) && texture)
+        *texture = static_cast<ID3D11Texture1D *>(wrap(created, Kind::texture1d));
+    return result;
+}
+HRESULT STDMETHODCALLTYPE create_placement_texture2d(void *self, const D3D11_TEXTURE2D_DESC *desc,
+                                                     UINT, UINT, const void *,
+                                                     ID3D11Texture2D **texture) {
+    return create_texture2d(self, desc, nullptr, texture);
+}
+HRESULT STDMETHODCALLTYPE create_placement_texture3d(void *self, const D3D11_TEXTURE3D_DESC *desc,
+                                                     UINT, UINT, void *,
+                                                     ID3D11Texture3D **texture) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
+    ID3D11Texture3D *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateTexture3D(&host, nullptr, texture ? &created : nullptr);
+    if (SUCCEEDED(result) && texture)
+        *texture = static_cast<ID3D11Texture3D *>(wrap(created, Kind::texture3d));
+    return result;
+}
+void STDMETHODCALLTYPE get_timestamps(void *, UINT64 *gpu, UINT64 *cpu) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (gpu)
+        *gpu = static_cast<UINT64>(now.QuadPart);
+    if (cpu)
+        *cpu = __rdtsc();
+}
+void STDMETHODCALLTYPE get_driver_statistics(void *, UINT size, void *statistics) {
+    if (statistics)
+        std::memset(statistics, 0, size);
+}
+
 Layout device() {
     Layout result{"device"};
     const auto set = [&](std::size_t slot, std::initializer_list<Fix> fixes = {}) {
@@ -229,18 +289,32 @@ Layout device() {
     set(44, {created(2, Kind::context)});
     set(45, {created(2, Kind::state)});
     set(46, {created(2, Kind::state)});
+    for (std::size_t slot = 50; slot <= 53; ++slot)
+        set(slot);
+    set(50, {out(1, Kind::context)}); // GetImmediateContext2
+    set(51, {created(2, Kind::context)});
     // shared resources and context states are not something a console title has
     for (std::size_t slot : {28, 47, 48, 49})
         result.vtable[slot] = {};
-    // The console device has one method more than the desktop one somewhere before
-    // GetImmediateContext, which titles call at 41 instead of 40. Until a call shows where,
-    // it is taken to be right before it.
-    for (std::size_t slot = 50; slot > extra_device_slot; --slot)
+    // ID3D11DeviceX (ABI 6.2.11064 on):
+    // SetPrivateDataInterfaceGraphics comes after SetPrivateDataInterface, the desktop
+    // methods follow one slot later, then the console's own.
+    for (std::size_t slot = 54; slot > 37; --slot)
         result.vtable[slot] = result.vtable[slot - 1];
-    result.vtable[extra_device_slot] = {};
-    // Console only: fills 16 bytes the title cleared, and takes another path if the second
-    // half says 2 or more. Left as it is.
-    result.vtable[85] = {Method::ignore};
+    result.vtable[37] = {Method::ignore};
+    result.vtable[55] = forward(40, {out(1, Kind::context)}); // GetImmediateContextX
+    for (std::size_t slot : {58, 60, 61, 69, 80, 81, 82, 83, 84, 85})
+        result.vtable[slot] = {Method::ignore}; // hints, fences done, debug, priority
+    result.vtable[62] = custom(&create_placement_buffer);
+    result.vtable[63] = custom(&create_placement_texture1d);
+    result.vtable[64] = custom(&create_placement_texture2d);
+    result.vtable[65] = custom(&create_placement_texture3d);
+    result.vtable[66] = custom(&get_timestamps);
+    result.vtable[67] = forward(23, {created(2, Kind::state)});   // CreateSamplerStateX
+    result.vtable[68] = forward(27, {created(2, Kind::context)}); // CreateDeferredContextX
+    result.vtable[70] = forward(21, {created(2, Kind::state)});   // CreateDepthStencilStateX
+    result.vtable[71] = custom(&create_placement_texture2d);      // ...RenderableTexture2D
+    result.vtable[72] = custom(&get_driver_statistics);
     return result;
 }
 
