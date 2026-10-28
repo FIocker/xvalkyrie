@@ -155,12 +155,21 @@ HRESULT STDMETHODCALLTYPE create_render_target_view(void *self, void *resource,
     // first mip then
     if (result == E_INVALIDARG && desc)
         result = device->CreateRenderTargetView(host, nullptr, view ? &created : nullptr);
-    if (FAILED(result))
-        std::fprintf(stderr, "[Runtime] CreateRenderTargetView format %u dimension %u: 0x%08lx\n",
+    if (FAILED(result)) {
+        D3D11_TEXTURE2D_DESC texture{};
+        if (ID3D11Texture2D *texture2d = nullptr;
+            host && SUCCEEDED(host->QueryInterface(&texture2d))) {
+            texture2d->GetDesc(&texture);
+            texture2d->Release();
+        }
+        std::fprintf(stderr,
+                     "[Runtime] CreateRenderTargetView format %u dimension %u of a %ux%u texture "
+                     "of format %u bind 0x%x: 0x%08lx\n",
                      desc ? static_cast<unsigned>(desc->Format) : 0u,
-                     desc ? static_cast<unsigned>(desc->ViewDimension) : 0u,
+                     desc ? static_cast<unsigned>(desc->ViewDimension) : 0u, texture.Width,
+                     texture.Height, static_cast<unsigned>(texture.Format), texture.BindFlags,
                      static_cast<unsigned long>(result));
-    else if (view)
+    } else if (view)
         *view = static_cast<ID3D11RenderTargetView *>(wrap(created, Kind::view));
     return result;
 }
@@ -459,6 +468,16 @@ long present_swap_chain(void *swap_chain, unsigned interval) {
 }
 
 namespace {
+// GetBuffer: the console hands out every back buffer by index; a flip swap chain of the
+// host only buffer 0, which is always the one being drawn
+HRESULT STDMETHODCALLTYPE get_buffer(void *self, UINT, REFIID iid, void **surface) {
+    const auto result = static_cast<IDXGISwapChain *>(unwrap(self))->GetBuffer(0, iid, surface);
+    if (SUCCEEDED(result) && surface &&
+        (iid == __uuidof(ID3D11Texture2D) || iid == __uuidof(ID3D11Resource)))
+        *surface = wrap(*surface, Kind::texture2d);
+    return result;
+}
+
 Layout swap_chain() {
     Layout result{"swap chain"};
     for (std::size_t slot = 3; slot <= 28; ++slot)
@@ -466,7 +485,7 @@ Layout swap_chain() {
     result.vtable[7] = forward(7, {out_iid(2, 1)}); // GetDevice
     result.vtable[8] = custom(&present);
     result.vtable[22] = custom(&present1);
-    result.vtable[9] = forward(9, {out_iid(3, 2)}); // GetBuffer
+    result.vtable[9] = custom(&get_buffer);
     return result;
 }
 

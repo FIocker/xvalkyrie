@@ -169,6 +169,10 @@ HRESULT STDMETHODCALLTYPE query(void *self, REFIID iid, void **object) {
         (iid == __uuidof(IDXGIDevice) || iid == __uuidof(IDXGIDevice1) ||
          iid == __uuidof(IDXGIObject)))
         return device_dxgi(info->host, iid, object);
+    // the debug layer is ours (XS_D3D_DEBUG), not the title's, which would call it with
+    // console layouts
+    if (iid == __uuidof(ID3D11Debug) || iid == __uuidof(ID3D11InfoQueue))
+        return E_NOINTERFACE;
     const auto result = info->host->QueryInterface(iid, object);
     // a DXGI device by another name (titles ask with IIDs of their own): ours, so that its
     // adapter and factory lead to our swap chains
