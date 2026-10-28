@@ -141,6 +141,26 @@ DXGI_FORMAT depth_family_format(ID3D11Resource *resource, bool depth) {
         return DXGI_FORMAT_UNKNOWN;
     }
 }
+HRESULT STDMETHODCALLTYPE create_render_target_view(void *self, void *resource,
+                                                    const D3D11_RENDER_TARGET_VIEW_DESC *desc,
+                                                    ID3D11RenderTargetView **view) {
+    auto *const host = static_cast<ID3D11Resource *>(unwrap(resource));
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+    ID3D11RenderTargetView *created = nullptr;
+    auto result = device->CreateRenderTargetView(host, desc, view ? &created : nullptr);
+    // the console takes descriptions the host does not; the resource's own format and
+    // first mip then
+    if (result == E_INVALIDARG && desc)
+        result = device->CreateRenderTargetView(host, nullptr, view ? &created : nullptr);
+    if (FAILED(result))
+        std::fprintf(stderr, "[Runtime] CreateRenderTargetView format %u dimension %u: 0x%08lx\n",
+                     desc ? static_cast<unsigned>(desc->Format) : 0u,
+                     desc ? static_cast<unsigned>(desc->ViewDimension) : 0u,
+                     static_cast<unsigned long>(result));
+    else if (view)
+        *view = static_cast<ID3D11RenderTargetView *>(wrap(created, Kind::view));
+    return result;
+}
 HRESULT STDMETHODCALLTYPE create_depth_stencil_view(void *self, void *resource,
                                                     const D3D11_DEPTH_STENCIL_VIEW_DESC *desc,
                                                     ID3D11DepthStencilView **view) {
@@ -355,6 +375,7 @@ Layout device() {
     for (std::size_t slot = 7; slot <= 10; ++slot) // views of a resource
         set(slot, {in(1), created(3, Kind::view)});
     result.vtable[7] = custom(&create_shader_resource_view);
+    result.vtable[9] = custom(&create_render_target_view);
     result.vtable[10] = custom(&create_depth_stencil_view);
     set(11, {created(5, Kind::child)});               // input layout
     for (std::size_t slot : {12, 13, 15, 16, 17, 18}) // shaders

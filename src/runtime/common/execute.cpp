@@ -447,9 +447,19 @@ int report_fault(EXCEPTION_POINTERS *info) {
         std::fprintf(stderr, "[Runtime] guest exception 0x%08lx at %s+0x%llx\n",
                      record->ExceptionCode, module->name.c_str(),
                      static_cast<unsigned long long>(address - module->base));
-    else
-        std::fprintf(stderr, "[Runtime] guest exception 0x%08lx at host address 0x%llx\n",
-                     record->ExceptionCode, static_cast<unsigned long long>(address));
+    else {
+        HMODULE host = nullptr;
+        wchar_t name[MAX_PATH] = L"?";
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCWSTR>(record->ExceptionAddress), &host))
+            GetModuleFileNameW(host, name, MAX_PATH);
+        std::fprintf(
+            stderr, "[Runtime] guest exception 0x%08lx at host address 0x%llx (%ls+0x%llx)\n",
+            record->ExceptionCode, static_cast<unsigned long long>(address),
+            std::filesystem::path(name).filename().c_str(),
+            static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(host)));
+    }
     report_cxx_type(record);
     report_guest_stack(info->ContextRecord);
     report_recent_calls();
@@ -520,7 +530,16 @@ std::string detail::guest_location(const void *address) {
         std::snprintf(text, sizeof text, "image+0x%llx", value - guest->base);
     else if (const auto *module = guest ? module_at(address) : nullptr)
         std::snprintf(text, sizeof text, "%s+0x%llx", module->name.c_str(), value - module->base);
-    else
+    else if (HMODULE host = nullptr;
+             GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                static_cast<LPCWSTR>(address), &host)) {
+        char name[MAX_PATH] = "?";
+        GetModuleFileNameA(host, name, MAX_PATH);
+        std::snprintf(text, sizeof text, "%s+0x%llx",
+                      std::filesystem::path(name).filename().string().c_str(),
+                      value - reinterpret_cast<unsigned long long>(host));
+    } else
         std::snprintf(text, sizeof text, "0x%llx", value);
     return text;
 }

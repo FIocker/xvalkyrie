@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <d3d11_1.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 #include <utility>
 
 // d3d11_x.dll on the host's Direct3D 11. Direct3D objects go to the title wrapped in the
@@ -76,27 +76,42 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
     std::fflush(stderr);
     return result;
 }
+// the host's factory up to IDXGIFactory7 where it has it, 32 methods, else IDXGIFactory2
+bool latest_factory = false;
 HRESULT factory_query(Forwarder *self, REFIID iid, void **object) {
-    if (is_any<IUnknown, IDXGIObject, IDXGIFactory, IDXGIFactory1, IDXGIFactory2>(iid))
+    if (is_any<IUnknown, IDXGIObject, IDXGIFactory, IDXGIFactory1, IDXGIFactory2>(iid) ||
+        (latest_factory &&
+         is_any<IDXGIFactory3, IDXGIFactory4, IDXGIFactory5, IDXGIFactory6, IDXGIFactory7>(iid)))
         return keep(self, object);
     return forwarder_host(self)->QueryInterface(iid, object);
+}
+void *factory_forwarder(IDXGIFactory2 *factory) {
+    IDXGIFactory7 *latest = nullptr;
+    latest_factory = SUCCEEDED(factory->QueryInterface(&latest));
+    if (latest_factory)
+        factory->Release();
+    return make_forwarder(latest_factory ? latest : factory, latest_factory ? 32 : 25,
+                          &factory_query, {{16, slot(&create_swap_chain)}});
 }
 
 // IDXGIObject::GetParent of the adapter
 HRESULT STDMETHODCALLTYPE adapter_parent(Forwarder *self, REFIID iid, void **parent) {
     auto *const adapter = static_cast<IDXGIAdapter *>(forwarder_host(self));
-    if (!is_any<IDXGIFactory, IDXGIFactory1, IDXGIFactory2>(iid))
+    if (!is_any<IDXGIFactory, IDXGIFactory1, IDXGIFactory2, IDXGIFactory3, IDXGIFactory4,
+                IDXGIFactory5, IDXGIFactory6, IDXGIFactory7>(iid))
         return adapter->GetParent(iid, parent);
     IDXGIFactory2 *factory = nullptr;
     const auto result =
         adapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void **>(&factory));
     if (FAILED(result))
         return result;
-    *parent = make_forwarder(factory, 25, &factory_query, {{16, slot(&create_swap_chain)}});
+    *parent = factory_forwarder(factory);
     return S_OK;
 }
+bool latest_adapter = false;
 HRESULT adapter_query(Forwarder *self, REFIID iid, void **object) {
-    if (is_any<IUnknown, IDXGIObject, IDXGIAdapter, IDXGIAdapter1, IDXGIAdapter2>(iid))
+    if (is_any<IUnknown, IDXGIObject, IDXGIAdapter, IDXGIAdapter1, IDXGIAdapter2>(iid) ||
+        (latest_adapter && is_any<IDXGIAdapter3, IDXGIAdapter4>(iid)))
         return keep(self, object);
     return forwarder_host(self)->QueryInterface(iid, object);
 }
@@ -107,14 +122,26 @@ HRESULT STDMETHODCALLTYPE device_adapter(Forwarder *self, IDXGIAdapter **adapter
     auto result = static_cast<IDXGIDevice *>(forwarder_host(self))->GetAdapter(&host);
     if (FAILED(result))
         return result;
+    // up to IDXGIAdapter4 where the host has it, 19 methods, else IDXGIAdapter2
+    IDXGIAdapter4 *fourth = nullptr;
+    latest_adapter = SUCCEEDED(host->QueryInterface(&fourth));
     IDXGIAdapter2 *latest = nullptr;
-    result = host->QueryInterface(&latest);
+    if (latest_adapter)
+        latest = fourth;
+    else
+        result = host->QueryInterface(&latest);
     host->Release();
     if (FAILED(result))
         return result;
-    *adapter = reinterpret_cast<IDXGIAdapter *>(
-        make_forwarder(latest, 12, &adapter_query, {{6, slot(&adapter_parent)}}));
+    *adapter = reinterpret_cast<IDXGIAdapter *>(make_forwarder(
+        latest, latest_adapter ? 19 : 12, &adapter_query, {{6, slot(&adapter_parent)}}));
     return S_OK;
+}
+// IDXGIObject::GetParent of the DXGI device, the other way to its adapter
+HRESULT STDMETHODCALLTYPE device_parent(Forwarder *self, REFIID iid, void **parent) {
+    if (!is_any<IDXGIAdapter, IDXGIAdapter1, IDXGIAdapter2, IDXGIAdapter3, IDXGIAdapter4>(iid))
+        return static_cast<IDXGIDevice *>(forwarder_host(self))->GetParent(iid, parent);
+    return device_adapter(self, reinterpret_cast<IDXGIAdapter **>(parent));
 }
 HRESULT dxgi_device_query(Forwarder *self, REFIID iid, void **object) {
     if (is_any<IUnknown, IDXGIObject, IDXGIDevice, IDXGIDevice1>(iid))
@@ -206,7 +233,8 @@ HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
     const auto result = host_device->QueryInterface(&host);
     if (FAILED(result))
         return result;
-    *object = make_forwarder(host, 14, &dxgi_device_query, {{7, slot(&device_adapter)}});
+    *object = make_forwarder(host, 14, &dxgi_device_query,
+                             {{6, slot(&device_parent)}, {7, slot(&device_adapter)}});
     return S_OK;
 }
 

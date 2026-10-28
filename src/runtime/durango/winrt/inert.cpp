@@ -537,6 +537,39 @@ constexpr Row rows[] = {
      7,
      {Inert::zero64}},
 
+    // IUserStatics events: sign-in and sign-out, display info changes;
+    // removes of all of them
+    {user, user_statics, 24, {Inert::event_add}}, // SignInCompleted
+    {user, user_statics, 28, {Inert::event_add}}, // SignOutCompleted
+    {user, user_statics, 30, {Inert::event_add}}, // UserDisplayInfoChanged
+    {user, user_statics, 8, {Inert::accept}},
+    {user, user_statics, 11, {Inert::accept}},
+    {user, user_statics, 13, {Inert::accept}},
+    {user, user_statics, 19, {Inert::accept}},
+    {user, user_statics, 21, {Inert::accept}},
+    {user, user_statics, 23, {Inert::accept}},
+    {user, user_statics, 25, {Inert::accept}},
+    {user, user_statics, 27, {Inert::accept}},
+    {user, user_statics, 29, {Inert::accept}},
+    {user, user_statics, 31, {Inert::accept}},
+    {display_info, direct, 12, {Inert::empty_list}}, // Privileges
+    {L"Windows.Xbox.ApplicationModel.Core.CoreApplicationContext",
+     guid("d8d4c59f-b9ac-4d41-842d-a01c59b617e7"),
+     7,
+     {Inert::event_add}},
+    {L"Windows.Xbox.ApplicationModel.Core.CoreApplicationContext",
+     guid("d8d4c59f-b9ac-4d41-842d-a01c59b617e7"),
+     8,
+     {Inert::accept}},
+    {L"Windows.Xbox.Management.Deployment.DownloadableContentPackageManager",
+     guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
+     9,
+     {Inert::event_add}},
+    {L"Windows.Xbox.Management.Deployment.DownloadableContentPackageManager",
+     guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
+     10,
+     {Inert::accept}},
+
     // IControllerStatics: ControllerOrderChanged; IController::Type of the one gamepad
     {L"Windows.Xbox.Input.Controller",
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),

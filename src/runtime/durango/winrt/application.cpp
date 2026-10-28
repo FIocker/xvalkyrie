@@ -2,6 +2,7 @@
 #include "backends/surface/surface.hpp"
 #include "runtime/durango/winrt/object.hpp"
 #include <atomic>
+#include <corewindow.h>
 #include <cstdint>
 #include <cstdio>
 #include <intrin.h>
@@ -67,10 +68,8 @@ class Dispatcher : public Class<Dispatcher, ICoreDispatcher> {
         return S_OK;
     }
     STDMETHODIMP ProcessEvents(CoreProcessEventsOption options) override {
-        if (GetCurrentThreadId() != thread_)
-            return RPC_E_WRONG_THREAD;
         // The window's messages are handled on another thread, so there is nothing to
-        // process here: only the options that wait have something to do.
+        // process here, whichever thread asks: only the options that wait do something.
         if (options == CoreProcessEventsOption_ProcessUntilQuit)
             window_.wait_closed();
         return S_OK;
@@ -129,6 +128,11 @@ class Window final : public IConsoleWindow {
         if (iid == __uuidof(IUnknown) || iid == __uuidof(IInspectable) ||
             iid == __uuidof(IAgileObject) || iid == __uuidof(ICoreWindow)) {
             *object = static_cast<IConsoleWindow *>(this);
+            AddRef();
+            return S_OK;
+        }
+        if (iid == __uuidof(ICoreWindowInterop)) {
+            *object = &interop_;
             AddRef();
             return S_OK;
         }
@@ -194,6 +198,23 @@ class Window final : public IConsoleWindow {
     std::atomic<std::int64_t> tokens_{0};
     TitleWindow host_;
     ComPtr<Dispatcher> dispatcher_;
+    // public ICoreWindowInterop: the HWND, which engines such as Unity draw into
+    struct Interop final : ICoreWindowInterop {
+        Window *window;
+        explicit Interop(Window *owner) : window(owner) {}
+        STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+            return window->QueryInterface(iid, object);
+        }
+        STDMETHODIMP_(ULONG) AddRef() override { return window->AddRef(); }
+        STDMETHODIMP_(ULONG) Release() override { return window->Release(); }
+        STDMETHODIMP get_WindowHandle(HWND *handle) override {
+            if (!handle)
+                return E_POINTER;
+            *handle = static_cast<HWND>(window->host_.native());
+            return S_OK;
+        }
+        STDMETHODIMP put_MessageHandled(boolean) override { return S_OK; }
+    } interop_{this};
 };
 
 // the window of the one view, once CoreApplication::Run has created it

@@ -170,9 +170,24 @@ HRESULT STDMETHODCALLTYPE query(void *self, REFIID iid, void **object) {
          iid == __uuidof(IDXGIObject)))
         return device_dxgi(info->host, iid, object);
     const auto result = info->host->QueryInterface(iid, object);
-    std::fprintf(stderr, "[Runtime] Direct3D %s asked for interface %08lx-%04x-%04x: 0x%08lx%s\n",
-                 info->layout->name, iid.Data1, iid.Data2, iid.Data3,
-                 static_cast<unsigned long>(result),
+    // a DXGI device by another name (titles ask with IIDs of their own): ours, so that its
+    // adapter and factory lead to our swap chains
+    if (SUCCEEDED(result) && info->kind == Kind::device) {
+        IDXGIObject *dxgi = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown *>(*object)->QueryInterface(&dxgi)) &&
+            static_cast<void *>(dxgi) == *object) {
+            dxgi->Release();
+            static_cast<IUnknown *>(*object)->Release();
+            *object = nullptr;
+            return device_dxgi(info->host, iid, object);
+        }
+        if (dxgi)
+            dxgi->Release();
+    }
+    wchar_t text[40];
+    StringFromGUID2(iid, text, 40);
+    std::fprintf(stderr, "[Runtime] Direct3D %s asked for interface %ls: 0x%08lx%s\n",
+                 info->layout->name, text, static_cast<unsigned long>(result),
                  SUCCEEDED(result) ? " (the host's object, desktop layout)" : "");
     std::fflush(stderr);
     return result;

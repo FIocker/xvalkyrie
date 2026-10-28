@@ -235,6 +235,14 @@ void install_kernelx(Registry &registry) {
               "WakeByAddressAll"})
             if (const auto function = GetProcAddress(base, name))
                 registry.add("kernelx.dll", name, reinterpret_cast<void *>(function));
+    // classic ETW, in advapi32 on the desktop
+    if (const auto advapi = LoadLibraryExW(L"advapi32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+        for (const auto *name :
+             {"RegisterTraceGuidsW", "RegisterTraceGuidsA", "UnregisterTraceGuids",
+              "GetTraceLoggerHandle", "GetTraceEnableLevel", "GetTraceEnableFlags", "TraceMessage",
+              "TraceMessageVa", "TraceEventInstance"})
+            if (const auto function = GetProcAddress(advapi, name))
+                registry.add("kernelx.dll", name, reinterpret_cast<void *>(function));
     install_memory(registry);
 }
 } // namespace xs::runtime::durango
