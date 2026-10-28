@@ -200,6 +200,86 @@ HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource
     return result;
 }
 
+// ID3D11DMAEngineContextX: copies, fills and fences of the console's
+// copy engine, recorded on a deferred context of the host and run by Submit
+ID3D11DeviceContext *dma_host(void *self) {
+    return static_cast<ID3D11DeviceContext *>(unwrap(self));
+}
+std::atomic<UINT64> dma_fences{0};
+UINT STDMETHODCALLTYPE dma_type(void *) { return D3D11_DEVICE_CONTEXT_DEFERRED; }
+void STDMETHODCALLTYPE dma_copy_resource(void *self, void *destination, void *source, UINT) {
+    dma_host(self)->CopyResource(static_cast<ID3D11Resource *>(unwrap(destination)),
+                                 static_cast<ID3D11Resource *>(unwrap(source)));
+}
+void STDMETHODCALLTYPE dma_copy_region(void *self, void *destination, UINT subresource, UINT x,
+                                       UINT y, UINT z, void *source, UINT source_subresource,
+                                       const D3D11_BOX *box, UINT) {
+    dma_host(self)->CopySubresourceRegion(
+        static_cast<ID3D11Resource *>(unwrap(destination)), subresource, x, y, z,
+        static_cast<ID3D11Resource *>(unwrap(source)), source_subresource, box);
+}
+UINT64 STDMETHODCALLTYPE dma_insert_fence(void *, UINT) { return ++dma_fences; }
+HRESULT STDMETHODCALLTYPE dma_submit(void *self) {
+    auto *const deferred = dma_host(self);
+    ID3D11CommandList *list = nullptr;
+    auto result = deferred->FinishCommandList(FALSE, &list);
+    if (FAILED(result))
+        return result;
+    ID3D11Device *device = nullptr;
+    ID3D11DeviceContext *immediate = nullptr;
+    deferred->GetDevice(&device);
+    device->GetImmediateContext(&immediate);
+    immediate->ExecuteCommandList(list, FALSE);
+    immediate->Release();
+    device->Release();
+    list->Release();
+    return S_OK;
+}
+// on memory the CPU sees, which is where the title points the copy engine at
+void STDMETHODCALLTYPE dma_copy_memory(void *, void *destination, const void *source, UINT64 size) {
+    std::memmove(destination, source, size);
+}
+void STDMETHODCALLTYPE dma_fill_memory(void *, void *destination, UINT64 size, UINT value) {
+    auto *const words = static_cast<UINT *>(destination);
+    for (UINT64 i = 0; i < size / 4; ++i)
+        words[i] = value;
+}
+void STDMETHODCALLTYPE dma_timestamp(void *, UINT64 *destination) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    *destination = static_cast<UINT64>(now.QuadPart);
+}
+void STDMETHODCALLTYPE dma_write_value(void *, UINT *destination, UINT value) {
+    *destination = value;
+}
+Layout dma() {
+    Layout result{"DMA engine context"};
+    device_child(result);
+    result.vtable[9] = custom(&dma_type);
+    result.vtable[10] = custom(&dma_copy_resource);
+    result.vtable[11] = custom(&dma_copy_region);
+    result.vtable[17] = custom(&dma_insert_fence);
+    result.vtable[18] = {Method::ignore}; // InsertWaitOnFence: everything is done in order
+    result.vtable[19] = custom(&dma_submit);
+    result.vtable[20] = result.vtable[21] = {Method::ignore}; // CopyLastErrorCodeTo...
+    result.vtable[22] = custom(&dma_copy_memory);
+    result.vtable[23] = custom(&dma_fill_memory);
+    result.vtable[27] = custom(&dma_timestamp);
+    result.vtable[29] = custom(&dma_write_value);
+    result.vtable[30] = {Method::ignore}; // InsertWaitOnMemory
+    return result;
+}
+HRESULT STDMETHODCALLTYPE create_dma_engine_context(void *self, const void *, void **context) {
+    if (!context)
+        return E_INVALIDARG;
+    ID3D11DeviceContext *deferred = nullptr;
+    const auto result =
+        static_cast<ID3D11Device *>(unwrap(self))->CreateDeferredContext(0, &deferred);
+    if (SUCCEEDED(result))
+        *context = wrap(deferred, Kind::dma);
+    return result;
+}
+
 // Placement resources live at memory the title allocated; the host's live where the host
 // puts them, so the address is not used: what the title writes there is not seen.
 HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER_DESC *desc, void *,
@@ -305,6 +385,7 @@ Layout device() {
     result.vtable[55] = forward(40, {out(1, Kind::context)}); // GetImmediateContextX
     for (std::size_t slot : {58, 60, 61, 69, 80, 81, 82, 83, 84, 85})
         result.vtable[slot] = {Method::ignore}; // hints, fences done, debug, priority
+    result.vtable[59] = custom(&create_dma_engine_context);
     result.vtable[62] = custom(&create_placement_buffer);
     result.vtable[63] = custom(&create_placement_texture1d);
     result.vtable[64] = custom(&create_placement_texture2d);
@@ -347,6 +428,13 @@ HRESULT STDMETHODCALLTYPE present1(void *self, UINT interval, UINT flags,
     return result;
 }
 
+} // namespace
+
+long present_swap_chain(void *swap_chain, unsigned interval) {
+    return present(swap_chain, interval, 0);
+}
+
+namespace {
 Layout swap_chain() {
     Layout result{"swap chain"};
     for (std::size_t slot = 3; slot <= 28; ++slot)
@@ -439,6 +527,14 @@ void STDMETHODCALLTYPE draw_indexed(void *self, UINT64 count_and_start, INT base
                       base_vertex);
 }
 
+// XXSetShader through the in-object table: the shader alone, no class instances
+template <class Shader, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(
+                            Shader *, ID3D11ClassInstance *const *, UINT)>
+void STDMETHODCALLTYPE set_shader(void *self, void *shader) {
+    (static_cast<ID3D11DeviceContext *>(unwrap(self))->*Set)(static_cast<Shader *>(unwrap(shader)),
+                                                             nullptr, 0);
+}
+
 // Desktop slot of every ID3D11DeviceContext1 method, with what its arguments are.
 std::array<Method, 134> context_methods() {
     std::array<Method, 134> methods{};
@@ -519,10 +615,10 @@ std::array<Method, 134> context_methods() {
 }
 // The context has its methods twice: in the vtable, two slots later than on the desktop
 // like every device child, and as pointers inside the object, which is how titles call
-// most of them. That table is in desktop order with VSSetConstantBuffers (desktop 7) at
-// 131, so desktop + 124, up to somewhere before VSSetShaderResources (desktop 25), which
-// is at 148 like everything after it: desktop + 123. One of the methods from 16 to 24 is
-// not there; until a call shows which, the last one loses its place.
+// most of them. That table is in desktop
+// order with VSSetConstantBuffers (desktop 7) at 131, desktop + 124, and has no
+// IASetPrimitiveTopology (24; the topology is state), so from 25 on it is desktop + 123.
+// Its shader setters take the shader alone.
 Layout context() {
     constexpr std::size_t object_table = 124;
     Layout result{"context", object_slots};
@@ -531,8 +627,17 @@ Layout context() {
     for (std::size_t host = 7; host < methods.size(); ++host)
         result.vtable[host + 2] = methods[host];
     for (std::size_t host = 3; host < methods.size(); ++host)
-        result.object[host + object_table - (host >= 25)] = methods[host];
+        if (host != 24)
+            result.object[host + object_table - (host >= 25)] = methods[host];
     using Context = ID3D11DeviceContext;
+    result.object[9 + object_table] = custom(&set_shader<ID3D11PixelShader, &Context::PSSetShader>);
+    result.object[11 + object_table] =
+        custom(&set_shader<ID3D11VertexShader, &Context::VSSetShader>);
+    result.object[23 + object_table] =
+        custom(&set_shader<ID3D11GeometryShader, &Context::GSSetShader>);
+    result.object[60 + 123] = custom(&set_shader<ID3D11HullShader, &Context::HSSetShader>);
+    result.object[64 + 123] = custom(&set_shader<ID3D11DomainShader, &Context::DSSetShader>);
+    result.object[69 + 123] = custom(&set_shader<ID3D11ComputeShader, &Context::CSSetShader>);
     result.object[8 + object_table] = custom(&set_shader_resource<&Context::PSSetShaderResources>);
     result.object[19 + object_table] = custom(&set_index_buffer);
     result.object[12 + object_table] = custom(&draw_indexed);
@@ -559,6 +664,7 @@ const Layout &layout(Kind kind) {
         view(),
         child("state", 8),
         child("device child", 6),
+        dma(),
     };
     return layouts[static_cast<std::size_t>(kind)];
 }

@@ -4,14 +4,17 @@
 #include "backends/surface/surface.hpp"
 #include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/durango/d3d11x/layout.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
+#include <utility>
 
 // d3d11_x.dll on the host's Direct3D 11. Direct3D objects go to the title wrapped in the
 // console layout (wrap.hpp). The DXGI device, adapter and factory are the same as on the
@@ -168,6 +171,33 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         latest->Release();
     return S_OK;
 }
+
+// The parameters are the
+// console's ring and tessellation buffer sizes, which mean nothing to the host.
+HRESULT WINAPI create_device_x(const void *, ID3D11Device **device, ID3D11DeviceContext **context) {
+    return create_device(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+                         D3D11_SDK_VERSION, device, nullptr, context);
+}
+HRESULT WINAPI present_array(UINT interval, UINT, UINT, UINT count, void **swap_chains,
+                             const void *) {
+    auto result = S_OK;
+    for (UINT i = 0; swap_chains && i < count; ++i)
+        if (const auto presented = d3d11x::present_swap_chain(swap_chains[i], interval);
+            FAILED(presented))
+            result = presented;
+    return result;
+}
+// DXGIX_FRAME_STATISTICS, 0x70 bytes: nothing measured
+HRESULT WINAPI frame_statistics(UINT count, void *statistics) {
+    if (statistics)
+        std::memset(statistics, 0, std::size_t{count} * 0x70);
+    return S_OK;
+}
+// ESRAM is ordinary memory here, 64 KiB pages committed where the title reserved them
+HRESULT WINAPI map_esram(UINT, void *address, UINT pages, const UINT *) {
+    return commit_title_memory(address, std::size_t{pages} << 16) ? S_OK : E_OUTOFMEMORY;
+}
+HRESULT WINAPI ignored() { return S_OK; }
 } // namespace
 
 // IDXGIDevice of our device: the host's, with GetAdapter leading to our factory
@@ -181,6 +211,15 @@ HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
 }
 
 void install_d3d11x(Registry &registry) {
-    registry.add("d3d11_x.dll", "D3D11CreateDevice", reinterpret_cast<void *>(&create_device));
+    const std::pair<const char *, void *> functions[] = {
+        {"D3D11CreateDevice", reinterpret_cast<void *>(&create_device)},
+        {"D3D11XCreateDeviceX", reinterpret_cast<void *>(&create_device_x)},
+        {"DXGIXPresentArray", reinterpret_cast<void *>(&present_array)},
+        {"DXGIXGetFrameStatistics", reinterpret_cast<void *>(&frame_statistics)},
+        {"D3DMapEsramMemory", reinterpret_cast<void *>(&map_esram)},
+        {"DXGIXSetVLineNotification", reinterpret_cast<void *>(&ignored)},
+        {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&ignored)}};
+    for (const auto &[name, function] : functions)
+        registry.add("d3d11_x.dll", name, function);
 }
 } // namespace xs::runtime::durango

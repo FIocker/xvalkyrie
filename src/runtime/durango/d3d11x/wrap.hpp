@@ -25,6 +25,7 @@ enum class Kind : std::uint8_t {
     state,    // blend, depth stencil, rasterizer, sampler, query: the host has methods past
               // ID3D11DeviceChild
     child,    // shaders, input layouts and anything else with ID3D11DeviceChild's methods only
+    dma,      // ID3D11DMAEngineContextX, over a deferred context of the host
 };
 // Our object for a host object, creating it if there is none yet. Takes over the caller's
 // reference to `host` and returns one reference to ours.

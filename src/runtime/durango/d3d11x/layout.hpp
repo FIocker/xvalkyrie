@@ -42,4 +42,6 @@ struct Layout {
     void (*apply_state)(void *object) = nullptr;
 };
 const Layout &layout(Kind kind);
+// IDXGISwapChain::Present of a swap chain of ours
+long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
 } // namespace xs::runtime::durango::d3d11x

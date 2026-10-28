@@ -110,6 +110,14 @@ std::int32_t create_texture2d_computer(const TextureDescription *description, Co
     *computer = new Computer{computer_vtable, 1, *description};
     return 0;
 }
+std::int32_t create_texture_computer(const std::uint32_t *description, Computer **) {
+    std::fprintf(stderr, "[Runtime] XG_RESOURCE_DESC:");
+    for (int i = 0; i < 16; ++i)
+        std::fprintf(stderr, " %x", description[i]);
+    std::fprintf(stderr, "\n");
+    std::fflush(stderr);
+    return static_cast<std::int32_t>(0x80004001);
+}
 // There is one layout, so one tile mode: 0.
 std::uint32_t optimal_tile_mode(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
                                 std::uint32_t, std::uint32_t, std::uint32_t) {
@@ -129,6 +137,7 @@ std::int32_t optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std:
 void install_xg(Registry &registry, std::string_view module) {
     registry.add(module, "XGCreateTexture2DComputer",
                  reinterpret_cast<void *>(&create_texture2d_computer));
+    registry.add(module, "XGCreateTextureComputer", reinterpret_cast<void *>(&create_texture_computer));
     registry.add(module, "XGComputeTexture2DLayout", reinterpret_cast<void *>(&texture2d_layout));
     registry.add(module, "XGComputeOptimalTileMode", reinterpret_cast<void *>(&optimal_tile_mode));
     registry.add(module, "XGComputeOptimalDepthStencilTileModes",

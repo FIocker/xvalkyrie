@@ -11,6 +11,8 @@ void install(Registry &registry);
 void install_kernelx(Registry &registry);
 void install_memory(Registry &registry);
 void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address);
+// VirtualAlloc(MEM_COMMIT) as the title's kernelx does it, physical page reservations included
+void *commit_title_memory(void *address, std::size_t size);
 void install_acphal(Registry &registry);
 // mmdevapi, mfplat, pixevt, toolhelpx
 void install_system(Registry &registry);

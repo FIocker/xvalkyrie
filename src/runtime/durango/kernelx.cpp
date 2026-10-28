@@ -25,6 +25,19 @@ HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
     SetLastError(error);
     return module;
 }
+HMODULE WINAPI load_library_w(const wchar_t *name) { return load_library(name, nullptr, 0); }
+HMODULE WINAPI load_packaged_library(const wchar_t *name, DWORD) {
+    return load_library(name, nullptr, 0);
+}
+HMODULE WINAPI load_library_ex_a(const char *name, HANDLE file, DWORD flags) {
+    if (!name)
+        return load_library(nullptr, file, flags);
+    const auto size = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(std::max(size, 1)), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, name, -1, wide.data(), size);
+    return load_library(wide.c_str(), file, flags);
+}
+HMODULE WINAPI load_library_a(const char *name) { return load_library_ex_a(name, nullptr, 0); }
 // xaudio2_9.dll: the console's creates the engine through CreateXAudio2Object, the host's
 // through XAudio2Create. The engine and its voices are the same interfaces. The processor
 // argument names console cores, so the host's default is used instead.
@@ -207,6 +220,11 @@ void install_kernelx(Registry &registry) {
     registry.add("kernelx.dll", "CreateFileW", reinterpret_cast<void *>(&create_file_w));
     registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
+    registry.add("kernelx.dll", "LoadLibraryW", reinterpret_cast<void *>(&load_library_w));
+    registry.add("kernelx.dll", "LoadLibraryExA", reinterpret_cast<void *>(&load_library_ex_a));
+    registry.add("kernelx.dll", "LoadLibraryA", reinterpret_cast<void *>(&load_library_a));
+    registry.add("kernelx.dll", "LoadPackagedLibrary",
+                 reinterpret_cast<void *>(&load_packaged_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
     // in kernelbase on the desktop, not kernel32
     if (const auto base = LoadLibraryExW(L"kernelbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))

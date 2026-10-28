@@ -326,6 +326,10 @@ void WINAPI xmem_release_auxiliary_title_memory(HANDLE) {}
 
 } // namespace
 
+void *commit_title_memory(void *address, std::size_t size) {
+    return virtual_alloc(address, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
 void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address) {
     MEM_ADDRESS_REQUIREMENTS requirements{};
     requirements.Alignment = address || alignment <= page ? 0 : alignment;

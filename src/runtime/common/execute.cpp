@@ -339,14 +339,16 @@ std::string lower(std::string_view text) {
     return result;
 }
 // The title's own DLL of this name, loading it on first use. Null if the title has none.
-const TitleModule *title_module(std::string_view file_name, const Resolver &resolve) {
+// found by name in the title's folder unless `file_path` says where it is
+const TitleModule *title_module(std::string_view file_name, const Resolver &resolve,
+                                const std::filesystem::path &file_path = {}) {
     const auto name = lower(file_name);
     if (name.empty() || name.find_first_of("\\/:") != std::string::npos)
         return nullptr;
     for (const auto &module : guest->modules)
         if (module.name == name)
             return &module;
-    const auto path = detail::title_dll(guest->directory, name);
+    const auto path = file_path.empty() ? detail::title_dll(guest->directory, name) : file_path;
     if (path.empty())
         return nullptr;
     const auto file = host::read_snapshot(path, 256 * 1024 * 1024);
@@ -524,7 +526,7 @@ std::string detail::guest_location(const void *address) {
 }
 
 namespace {
-const TitleModule *load_title(std::string_view module) {
+const TitleModule *load_title(std::string_view module, const std::filesystem::path &file = {}) {
     const std::lock_guard lock(guest->loading);
     const auto loaded = guest->modules.size();
     // a DLL loaded now may need stubs or trace thunks of its own
@@ -533,7 +535,7 @@ const TitleModule *load_title(std::string_view module) {
         return nullptr;
     const TitleModule *library = nullptr;
     try {
-        library = title_module(module, guest->resolve);
+        library = title_module(module, guest->resolve, file);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "[Runtime] cannot load the title's %.*s: %s\n",
                      static_cast<int>(module.size()), module.data(), e.what());
@@ -575,7 +577,18 @@ void *detail::guest_library(const wchar_t *path) {
             handle = std::make_unique<std::string>(name);
         return handle.get();
     }
-    const auto *library = load_title(name);
+    // by its path, if that is in the title's folder (Unity's Data\Native)
+    std::filesystem::path file;
+    if (std::filesystem::path(path).has_parent_path()) {
+        std::error_code error;
+        const auto full = std::filesystem::weakly_canonical(path, error);
+        const auto relative =
+            full.lexically_relative(std::filesystem::weakly_canonical(guest->directory, error));
+        if (!error && !relative.empty() && *relative.begin() != ".." &&
+            std::filesystem::is_regular_file(full, error))
+            file = full;
+    }
+    const auto *library = load_title(name, file);
     return library ? reinterpret_cast<void *>(library->base) : nullptr;
 }
 
