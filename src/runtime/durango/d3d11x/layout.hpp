@@ -30,7 +30,7 @@ struct Method {
     void *function = nullptr;
     bool draws = false; // needs the state the title left in the object applied first
 };
-inline constexpr std::size_t vtable_slots = 160, object_slots = 512;
+inline constexpr std::size_t vtable_slots = 256, object_slots = 512;
 struct Layout {
     const char *name;
     // size of the object in pointers; more than 1 only if the title reaches into it

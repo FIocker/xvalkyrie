@@ -10,6 +10,9 @@
 #include <initializer_list>
 #include <intrin.h>
 #include <iterator>
+#include <map>
+#include <memory>
+#include <mutex>
 
 // Where each method is. Host slots are the desktop vtable indices of d3d11_1.h; the
 // console positions come from how titles call them.
@@ -548,6 +551,67 @@ void STDMETHODCALLTYPE draw_indexed(void *self, UINT64 count_and_start, INT base
                       base_vertex);
 }
 
+// The fast and placement setters bind one thing at one slot; a placement address inside
+// the resource is not something the host can take, so the resource is bound whole
+template <class T, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT, T *const *)>
+void STDMETHODCALLTYPE set_one(void *self, UINT slot, void *object) {
+    auto *const host = static_cast<T *>(unwrap(object));
+    (static_cast<ID3D11DeviceContext *>(unwrap(self))->*Set)(slot, 1, &host);
+}
+template <class T, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT, T *const *)>
+void STDMETHODCALLTYPE set_placed(void *self, UINT slot, void *object, void *) {
+    set_one<T, Set>(self, slot, object);
+}
+void STDMETHODCALLTYPE set_fast_vertex_buffer(void *self, UINT slot, void *buffer, UINT stride) {
+    auto *const host = static_cast<ID3D11Buffer *>(unwrap(buffer));
+    const UINT offset = 0;
+    static_cast<ID3D11DeviceContext *>(unwrap(self))
+        ->IASetVertexBuffers(slot, 1, &host, &stride, &offset);
+}
+void STDMETHODCALLTYPE set_placed_vertex_buffer(void *self, UINT slot, void *buffer, void *,
+                                                UINT stride) {
+    set_fast_vertex_buffer(self, slot, buffer, stride);
+}
+void STDMETHODCALLTYPE set_fast_index_buffer(void *self, UINT hardware_format, void *buffer) {
+    set_index_buffer(self, hardware_format, buffer, 0);
+}
+void STDMETHODCALLTYPE set_placed_index_buffer(void *self, UINT hardware_format, void *buffer,
+                                               void *) {
+    set_index_buffer(self, hardware_format, buffer, 0);
+}
+
+// The context's command buffer, which titles write GPU packets into themselves: the write
+// pointer at 0x50 and its end at 0x58. There is no GPU to read them here, so they go to a
+// scratch buffer of the context's that MakeCeSpace hands out again whenever it is full.
+constexpr std::size_t command_write = 0x50 / 8, command_end = 0x58 / 8, scratch_bytes = 1 << 20;
+std::mutex scratch_mutex;
+std::map<void *, std::unique_ptr<std::byte[]>> scratch;
+void *STDMETHODCALLTYPE make_ce_space(void *self) {
+    std::byte *buffer;
+    {
+        const std::lock_guard lock(scratch_mutex);
+        auto &owned = scratch[self];
+        if (!owned)
+            owned = std::make_unique<std::byte[]>(scratch_bytes);
+        buffer = owned.get();
+    }
+    auto *const words = static_cast<std::byte **>(self);
+    words[command_write] = buffer;
+    words[command_end] = buffer + scratch_bytes - 4096;
+    return buffer;
+}
+std::atomic<UINT64> context_fences{0};
+UINT64 STDMETHODCALLTYPE insert_fence(void *, UINT) { return ++context_fences; }
+void STDMETHODCALLTYPE context_copy_memory(void *, void *destination, const void *source,
+                                           SIZE_T size) {
+    std::memmove(destination, source, size);
+}
+void STDMETHODCALLTYPE context_fill_memory(void *, void *destination, SIZE_T size, UINT value) {
+    auto *const words = static_cast<UINT *>(destination);
+    for (SIZE_T i = 0; i < size / 4; ++i)
+        words[i] = value;
+}
+
 // XXSetShader through the in-object table: the shader alone, no class instances
 template <class Shader, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(
                             Shader *, ID3D11ClassInstance *const *, UINT)>
@@ -659,6 +723,68 @@ Layout context() {
     result.object[60 + 123] = custom(&set_shader<ID3D11HullShader, &Context::HSSetShader>);
     result.object[64 + 123] = custom(&set_shader<ID3D11DomainShader, &Context::DSSetShader>);
     result.object[69 + 123] = custom(&set_shader<ID3D11ComputeShader, &Context::CSSetShader>);
+    // ID3D11DeviceContextX's own methods (OS 6.2.11396 order), in the
+    // vtable and in the object at the vtable slot + 124: PIX, counters, caches, fences,
+    // limits and hints have no effect here
+    const auto console = [&](std::size_t slot, Method method) {
+        result.vtable[slot] = method;
+        result.object[slot + 124] = method;
+    };
+    for (std::size_t slot = 141; slot <= 154; ++slot) // PIX..InsertWaitUntilIdle
+        console(slot, {Method::ignore});
+    console(155, custom(&insert_fence));
+    console(156, {Method::ignore}); // InsertWaitOnFence
+    // Set{Fast,Placement}{ConstantBuffer,ShaderResource,Sampler} per stage from 161, in the
+    // order PS, VS, GS, CS, HS, DS
+    using Buffer = ID3D11Buffer;
+    using View = ID3D11ShaderResourceView;
+    using Sampler = ID3D11SamplerState;
+    const Method fast[] = {custom(&set_one<Buffer, &Context::PSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::PSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::PSSetSamplers>),
+                           custom(&set_one<Buffer, &Context::VSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::VSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::VSSetSamplers>),
+                           custom(&set_one<Buffer, &Context::GSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::GSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::GSSetSamplers>),
+                           custom(&set_one<Buffer, &Context::CSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::CSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::CSSetSamplers>),
+                           custom(&set_one<Buffer, &Context::HSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::HSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::HSSetSamplers>),
+                           custom(&set_one<Buffer, &Context::DSSetConstantBuffers>),
+                           custom(&set_one<View, &Context::DSSetShaderResources>),
+                           custom(&set_one<Sampler, &Context::DSSetSamplers>),
+                           custom(&set_fast_vertex_buffer),
+                           custom(&set_fast_index_buffer),
+                           custom(&set_placed<Buffer, &Context::PSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::PSSetShaderResources>),
+                           custom(&set_placed<Buffer, &Context::VSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::VSSetShaderResources>),
+                           custom(&set_placed<Buffer, &Context::GSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::GSSetShaderResources>),
+                           custom(&set_placed<Buffer, &Context::CSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::CSSetShaderResources>),
+                           custom(&set_placed<Buffer, &Context::HSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::HSSetShaderResources>),
+                           custom(&set_placed<Buffer, &Context::DSSetConstantBuffers>),
+                           custom(&set_placed<View, &Context::DSSetShaderResources>),
+                           custom(&set_placed_vertex_buffer),
+                           custom(&set_placed_index_buffer)};
+    for (std::size_t i = 0; i < std::size(fast); ++i)
+        console(161 + i, fast[i]);
+    console(195, {Method::ignore});                   // HSSetTessellationParameters
+    for (std::size_t slot = 196; slot <= 208; ++slot) // automatic flush..OMSetSampleMask
+        console(slot, {Method::ignore});
+    console(209, custom(&make_ce_space));
+    console(214, {Method::ignore}); // CSPlaceUnorderedAccessView
+    console(215, {Method::ignore}); // WriteValueEndOfPipe
+    console(216, custom(&context_copy_memory));
+    console(217, custom(&context_fill_memory));
+    for (std::size_t slot : {220, 221, 222, 224, 225}) // thread traces, wait on present
+        console(slot, {Method::ignore});
     result.object[8 + object_table] = custom(&set_shader_resource<&Context::PSSetShaderResources>);
     result.object[19 + object_table] = custom(&set_index_buffer);
     result.object[12 + object_table] = custom(&draw_indexed);
