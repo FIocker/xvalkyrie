@@ -48,6 +48,11 @@ constexpr auto chat_session2 = guid("8840b65e-eb13-4629-8f63-2854624460ff");
 constexpr wchar_t product[] = L"Windows.Xbox.ApplicationModel.Store.Product";
 constexpr auto product_statics = guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7");
 constexpr wchar_t display_info[] = L"Windows.Xbox.System.UserDisplayInfo";
+// the three folders of ApplicationData, one placeholder type each so each has its path
+constexpr wchar_t local_folder[] = L"Windows.Storage.StorageFolder";
+constexpr wchar_t roaming_folder[] = L"Windows.Storage.StorageFolder.Roaming";
+constexpr wchar_t temporary_folder[] = L"Windows.Storage.StorageFolder.Temporary";
+constexpr auto storage_item = guid("4207a996-ca2f-42f7-bde8-8b10457a7f30");
 constexpr wchar_t audio_device[] = L"Windows.Xbox.System.AudioDeviceInfo";
 
 constexpr wchar_t system_ui[] = L"Windows.Xbox.UI.SystemUI";
@@ -569,6 +574,48 @@ constexpr Row rows[] = {
      guid("971feaaf-98f8-4038-b8c1-3a5f1a043b97"),
      10,
      {Inert::accept}},
+
+    // public IApplicationDataStatics, IApplicationData and IStorageItem: the folders are
+    // in the title's save folder; settings containers are not there yet
+    {L"Windows.Storage.ApplicationData",
+     guid("5612147b-e843-45e3-94d8-06169e3c8e17"),
+     6,
+     {Inert::shared, L"Windows.Storage.ApplicationData"}},
+    {L"Windows.Storage.ApplicationData", direct, 6, {Inert::zero32}}, // Version
+    {L"Windows.Storage.ApplicationData", direct, 12, {Inert::shared, local_folder}},
+    {L"Windows.Storage.ApplicationData", direct, 13, {Inert::shared, roaming_folder}},
+    {L"Windows.Storage.ApplicationData", direct, 14, {Inert::shared, temporary_folder}},
+    {L"Windows.Storage.ApplicationData", direct, 15, {Inert::event_add}}, // DataChanged
+    {L"Windows.Storage.ApplicationData", direct, 16, {Inert::accept}},
+    {local_folder, storage_item, 11, {Inert::console_string, L"local_folder_name"}},
+    {local_folder, storage_item, 12, {Inert::console_string, L"local_folder"}},
+    {roaming_folder, storage_item, 12, {Inert::console_string, L"roaming_folder"}},
+    {temporary_folder, storage_item, 12, {Inert::console_string, L"temporary_folder"}},
+    {local_folder, storage_item, 13, {Inert::number32, nullptr, 0x10}}, // Attributes: folder
+    {roaming_folder, storage_item, 13, {Inert::number32, nullptr, 0x10}},
+    {temporary_folder, storage_item, 13, {Inert::number32, nullptr, 0x10}},
+    // public IMouseCapabilities: no mouse
+    {L"Windows.Devices.Input.MouseCapabilities", direct, 6, {Inert::zero32}},
+    {L"Windows.Devices.Input.MouseCapabilities",
+     guid("bca5e023-7dd9-4b6b-9a92-55d43cb38f73"),
+     6,
+     {Inert::zero32}},
+    {L"Windows.Devices.Input.MouseCapabilities",
+     guid("bca5e023-7dd9-4b6b-9a92-55d43cb38f73"),
+     7,
+     {Inert::zero32}},
+    {L"Windows.Devices.Input.MouseCapabilities",
+     guid("bca5e023-7dd9-4b6b-9a92-55d43cb38f73"),
+     8,
+     {Inert::zero32}},
+    {L"Windows.Devices.Input.MouseCapabilities",
+     guid("bca5e023-7dd9-4b6b-9a92-55d43cb38f73"),
+     9,
+     {Inert::zero32}},
+    {L"Windows.Devices.Input.MouseCapabilities",
+     guid("bca5e023-7dd9-4b6b-9a92-55d43cb38f73"),
+     10,
+     {Inert::zero32}},
 
     // IControllerStatics: ControllerOrderChanged; IController::Type of the one gamepad
     {L"Windows.Xbox.Input.Controller",

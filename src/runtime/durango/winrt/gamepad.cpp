@@ -65,9 +65,10 @@ struct IGamepadReading : IInspectable {
 #define XS_PRESSED(Name) virtual HRESULT STDMETHODCALLTYPE get_Is##Name##Pressed(boolean *) = 0;
     XS_PRESSED(DPadUp)
     XS_PRESSED(DPadDown)
-    XS_PRESSED(DPadLeft) XS_PRESSED(DPadRight) XS_PRESSED(Menu) XS_PRESSED(View)
-        XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick) XS_PRESSED(LeftShoulder)
-            XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B) XS_PRESSED(X) XS_PRESSED(Y)
+    XS_PRESSED(DPadLeft)
+    XS_PRESSED(DPadRight) XS_PRESSED(Menu) XS_PRESSED(View) XS_PRESSED(LeftThumbstick)
+        XS_PRESSED(RightThumbstick) XS_PRESSED(LeftShoulder) XS_PRESSED(RightShoulder) XS_PRESSED(A)
+            XS_PRESSED(B) XS_PRESSED(X) XS_PRESSED(Y)
 #undef XS_PRESSED
 #define XS_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
                 XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
@@ -112,8 +113,9 @@ class Reading final : public IGamepadReading {
         return put<boolean>(value, (raw_.buttons & (Bit)) != 0);                                   \
     }
     XS_PRESSED(DPadUp, 0x1)
-  XS_PRESSED(DPadDown, 0x2)
-  XS_PRESSED(DPadLeft, 0x4) XS_PRESSED(DPadRight, 0x8) XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20)
+    XS_PRESSED(DPadDown, 0x2)
+  XS_PRESSED(DPadLeft, 0x4)
+  XS_PRESSED(DPadRight, 0x8) XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20)
       XS_PRESSED(LeftThumbstick, 0x40) XS_PRESSED(RightThumbstick, 0x80)
           XS_PRESSED(LeftShoulder, 0x100) XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000)
               XS_PRESSED(B, 0x2000) XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)

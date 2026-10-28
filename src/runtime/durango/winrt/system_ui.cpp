@@ -7,10 +7,12 @@
 #include "runtime/durango/winrt/placeholder.hpp"
 #include <activation.h>
 #include <cstdio>
+#include <filesystem>
 #include <mmdeviceapi.h>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <windows.h>
 #include <winstring.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -145,6 +147,18 @@ std::wstring console_string(std::wstring_view key) {
         return settings.gamertag;
     if (key == L"xbox_user_id")
         return settings.xbox_user_id;
+    // ApplicationData's folders, inside the title's save folder
+    for (const auto &[name, folder] :
+         {std::pair{L"local_folder", L"LocalState"}, std::pair{L"roaming_folder", L"RoamingState"},
+          std::pair{L"temporary_folder", L"TempState"}})
+        if (key == name) {
+            const auto path = save_directory() / folder;
+            std::error_code error;
+            std::filesystem::create_directories(path, error);
+            return path.wstring();
+        }
+    if (key == L"local_folder_name")
+        return L"LocalState";
     if (key == L"audio_device_id") {
         static const auto id = communications_output();
         return id;
