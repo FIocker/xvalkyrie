@@ -57,10 +57,89 @@ template <class Interface> class Object : public Interface {
     std::atomic<ULONG> references_{1};
 };
 
+// IGamepadReading: the timestamp, the buttons, a flag per button
+// and the axes
+struct IGamepadReading : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_Timestamp(std::uint64_t *value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Buttons(std::uint32_t *value) = 0;
+#define XS_PRESSED(Name) virtual HRESULT STDMETHODCALLTYPE get_Is##Name##Pressed(boolean *) = 0;
+    XS_PRESSED(DPadUp)
+    XS_PRESSED(DPadDown) XS_PRESSED(DPadLeft) XS_PRESSED(DPadRight) XS_PRESSED(Menu)
+        XS_PRESSED(View) XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick)
+            XS_PRESSED(LeftShoulder) XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B)
+                XS_PRESSED(X) XS_PRESSED(Y)
+#undef XS_PRESSED
+#define XS_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
+                    XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
+                        XS_AXIS(LeftThumbstickY) XS_AXIS(RightThumbstickX) XS_AXIS(RightThumbstickY)
+#undef XS_AXIS
+};
+// GamepadButtons, the same bits as the raw reading
+class Reading final : public IGamepadReading {
+  public:
+    explicit Reading(const RawReading &raw) : raw_(raw) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = this;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left)
+            delete this;
+        return left;
+    }
+    STDMETHODIMP GetIids(ULONG *count, IID **iids) override {
+        *count = 0;
+        *iids = nullptr;
+        return S_OK;
+    }
+    STDMETHODIMP GetRuntimeClassName(HSTRING *name) override {
+        constexpr wchar_t reading[] = L"Windows.Xbox.Input.GamepadReading";
+        return WindowsCreateString(reading, static_cast<UINT32>(wcslen(reading)), name);
+    }
+    STDMETHODIMP GetTrustLevel(TrustLevel *level) override {
+        *level = BaseTrust;
+        return S_OK;
+    }
+    STDMETHODIMP get_Timestamp(std::uint64_t *value) override { return put(value, raw_.timestamp); }
+    STDMETHODIMP get_Buttons(std::uint32_t *value) override { return put(value, raw_.buttons); }
+#define XS_PRESSED(Name, Bit)                                                                      \
+    STDMETHODIMP get_Is##Name##Pressed(boolean *value) override {                                  \
+        return put<boolean>(value, (raw_.buttons & (Bit)) != 0);                                   \
+    }
+  XS_PRESSED(DPadUp, 0x1)
+  XS_PRESSED(DPadDown, 0x2) XS_PRESSED(DPadLeft, 0x4) XS_PRESSED(DPadRight, 0x8)
+      XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20) XS_PRESSED(LeftThumbstick, 0x40)
+          XS_PRESSED(RightThumbstick, 0x80) XS_PRESSED(LeftShoulder, 0x100)
+              XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000) XS_PRESSED(B, 0x2000)
+                  XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
+#undef XS_PRESSED
+#define XS_AXIS(Name, Field)                                                                       \
+    STDMETHODIMP get_##Name(float *value) override { return put(value, raw_.Field); }
+                      XS_AXIS(LeftTrigger, left_trigger) XS_AXIS(RightTrigger, right_trigger)
+                          XS_AXIS(LeftThumbstickX, left_x) XS_AXIS(LeftThumbstickY, left_y)
+                              XS_AXIS(RightThumbstickX, right_x) XS_AXIS(RightThumbstickY, right_y)
+#undef XS_AXIS
+
+                                  private : template <class T>
+                                            static HRESULT put(T *value, T field) {
+        if (!value)
+            return E_POINTER;
+        *value = field;
+        return S_OK;
+    }
+    std::atomic<ULONG> references_{1};
+    RawReading raw_;
+};
+
 // IGamepad, the default interface: the reading is its third method.
 struct IGamepad : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE SetVibration(const float *motors) = 0;
-    virtual HRESULT STDMETHODCALLTYPE unknown7(void *, void *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetCurrentReading(IGamepadReading **reading) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetRawCurrentReading(RawReading *reading) = 0;
     virtual HRESULT STDMETHODCALLTYPE unknown9(void *, void *) = 0;
     virtual HRESULT STDMETHODCALLTYPE unknown10(void *, void *) = 0;
@@ -90,11 +169,19 @@ class Gamepad final : public Object<IGamepad> {
         return S_OK;
     }
     STDMETHODIMP SetVibration(const float *) override { return S_OK; }
+    STDMETHODIMP GetCurrentReading(IGamepadReading **reading) override {
+        if (!reading)
+            return E_POINTER;
+        RawReading raw;
+        GetRawCurrentReading(&raw);
+        *reading = new Reading(raw);
+        return S_OK;
+    }
 #define XS_UNKNOWN(Index)                                                                          \
     STDMETHODIMP unknown##Index(void *first, void *second) override {                              \
         return unknown_method(class_name, "IGamepad", Index, first, second, _ReturnAddress());     \
     }
-    XS_UNKNOWN(7) XS_UNKNOWN(9) XS_UNKNOWN(10) XS_UNKNOWN(11)
+    XS_UNKNOWN(9) XS_UNKNOWN(10) XS_UNKNOWN(11)
 #undef XS_UNKNOWN
 };
 Gamepad gamepad;
