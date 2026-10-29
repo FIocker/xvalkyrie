@@ -30,8 +30,11 @@ template <class Interface> class Object : public Interface {
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
         if (!object)
             return E_POINTER;
+        // IGamepad by its own IID, for titles that ask for it
+        constexpr GUID gamepad{
+            0x082e402c, 0x07df, 0x45e1, {0xa5, 0xab, 0xa3, 0x12, 0x7a, 0xf1, 0x97, 0xb5}};
         if (iid == __uuidof(IUnknown) || iid == __uuidof(IInspectable) ||
-            iid == __uuidof(IAgileObject)) {
+            iid == __uuidof(IAgileObject) || (iid == gamepad && Interface::is_gamepad)) {
             *object = static_cast<Interface *>(this);
             this->AddRef();
             return S_OK;
@@ -66,9 +69,10 @@ struct IGamepadReading : IInspectable {
     XS_PRESSED(DPadUp)
     XS_PRESSED(DPadDown)
     XS_PRESSED(DPadLeft)
-    XS_PRESSED(DPadRight) XS_PRESSED(Menu) XS_PRESSED(View) XS_PRESSED(LeftThumbstick)
-        XS_PRESSED(RightThumbstick) XS_PRESSED(LeftShoulder) XS_PRESSED(RightShoulder) XS_PRESSED(A)
-            XS_PRESSED(B) XS_PRESSED(X) XS_PRESSED(Y)
+    XS_PRESSED(DPadRight)
+    XS_PRESSED(Menu) XS_PRESSED(View) XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick)
+        XS_PRESSED(LeftShoulder) XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B) XS_PRESSED(X)
+            XS_PRESSED(Y)
 #undef XS_PRESSED
 #define XS_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
                 XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
@@ -114,11 +118,12 @@ class Reading final : public IGamepadReading {
     }
     XS_PRESSED(DPadUp, 0x1)
     XS_PRESSED(DPadDown, 0x2)
-  XS_PRESSED(DPadLeft, 0x4)
-  XS_PRESSED(DPadRight, 0x8) XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20)
-      XS_PRESSED(LeftThumbstick, 0x40) XS_PRESSED(RightThumbstick, 0x80)
-          XS_PRESSED(LeftShoulder, 0x100) XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000)
-              XS_PRESSED(B, 0x2000) XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
+    XS_PRESSED(DPadLeft, 0x4)
+  XS_PRESSED(DPadRight, 0x8)
+  XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20) XS_PRESSED(LeftThumbstick, 0x40)
+      XS_PRESSED(RightThumbstick, 0x80) XS_PRESSED(LeftShoulder, 0x100)
+          XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000) XS_PRESSED(B, 0x2000)
+              XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
 #undef XS_PRESSED
 #define XS_AXIS(Name, Field)                                                                       \
     STDMETHODIMP get_##Name(float *value) override { return put(value, raw_.Field); }
@@ -140,6 +145,7 @@ class Reading final : public IGamepadReading {
 
 // IGamepad, the default interface: the reading is its third method.
 struct IGamepad : IInspectable {
+    static constexpr bool is_gamepad = true;
     virtual HRESULT STDMETHODCALLTYPE SetVibration(const float *motors) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetCurrentReading(IGamepadReading **reading) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetRawCurrentReading(RawReading *reading) = 0;
@@ -191,6 +197,7 @@ Gamepad gamepad;
 // The statics: the list of gamepads and two events that never happen, since the one
 // gamepad is always there.
 struct IGamepadStatics : IInspectable {
+    static constexpr bool is_gamepad = false;
     virtual HRESULT STDMETHODCALLTYPE get_Gamepads(void **gamepads) = 0;
     virtual HRESULT STDMETHODCALLTYPE add_GamepadAdded(void *handler, std::int64_t *token) = 0;
     virtual HRESULT STDMETHODCALLTYPE remove_GamepadAdded(std::int64_t token) = 0;

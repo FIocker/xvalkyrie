@@ -60,9 +60,12 @@ Layout child(const char *name, std::size_t last) {
         result.vtable[host + 2] = forward(host);
     return result;
 }
+// Console resources and views keep fields of their own that titles read when they write
+// packets themselves (GPU addresses, descriptors); zeros here, in an object this large
+constexpr std::size_t child_words = 32;
 // ID3D11Resource: three desktop methods at 9, a console one at 12, then the type's own
 Layout resource(const char *name, std::size_t last) {
-    Layout result{name};
+    Layout result{name, child_words};
     device_child(result);
     for (std::size_t host = 7; host <= 9; ++host)
         result.vtable[host + 2] = forward(host);
@@ -72,6 +75,7 @@ Layout resource(const char *name, std::size_t last) {
 }
 Layout view() {
     auto result = child("view", 8);
+    result.words = child_words;
     result.vtable[9] = forward(7, {out(1, Kind::resource)}); // GetResource
     return result;
 }
@@ -619,6 +623,10 @@ void *STDMETHODCALLTYPE make_ce_space(void *self) {
     words[command_end] = buffer + scratch_bytes - 4096;
     return buffer;
 }
+void STDMETHODCALLTYPE clear_render_target_x(void *self, void *view, UINT, const FLOAT *color) {
+    static_cast<ID3D11DeviceContext *>(unwrap(self))
+        ->ClearRenderTargetView(static_cast<ID3D11RenderTargetView *>(unwrap(view)), color);
+}
 std::atomic<UINT64> context_fences{0};
 UINT64 STDMETHODCALLTYPE insert_fence(void *, UINT) { return ++context_fences; }
 void STDMETHODCALLTYPE context_copy_memory(void *, void *destination, const void *source,
@@ -803,6 +811,10 @@ Layout context() {
     console(216, custom(&context_copy_memory));
     console(217, custom(&context_fill_memory));
     for (std::size_t slot : {220, 221, 222, 224, 225}) // thread traces, wait on present
+        console(slot, {Method::ignore});
+    console(226, custom(&clear_render_target_x));
+    // nothing is compressed here: GetResourceCompression(X) say none, decompressing is done
+    for (std::size_t slot = 227; slot <= 230; ++slot)
         console(slot, {Method::ignore});
     result.object[8 + object_table] = custom(&set_shader_resource<&Context::PSSetShaderResources>);
     result.object[19 + object_table] = custom(&set_index_buffer);
