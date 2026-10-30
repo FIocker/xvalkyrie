@@ -1,10 +1,12 @@
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/durango/d3d11x/placement.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <d3d11_1.h>
 #include <initializer_list>
@@ -13,6 +15,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <type_traits>
+#include <vector>
 
 // Where each method is. Host slots are the desktop vtable indices of d3d11_1.h; the
 // console positions come from how titles call them.
@@ -316,19 +320,33 @@ HRESULT STDMETHODCALLTYPE create_dma_engine_context(void *self, const void *, vo
     return result;
 }
 
-// Placement resources live at memory the title allocated; the host's live where the host
-// puts them, so the address is not used: what the title writes there is not seen.
-HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER_DESC *desc, void *,
-                                                  ID3D11Buffer **buffer) {
+// Placement resources live at memory the title allocated and writes itself: the host's
+// copy starts from it and follows it (placement.cpp)
+HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER_DESC *desc,
+                                                  void *address, ID3D11Buffer **buffer) {
     if (!desc)
         return E_INVALIDARG;
     auto host = *desc;
     host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
+    if (host.Usage == D3D11_USAGE_IMMUTABLE)
+        host.Usage = D3D11_USAGE_DEFAULT;
+    if (host.Usage == D3D11_USAGE_DEFAULT)
+        host.CPUAccessFlags = 0;
+    if (host.Usage == D3D11_USAGE_DYNAMIC)
+        host.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    const D3D11_SUBRESOURCE_DATA initial{address, 0, 0};
     ID3D11Buffer *created = nullptr;
-    const auto result = static_cast<ID3D11Device *>(unwrap(self))
-                            ->CreateBuffer(&host, nullptr, buffer ? &created : nullptr);
-    if (SUCCEEDED(result) && buffer)
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+    auto result = device->CreateBuffer(&host, address ? &initial : nullptr, &created);
+    if (FAILED(result) && address)
+        result = device->CreateBuffer(&host, nullptr, &created);
+    if (FAILED(result))
+        return result;
+    track_placement(created, address);
+    if (buffer)
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
+    else
+        created->Release();
     return result;
 }
 HRESULT STDMETHODCALLTYPE create_placement_texture1d(void *self, const D3D11_TEXTURE1D_DESC *desc,
@@ -346,8 +364,35 @@ HRESULT STDMETHODCALLTYPE create_placement_texture1d(void *self, const D3D11_TEX
     return result;
 }
 HRESULT STDMETHODCALLTYPE create_placement_texture2d(void *self, const D3D11_TEXTURE2D_DESC *desc,
-                                                     UINT, UINT, const void *,
+                                                     UINT, UINT, const void *address,
                                                      ID3D11Texture2D **texture) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    if (host.Usage == D3D11_USAGE_IMMUTABLE)
+        host.Usage = D3D11_USAGE_DEFAULT;
+    std::vector<D3D11_SUBRESOURCE_DATA> data(std::size_t{std::max(host.MipLevels, 1u)} *
+                                             std::max(host.ArraySize, 1u));
+    const bool initial = host.MipLevels &&
+                         placement_data(host, address, data.data(), static_cast<UINT>(data.size()));
+    ID3D11Texture2D *created = nullptr;
+    auto result = create_texture2d(self, &host, initial ? data.data() : nullptr, &created);
+    if (FAILED(result) && initial)
+        result = create_texture2d(self, &host, nullptr, &created);
+    if (FAILED(result))
+        return result;
+    if (initial)
+        track_placement(static_cast<ID3D11Texture2D *>(unwrap(created)), address);
+    if (texture)
+        *texture = created;
+    else
+        reinterpret_cast<IUnknown *>(created)->Release();
+    return result;
+}
+// the addresses of a renderable texture are where the GPU writes it: nothing to read there
+HRESULT STDMETHODCALLTYPE create_renderable_texture2d(void *self, const D3D11_TEXTURE2D_DESC *desc,
+                                                      UINT, UINT, const void *,
+                                                      ID3D11Texture2D **texture) {
     return create_texture2d(self, desc, nullptr, texture);
 }
 HRESULT STDMETHODCALLTYPE create_placement_texture3d(void *self, const D3D11_TEXTURE3D_DESC *desc,
@@ -431,7 +476,7 @@ Layout device() {
     result.vtable[67] = forward(23, {created(2, Kind::state)});   // CreateSamplerStateX
     result.vtable[68] = forward(27, {created(2, Kind::context)}); // CreateDeferredContextX
     result.vtable[70] = forward(21, {created(2, Kind::state)});   // CreateDepthStencilStateX
-    result.vtable[71] = custom(&create_placement_texture2d);      // ...RenderableTexture2D
+    result.vtable[71] = custom(&create_renderable_texture2d);     // ...RenderableTexture2D
     result.vtable[72] = custom(&get_driver_statistics);
     return result;
 }
@@ -447,8 +492,61 @@ void presented() {
         }
     }
 }
+// XS_D3D_PROBE: the average colour of a texture, to tell a title that draws nothing from a
+// picture that does not reach the window
+void average(ID3D11Texture2D *texture, const char *what) {
+    ID3D11Device *device = nullptr;
+    ID3D11DeviceContext *context = nullptr;
+    texture->GetDevice(&device);
+    device->GetImmediateContext(&context);
+    D3D11_TEXTURE2D_DESC desc;
+    texture->GetDesc(&desc);
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.MiscFlags = 0;
+    desc.MipLevels = 1;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging = nullptr;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging))) {
+        context->CopySubresourceRegion(staging, 0, 0, 0, 0, texture, 0, nullptr);
+        if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
+            double sum[4]{};
+            for (UINT y = 0; y < desc.Height; y += 8)
+                for (UINT x = 0; x < desc.Width; x += 8) {
+                    const auto *pixel = static_cast<const std::uint8_t *>(mapped.pData) +
+                                        y * mapped.RowPitch + x * 4;
+                    for (int c = 0; c < 4; ++c)
+                        sum[c] += pixel[c];
+                }
+            const double count = (desc.Width / 8.0) * (desc.Height / 8.0);
+            std::fprintf(stderr, "[Runtime] %s %ux%u format %u average %.1f %.1f %.1f %.1f\n", what,
+                         desc.Width, desc.Height, static_cast<unsigned>(desc.Format),
+                         sum[0] / count, sum[1] / count, sum[2] / count, sum[3] / count);
+            context->Unmap(staging, 0);
+        }
+        staging->Release();
+    }
+    context->Release();
+    device->Release();
+}
+bool probing() {
+    static const bool enabled = std::getenv("XS_D3D_PROBE") != nullptr;
+    return enabled;
+}
+void probe(IDXGISwapChain *swap_chain) {
+    static std::atomic<int> frames{0};
+    if (!probing() || ++frames != 300)
+        return;
+    ID3D11Texture2D *buffer = nullptr;
+    if (SUCCEEDED(swap_chain->GetBuffer(0, IID_PPV_ARGS(&buffer)))) {
+        average(buffer, "back buffer");
+        buffer->Release();
+    }
+}
 HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
     auto *const host = static_cast<IDXGISwapChain *>(unwrap(self));
+    probe(host);
     graphics::d3d11::frame_presented(host);
     const auto result = host->Present(interval, flags);
     presented();
@@ -458,6 +556,7 @@ HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
 HRESULT STDMETHODCALLTYPE present1(void *self, UINT interval, UINT flags,
                                    const DXGI_PRESENT_PARAMETERS *parameters) {
     auto *const host = static_cast<IDXGISwapChain1 *>(unwrap(self));
+    probe(host);
     graphics::d3d11::frame_presented(host);
     const DXGI_PRESENT_PARAMETERS whole{};
     const auto result = host->Present1(interval, flags, parameters ? parameters : &whole);
@@ -511,10 +610,55 @@ FLOAT STDMETHODCALLTYPE get_min_lod(void *self, void *resource) {
 
 // XXSetShaderResources through the in-object table: one view per call, passed as
 // (address of the view pointer, slot, a hardware packet header that means nothing here).
+// A pixel shader resource stays bound on the console when its resource becomes a render
+// target; the host unbinds it. What the title bound is kept, and put back before each draw
+// where the host dropped it.
+constexpr UINT kept_views = 16;
+struct KeptViews {
+    std::array<ID3D11ShaderResourceView *, kept_views> views{};
+};
+std::mutex kept_mutex;
+std::map<void *, KeptViews> kept;
+void keep_pixel_view(void *self, UINT slot, ID3D11ShaderResourceView *view) {
+    if (slot >= kept_views)
+        return;
+    const std::lock_guard lock(kept_mutex);
+    auto &held = kept[self].views[slot];
+    if (view)
+        view->AddRef();
+    if (held)
+        held->Release();
+    held = view;
+}
+void restore_pixel_views(void *self) {
+    std::array<ID3D11ShaderResourceView *, kept_views> wanted;
+    {
+        const std::lock_guard lock(kept_mutex);
+        const auto found = kept.find(self);
+        if (found == kept.end())
+            return;
+        wanted = found->second.views;
+    }
+    auto *const host = static_cast<ID3D11DeviceContext *>(unwrap(self));
+    std::array<ID3D11ShaderResourceView *, kept_views> bound{};
+    host->PSGetShaderResources(0, kept_views, bound.data());
+    for (UINT slot = 0; slot < kept_views; ++slot) {
+        if (wanted[slot] && !bound[slot])
+            host->PSSetShaderResources(slot, 1, &wanted[slot]);
+        if (bound[slot])
+            bound[slot]->Release();
+    }
+}
 template <void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT,
                                                              ID3D11ShaderResourceView *const *)>
-void STDMETHODCALLTYPE set_shader_resource(void *self, void **view, UINT slot, UINT) {
+void STDMETHODCALLTYPE set_shader_resource(void *self, void **view, UINT slot, UINT header) {
+    static std::atomic<int> logged{0};
+    if (logged++ < 6)
+        std::fprintf(stderr, "[debug] set srv %p slot %u header %x -> %p\n", (void *)view, slot,
+                     header, view ? *view : nullptr);
     auto *const host = static_cast<ID3D11ShaderResourceView *>(view ? unwrap(*view) : nullptr);
+    if constexpr (Set == &ID3D11DeviceContext::PSSetShaderResources)
+        keep_pixel_view(self, slot, host);
     (static_cast<ID3D11DeviceContext *>(unwrap(self))->*Set)(slot, 1, &host);
 }
 
@@ -546,6 +690,8 @@ template <class T> T read(void *object, std::size_t offset) {
 }
 } // namespace state
 void apply_context_state(void *self) {
+    upload_placements(static_cast<ID3D11DeviceContext *>(unwrap(self)));
+    restore_pixel_views(self);
     if (!state::read<std::uint32_t>(self, state::dirty))
         return;
     const std::uint32_t clean = 0;
@@ -566,6 +712,53 @@ void apply_context_state(void *self) {
             break;
         }
 }
+void STDMETHODCALLTYPE debug_set_targets(void *self, UINT count, void **views, void *depth) {
+    static std::atomic<int> logged{0};
+    std::array<ID3D11RenderTargetView *, 8> hosts{};
+    for (UINT i = 0; i < count && i < 8; ++i)
+        hosts[i] = views ? static_cast<ID3D11RenderTargetView *>(unwrap(views[i])) : nullptr;
+    static ID3D11RenderTargetView *previous = nullptr;
+    static bool measured = false;
+    if (probing() && logged >= 600 && previous && !measured) {
+        ID3D11Resource *resource = nullptr;
+        previous->GetResource(&resource);
+        if (ID3D11Texture2D *texture = nullptr;
+            resource && SUCCEEDED(resource->QueryInterface(&texture))) {
+            D3D11_TEXTURE2D_DESC desc;
+            texture->GetDesc(&desc);
+            if (desc.Width != 1920) {
+                average(texture, "target before");
+                measured = true;
+            }
+            texture->Release();
+        }
+        if (resource)
+            resource->Release();
+    }
+    previous = count ? hosts[0] : nullptr;
+    if (logged++ < 40) {
+        UINT width = 0, format = 0;
+        if (count && hosts[0]) {
+            ID3D11Resource *resource = nullptr;
+            hosts[0]->GetResource(&resource);
+            ID3D11Texture2D *texture = nullptr;
+            if (resource && SUCCEEDED(resource->QueryInterface(&texture))) {
+                D3D11_TEXTURE2D_DESC desc;
+                texture->GetDesc(&desc);
+                width = desc.Width;
+                format = desc.Format;
+                texture->Release();
+            }
+            if (resource)
+                resource->Release();
+        }
+        std::fprintf(stderr, "[debug] targets %u first %p width %u format %u depth %p\n", count,
+                     (void *)hosts[0], width, format, depth);
+    }
+    static_cast<ID3D11DeviceContext *>(unwrap(self))
+        ->OMSetRenderTargets(count, hosts.data(),
+                             static_cast<ID3D11DepthStencilView *>(unwrap(depth)));
+}
 // DrawIndexed through the in-object table: (index count << 32 | first index, base vertex)
 void STDMETHODCALLTYPE draw_indexed(void *self, UINT64 count_and_start, INT base_vertex) {
     apply_context_state(self);
@@ -579,6 +772,9 @@ void STDMETHODCALLTYPE draw_indexed(void *self, UINT64 count_and_start, INT base
 template <class T, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT, T *const *)>
 void STDMETHODCALLTYPE set_one(void *self, UINT slot, void *object) {
     auto *const host = static_cast<T *>(unwrap(object));
+    if constexpr (std::is_same_v<T, ID3D11ShaderResourceView>)
+        if constexpr (Set == &ID3D11DeviceContext::PSSetShaderResources)
+            keep_pixel_view(self, slot, host);
     (static_cast<ID3D11DeviceContext *>(unwrap(self))->*Set)(slot, 1, &host);
 }
 template <class T, void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT, T *const *)>
@@ -819,6 +1015,7 @@ Layout context() {
     result.object[8 + object_table] = custom(&set_shader_resource<&Context::PSSetShaderResources>);
     result.object[19 + object_table] = custom(&set_index_buffer);
     result.object[12 + object_table] = custom(&draw_indexed);
+    result.object[33 + 123] = custom(&debug_set_targets);
     result.apply_state = &apply_context_state;
     result.object[25 + 123] = custom(&set_shader_resource<&Context::VSSetShaderResources>);
     result.object[31 + 123] = custom(&set_shader_resource<&Context::GSSetShaderResources>);
