@@ -14,7 +14,7 @@
 #include <windows.h>
 
 // The audio processor without SHAPE: commands are acknowledged and audio frames ticked so
-// the title's mixer runs, nothing is decoded. ABI as FMOD Ex calls it. Apu* addresses are 32-bit.
+// the title's mixer runs, nothing is decoded. ABI as FMOD Ex calls it.
 namespace xs::runtime::durango {
 namespace {
 struct ApuRegion {
