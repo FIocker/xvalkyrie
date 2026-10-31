@@ -651,11 +651,7 @@ void restore_pixel_views(void *self) {
 }
 template <void (STDMETHODCALLTYPE ID3D11DeviceContext::*Set)(UINT, UINT,
                                                              ID3D11ShaderResourceView *const *)>
-void STDMETHODCALLTYPE set_shader_resource(void *self, void **view, UINT slot, UINT header) {
-    static std::atomic<int> logged{0};
-    if (logged++ < 6)
-        std::fprintf(stderr, "[debug] set srv %p slot %u header %x -> %p\n", (void *)view, slot,
-                     header, view ? *view : nullptr);
+void STDMETHODCALLTYPE set_shader_resource(void *self, void **view, UINT slot, UINT) {
     auto *const host = static_cast<ID3D11ShaderResourceView *>(view ? unwrap(*view) : nullptr);
     if constexpr (Set == &ID3D11DeviceContext::PSSetShaderResources)
         keep_pixel_view(self, slot, host);
@@ -711,53 +707,6 @@ void apply_context_state(void *self) {
             host->IASetPrimitiveTopology(static_cast<D3D11_PRIMITIVE_TOPOLOGY>(topology));
             break;
         }
-}
-void STDMETHODCALLTYPE debug_set_targets(void *self, UINT count, void **views, void *depth) {
-    static std::atomic<int> logged{0};
-    std::array<ID3D11RenderTargetView *, 8> hosts{};
-    for (UINT i = 0; i < count && i < 8; ++i)
-        hosts[i] = views ? static_cast<ID3D11RenderTargetView *>(unwrap(views[i])) : nullptr;
-    static ID3D11RenderTargetView *previous = nullptr;
-    static bool measured = false;
-    if (probing() && logged >= 600 && previous && !measured) {
-        ID3D11Resource *resource = nullptr;
-        previous->GetResource(&resource);
-        if (ID3D11Texture2D *texture = nullptr;
-            resource && SUCCEEDED(resource->QueryInterface(&texture))) {
-            D3D11_TEXTURE2D_DESC desc;
-            texture->GetDesc(&desc);
-            if (desc.Width != 1920) {
-                average(texture, "target before");
-                measured = true;
-            }
-            texture->Release();
-        }
-        if (resource)
-            resource->Release();
-    }
-    previous = count ? hosts[0] : nullptr;
-    if (logged++ < 40) {
-        UINT width = 0, format = 0;
-        if (count && hosts[0]) {
-            ID3D11Resource *resource = nullptr;
-            hosts[0]->GetResource(&resource);
-            ID3D11Texture2D *texture = nullptr;
-            if (resource && SUCCEEDED(resource->QueryInterface(&texture))) {
-                D3D11_TEXTURE2D_DESC desc;
-                texture->GetDesc(&desc);
-                width = desc.Width;
-                format = desc.Format;
-                texture->Release();
-            }
-            if (resource)
-                resource->Release();
-        }
-        std::fprintf(stderr, "[debug] targets %u first %p width %u format %u depth %p\n", count,
-                     (void *)hosts[0], width, format, depth);
-    }
-    static_cast<ID3D11DeviceContext *>(unwrap(self))
-        ->OMSetRenderTargets(count, hosts.data(),
-                             static_cast<ID3D11DepthStencilView *>(unwrap(depth)));
 }
 // DrawIndexed through the in-object table: (index count << 32 | first index, base vertex)
 void STDMETHODCALLTYPE draw_indexed(void *self, UINT64 count_and_start, INT base_vertex) {
@@ -1015,7 +964,6 @@ Layout context() {
     result.object[8 + object_table] = custom(&set_shader_resource<&Context::PSSetShaderResources>);
     result.object[19 + object_table] = custom(&set_index_buffer);
     result.object[12 + object_table] = custom(&draw_indexed);
-    result.object[33 + 123] = custom(&debug_set_targets);
     result.apply_state = &apply_context_state;
     result.object[25 + 123] = custom(&set_shader_resource<&Context::VSSetShaderResources>);
     result.object[31 + 123] = custom(&set_shader_resource<&Context::GSSetShaderResources>);
