@@ -253,6 +253,24 @@ bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
            readable(start, texture_layout(desc, start, data, count));
 }
 
+void prepare_title_write(const void *address, std::size_t bytes) {
+    const auto first = reinterpret_cast<std::uintptr_t>(address), last = first + bytes;
+    if (!address || !bytes)
+        return;
+    const std::lock_guard lock(mutex);
+    for (auto at = placements.lower_bound(last); at != placements.begin();) {
+        auto &placement = (--at)->second;
+        if (placement.start + largest < first)
+            break;
+        if (placement.end <= first || placement.start >= last)
+            continue;
+        if (!placement.dirty)
+            dirty.push_back(placement.start);
+        placement.dirty = true;
+        protect(placement, PAGE_READWRITE);
+    }
+}
+
 bool readable_memory(std::uint64_t address, std::size_t bytes) {
     return readable(static_cast<std::uintptr_t>(address), bytes);
 }

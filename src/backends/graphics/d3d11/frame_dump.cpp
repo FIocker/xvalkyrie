@@ -77,7 +77,8 @@ void frame_presented(IDXGISwapChain *swap_chain) {
     static std::atomic<long> frames{0};
     const auto frame = ++frames;
     frame_counted();
-    if (frame == 1 || frame == 10 || frame == 100 || frame == 1000) {
+    // and every 10000 after, so that a long run shows when frames stop
+    if (frame == 1 || frame == 10 || frame == 100 || frame == 1000 || frame % 10000 == 0) {
         std::fprintf(stderr, "[Runtime] %ld frame%s presented\n", frame, frame == 1 ? "" : "s");
         std::fflush(stderr);
     }

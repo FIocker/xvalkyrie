@@ -16,6 +16,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <windows.h>
@@ -330,8 +331,13 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
 }
 
 void *make_placeholder(const wchar_t *name, const GUID &iid) {
-    std::fprintf(stderr, "[Runtime] placeholder for %ls {%s}\n", name, text(iid).c_str());
-    std::fflush(stderr);
+    // once per class and interface: titles may make the same one every frame
+    static std::mutex mutex;
+    static std::set<std::pair<std::wstring, std::string>> reported;
+    if (const std::lock_guard lock(mutex); reported.emplace(name, text(iid)).second) {
+        std::fprintf(stderr, "[Runtime] placeholder for %ls {%s}\n", name, text(iid).c_str());
+        std::fflush(stderr);
+    }
     return new Placeholder{(iid == activation_factory ? factory_vtable : vtable).data(), 1, name,
                            iid};
 }

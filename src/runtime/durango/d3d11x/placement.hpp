@@ -16,6 +16,9 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
 bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
                     D3D11_SUBRESOURCE_DATA *data, UINT count);
 void upload_placements(ID3D11DeviceContext *context);
+// before the host writes [address, address + bytes) (ReadFile into it): a write there from
+// the kernel fails instead of faulting, so the placements in it are let go and marked dirty
+void prepare_title_write(const void *address, std::size_t bytes);
 // every page of [address, address + bytes) is committed and readable
 bool readable_memory(std::uint64_t address, std::size_t bytes);
 } // namespace xs::runtime::durango::d3d11x

@@ -1,4 +1,5 @@
 #include "runtime/common/runtime.hpp"
+#include "runtime/durango/d3d11x/placement.hpp"
 #include "runtime/durango/runtime.hpp"
 
 #include <algorithm>
@@ -51,6 +52,16 @@ HRESULT __cdecl create_xaudio2(void **engine, UINT32, UINT32, void *) {
                  static_cast<unsigned long>(result));
     std::fflush(stderr);
     return result;
+}
+// reads into memory placement resources live in
+BOOL WINAPI read_file(HANDLE file, void *buffer, DWORD bytes, DWORD *read, OVERLAPPED *overlapped) {
+    d3d11x::prepare_title_write(buffer, bytes);
+    return ReadFile(file, buffer, bytes, read, overlapped);
+}
+BOOL WINAPI read_file_ex(HANDLE file, void *buffer, DWORD bytes, OVERLAPPED *overlapped,
+                         LPOVERLAPPED_COMPLETION_ROUTINE completion) {
+    d3d11x::prepare_title_write(buffer, bytes);
+    return ReadFileEx(file, buffer, bytes, overlapped, completion);
 }
 FARPROC WINAPI get_proc_address(HMODULE module, const char *name) {
     const bool named = reinterpret_cast<std::uintptr_t>(name) >= 0x10000;
@@ -226,6 +237,8 @@ void install_kernelx(Registry &registry) {
     registry.add("kernelx.dll", "LoadPackagedLibrary",
                  reinterpret_cast<void *>(&load_packaged_library));
     registry.add("kernelx.dll", "GetProcAddress", reinterpret_cast<void *>(&get_proc_address));
+    registry.add("kernelx.dll", "ReadFile", reinterpret_cast<void *>(&read_file));
+    registry.add("kernelx.dll", "ReadFileEx", reinterpret_cast<void *>(&read_file_ex));
     // in kernelbase on the desktop, not kernel32
     if (const auto base = LoadLibraryExW(L"kernelbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         for (const auto *name :

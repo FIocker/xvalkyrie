@@ -9,6 +9,7 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

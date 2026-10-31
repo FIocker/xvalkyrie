@@ -581,13 +581,22 @@ void probe(IDXGISwapChain *swap_chain) {
         buffer->Release();
     }
 }
+// A console's window is never hidden: when the host's is (covered, minimized, the display
+// off), Present neither waits for the display nor succeeds, and titles stop drawing. That is
+// success here, a display refresh later.
+HRESULT console_present_result(HRESULT result, UINT interval) {
+    if (result != DXGI_STATUS_OCCLUDED)
+        return result;
+    Sleep(16 * std::max(interval, 1u));
+    return S_OK;
+}
 HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {
     auto *const host = static_cast<IDXGISwapChain *>(unwrap(self));
     probe(host);
     graphics::d3d11::frame_presented(host);
     const auto result = host->Present(interval, flags);
     presented();
-    return result;
+    return console_present_result(result, interval);
 }
 // Present1: the console takes no parameters to mean the whole frame, the host crashes
 HRESULT STDMETHODCALLTYPE present1(void *self, UINT interval, UINT flags,
@@ -598,7 +607,7 @@ HRESULT STDMETHODCALLTYPE present1(void *self, UINT interval, UINT flags,
     const DXGI_PRESENT_PARAMETERS whole{};
     const auto result = host->Present1(interval, flags, parameters ? parameters : &whole);
     presented();
-    return result;
+    return console_present_result(result, interval);
 }
 
 } // namespace
