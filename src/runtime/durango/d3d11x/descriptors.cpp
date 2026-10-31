@@ -161,6 +161,18 @@ void describe(void *object, IUnknown *host) {
     }
 }
 
+bool buffer_offset(ID3D11Buffer *host, std::uint64_t address, UINT &offset) {
+    const std::lock_guard lock(mutex);
+    auto found = buffers.upper_bound(static_cast<std::uintptr_t>(address));
+    if (found == buffers.begin())
+        return false;
+    --found;
+    if (found->second.buffer != host || address >= found->second.end)
+        return false;
+    offset = static_cast<UINT>(address - found->first);
+    return true;
+}
+
 void describe_buffer(void *object, ID3D11Buffer *host, const void *address) {
     if (address)
         put_buffer(object, host, reinterpret_cast<std::uintptr_t>(address));

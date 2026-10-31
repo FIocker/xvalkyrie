@@ -522,6 +522,40 @@ void average(ID3D11Texture2D *texture, const char *what) {
                     for (int c = 0; c < 4; ++c)
                         sum[c] += pixel[c];
                 }
+            // and the picture itself, as a 32-bit BMP in the temporary folder
+            if (const auto *folder = std::getenv("TEMP");
+                folder && desc.Format != DXGI_FORMAT_D32_FLOAT)
+                if (auto *file =
+                        std::fopen((std::string(folder) + "\\xs_" + what + ".bmp").c_str(), "wb")) {
+                    const std::uint32_t pixels = desc.Width * desc.Height * 4;
+                    std::uint8_t header[54]{'B', 'M'};
+                    const std::uint32_t size = 54 + pixels, offset = 54, info = 40,
+                                        planes_bits = 1 | (32 << 16);
+                    const std::int32_t width = desc.Width,
+                                       height = -static_cast<std::int32_t>(desc.Height);
+                    std::memcpy(header + 2, &size, 4);
+                    std::memcpy(header + 10, &offset, 4);
+                    std::memcpy(header + 14, &info, 4);
+                    std::memcpy(header + 18, &width, 4);
+                    std::memcpy(header + 22, &height, 4);
+                    std::memcpy(header + 26, &planes_bits, 4);
+                    std::fwrite(header, 1, sizeof header, file);
+                    const bool rgba = desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                                      desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                                      desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
+                    std::vector<std::uint8_t> row(desc.Width * 4);
+                    for (UINT y = 0; y < desc.Height; ++y) {
+                        std::memcpy(row.data(),
+                                    static_cast<const std::uint8_t *>(mapped.pData) +
+                                        y * mapped.RowPitch,
+                                    row.size());
+                        if (rgba)
+                            for (UINT x = 0; x < desc.Width; ++x)
+                                std::swap(row[x * 4], row[x * 4 + 2]);
+                        std::fwrite(row.data(), 1, row.size(), file);
+                    }
+                    std::fclose(file);
+                }
             const double count = (desc.Width / 8.0) * (desc.Height / 8.0);
             std::fprintf(stderr, "[Runtime] %s %ux%u format %u average %.1f %.1f %.1f %.1f\n", what,
                          desc.Width, desc.Height, static_cast<unsigned>(desc.Format),
@@ -763,6 +797,95 @@ void STDMETHODCALLTYPE set_placed_index_buffer(void *self, UINT hardware_format,
     set_index_buffer(self, hardware_format, buffer, 0);
 }
 
+// SetFastResources_Debug(table, end): what titles call instead of writing descriptor packets
+// once the context's out-of-line flag (0x390) is set. Each header: entry count in its low
+// byte, first slot in the next, stage in bits 16-19 (VS, HS, DS, GS, PS, CS, then 6 for
+// vertex streams), resource kind in bits 28-30 (0 views, 1 buffers, else samplers); each
+// entry is 4 dwords: our object, then the stride (bits 48-63) and placement address.
+constexpr std::size_t out_of_line_flags = 0x390;
+void STDMETHODCALLTYPE set_fast_resources(void *self, const UINT *table, const UINT *end) {
+    auto *const context = static_cast<ID3D11DeviceContext *>(unwrap(self));
+    using View = ID3D11ShaderResourceView;
+    using Buffer = ID3D11Buffer;
+    using Sampler = ID3D11SamplerState;
+    using Context = ID3D11DeviceContext;
+    using SetViews = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, View *const *);
+    using SetBuffers = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, Buffer *const *);
+    using SetSamplers = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, Sampler *const *);
+    constexpr SetViews views[] = {&Context::VSSetShaderResources, &Context::HSSetShaderResources,
+                                  &Context::DSSetShaderResources, &Context::GSSetShaderResources,
+                                  &Context::PSSetShaderResources, &Context::CSSetShaderResources};
+    constexpr SetBuffers constants[] = {
+        &Context::VSSetConstantBuffers, &Context::HSSetConstantBuffers,
+        &Context::DSSetConstantBuffers, &Context::GSSetConstantBuffers,
+        &Context::PSSetConstantBuffers, &Context::CSSetConstantBuffers};
+    constexpr SetSamplers samplers[] = {&Context::VSSetSamplers, &Context::HSSetSamplers,
+                                        &Context::DSSetSamplers, &Context::GSSetSamplers,
+                                        &Context::PSSetSamplers, &Context::CSSetSamplers};
+    while (table && table < end) {
+        const UINT header = *table++;
+        const UINT count = header & 0xff, slot = (header >> 8) & 0xff, stage = (header >> 16) & 0xf,
+                   kind = (header >> 28) & 7;
+        for (UINT i = 0; i < count && table + 4 <= end; ++i, table += 4) {
+            void *object;
+            std::uint64_t extra;
+            std::memcpy(&object, table, 8);
+            std::memcpy(&extra, table + 2, 8);
+            auto *const host = unwrap(object);
+            if (kind == 0 && stage < 6) {
+                auto *view = static_cast<View *>(host);
+                if (stage == 4)
+                    keep_pixel_view(self, slot + i, view);
+                (context->*views[stage])(slot + i, 1, &view);
+            } else if (kind == 1 && stage == 6) {
+                auto *buffer = static_cast<Buffer *>(host);
+                const UINT stride = static_cast<UINT>(extra >> 48);
+                UINT offset = 0;
+                buffer_offset(buffer, extra & 0xffffffffffffull, offset);
+                context->IASetVertexBuffers(slot + i, 1, &buffer, &stride, &offset);
+            } else if (kind == 1 && stage < 6) {
+                auto *buffer = static_cast<Buffer *>(host);
+                UINT offset = 0;
+                ID3D11DeviceContext1 *latest = nullptr;
+                const auto address = extra & 0xffffffffffffull;
+                // constants the title wrote at an address of its own (a placement binding)
+                if (buffer && address && !buffer_offset(buffer, address, offset)) {
+                    D3D11_BUFFER_DESC desc;
+                    buffer->GetDesc(&desc);
+                    if (desc.Usage == D3D11_USAGE_DEFAULT &&
+                        readable_memory(address, desc.ByteWidth))
+                        context->UpdateSubresource(buffer, 0, nullptr,
+                                                   reinterpret_cast<const void *>(address), 0, 0);
+                }
+                if (buffer && buffer_offset(buffer, extra & 0xffffffffffffull, offset) && offset &&
+                    SUCCEEDED(context->QueryInterface(&latest))) {
+                    // constants from the address the title gave, in 256-byte steps
+                    D3D11_BUFFER_DESC desc;
+                    buffer->GetDesc(&desc);
+                    const UINT first = offset / 256 * 16,
+                               count =
+                                   std::min(4096u, (desc.ByteWidth / 16 - first + 15) / 16 * 16);
+                    using Set1 = void (STDMETHODCALLTYPE ID3D11DeviceContext1::*)(
+                        UINT, UINT, Buffer *const *, const UINT *, const UINT *);
+                    constexpr Set1 constants1[] = {&ID3D11DeviceContext1::VSSetConstantBuffers1,
+                                                   &ID3D11DeviceContext1::HSSetConstantBuffers1,
+                                                   &ID3D11DeviceContext1::DSSetConstantBuffers1,
+                                                   &ID3D11DeviceContext1::GSSetConstantBuffers1,
+                                                   &ID3D11DeviceContext1::PSSetConstantBuffers1,
+                                                   &ID3D11DeviceContext1::CSSetConstantBuffers1};
+                    (latest->*constants1[stage])(slot + i, 1, &buffer, &first, &count);
+                    latest->Release();
+                } else {
+                    (context->*constants[stage])(slot + i, 1, &buffer);
+                }
+            } else if (stage < 6) {
+                auto *sampler = static_cast<Sampler *>(host);
+                (context->*samplers[stage])(slot + i, 1, &sampler);
+            }
+        }
+    }
+}
+
 // The context's command buffer, which titles write GPU packets into themselves: the write
 // pointer at 0x50 and its end at 0x58. There is no GPU to read them here, so they go to a
 // scratch buffer of the context's that MakeCeSpace hands out again whenever it is full.
@@ -787,6 +910,11 @@ void STDMETHODCALLTYPE clear_render_target_x(void *self, void *view, UINT, const
 }
 std::atomic<UINT64> context_fences{0};
 UINT64 STDMETHODCALLTYPE insert_fence(void *, UINT) { return ++context_fences; }
+// the GPU writes the value once the work before it is done, which here it already is
+void STDMETHODCALLTYPE write_value_end_of_pipe(void *, void *destination, UINT value, UINT) {
+    if (destination)
+        std::memcpy(destination, &value, sizeof value);
+}
 void STDMETHODCALLTYPE context_copy_memory(void *, void *destination, const void *source,
                                            SIZE_T size) {
     std::memmove(destination, source, size);
@@ -964,8 +1092,9 @@ Layout context() {
     for (std::size_t slot = 196; slot <= 208; ++slot) // automatic flush..OMSetSampleMask
         console(slot, {Method::ignore});
     console(209, custom(&make_ce_space));
+    console(210, custom(&set_fast_resources));
     console(214, {Method::ignore}); // CSPlaceUnorderedAccessView
-    console(215, {Method::ignore}); // WriteValueEndOfPipe
+    console(215, custom(&write_value_end_of_pipe));
     console(216, custom(&context_copy_memory));
     console(217, custom(&context_fill_memory));
     for (std::size_t slot : {220, 221, 222, 224, 225}) // thread traces, wait on present

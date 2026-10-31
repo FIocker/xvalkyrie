@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <vector>
 #include <windows.h>
@@ -20,7 +22,9 @@ struct Placement {
     UINT tile_mode, pitch;
 };
 std::mutex mutex;
-std::vector<Placement> placements;
+std::map<std::uintptr_t, Placement> placements; // by start
+std::vector<std::uintptr_t> dirty;              // starts of the ones written since uploaded
+std::uintptr_t largest = 0;
 PVOID handler = nullptr;
 
 constexpr std::uintptr_t page = 4096;
@@ -41,11 +45,19 @@ LONG CALLBACK written(EXCEPTION_POINTERS *exception) {
     const auto address = static_cast<std::uintptr_t>(record->ExceptionInformation[1]);
     const std::lock_guard lock(mutex);
     bool ours = false;
-    for (auto &placement : placements)
+    // the ones whose pages hold the address: they start at most `largest` before it
+    for (auto at = placements.upper_bound(page_up(address + 1)); at != placements.begin();) {
+        auto &placement = (--at)->second;
+        if (page_down(placement.start) + largest + page < address)
+            break;
         if (address >= page_down(placement.start) && address < page_up(placement.end)) {
-            placement.dirty = ours = true;
+            ours = true;
+            if (!placement.dirty)
+                dirty.push_back(placement.start);
+            placement.dirty = true;
             protect(placement, PAGE_READWRITE);
         }
+    }
     return ours ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -219,17 +231,19 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
     if (!handler)
         handler = AddVectoredExceptionHandler(1, &written);
     // a resource placed where an older one was replaces it
-    std::erase_if(placements, [&](const Placement &old) {
-        const bool replaced = old.start == start;
-        if (replaced)
-            old.resource->Release();
-        return replaced;
-    });
+    if (const auto old = placements.find(start); old != placements.end()) {
+        old->second.resource->Release();
+        placements.erase(old);
+    }
     resource->AddRef();
+    largest = std::max<std::uintptr_t>(largest, bytes);
     // a tiled texture was created from its memory as if it were linear: read it properly
     // before its first use
-    placements.push_back({resource, start, start + bytes, tile_mode > 1, tile_mode, pitch});
-    protect(placements.back(), PAGE_READONLY);
+    const auto &placement =
+        placements[start] = {resource, start, start + bytes, tile_mode > 1, tile_mode, pitch};
+    if (placement.dirty)
+        dirty.push_back(start);
+    protect(placement, PAGE_READONLY);
 }
 
 bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
@@ -239,13 +253,19 @@ bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
            readable(start, texture_layout(desc, start, data, count));
 }
 
+bool readable_memory(std::uint64_t address, std::size_t bytes) {
+    return readable(static_cast<std::uintptr_t>(address), bytes);
+}
+
 void upload_placements(ID3D11DeviceContext *context) {
     const std::lock_guard lock(mutex);
-    for (auto &placement : placements)
-        if (placement.dirty) {
-            upload(context, placement);
-            placement.dirty = false;
-            protect(placement, PAGE_READONLY);
+    for (const auto start : dirty)
+        if (const auto found = placements.find(start);
+            found != placements.end() && found->second.dirty) {
+            upload(context, found->second);
+            found->second.dirty = false;
+            protect(found->second, PAGE_READONLY);
         }
+    dirty.clear();
 }
 } // namespace xs::runtime::durango::d3d11x

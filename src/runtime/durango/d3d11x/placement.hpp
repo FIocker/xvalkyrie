@@ -1,4 +1,6 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
 #include <d3d11.h>
 
 // Placement resources: the title owns their memory and writes it directly, as the console's
@@ -14,4 +16,6 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
 bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
                     D3D11_SUBRESOURCE_DATA *data, UINT count);
 void upload_placements(ID3D11DeviceContext *context);
+// every page of [address, address + bytes) is committed and readable
+bool readable_memory(std::uint64_t address, std::size_t bytes);
 } // namespace xs::runtime::durango::d3d11x

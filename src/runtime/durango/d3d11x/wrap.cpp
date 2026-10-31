@@ -316,6 +316,9 @@ void *wrap(void *host_object, Kind kind) {
     }
     if (description.words > 1 && kind != Kind::context)
         describe(words, host);
+    // titles then hand resource tables to SetFastResources_Debug instead of writing packets
+    if (kind == Kind::context)
+        reinterpret_cast<std::uint8_t *>(words)[0x390] = 1;
     objects.emplace(host, words);
     return words;
 }
