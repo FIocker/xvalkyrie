@@ -1,6 +1,7 @@
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/placement.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <atomic>
@@ -343,9 +344,10 @@ HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER
     if (FAILED(result))
         return result;
     track_placement(created, address);
-    if (buffer)
+    if (buffer) {
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
-    else
+        describe_buffer(*buffer, created, address);
+    } else
         created->Release();
     return result;
 }
@@ -686,8 +688,20 @@ template <class T> T read(void *object, std::size_t offset) {
     return value;
 }
 } // namespace state
+constexpr std::size_t command_write = 0x50 / 8, command_end = 0x58 / 8, scratch_bytes = 1 << 20;
+std::mutex scratch_mutex;
+std::map<void *, std::unique_ptr<std::byte[]>> scratch;
 void apply_context_state(void *self) {
     upload_placements(static_cast<ID3D11DeviceContext *>(unwrap(self)));
+    const std::byte *stream = nullptr;
+    {
+        const std::lock_guard lock(scratch_mutex);
+        if (const auto found = scratch.find(self); found != scratch.end())
+            stream = found->second.get();
+    }
+    if (stream)
+        apply_descriptors(static_cast<ID3D11DeviceContext *>(unwrap(self)), stream,
+                          static_cast<std::byte **>(self)[command_write]);
     restore_pixel_views(self);
     if (!state::read<std::uint32_t>(self, state::dirty))
         return;
@@ -752,9 +766,6 @@ void STDMETHODCALLTYPE set_placed_index_buffer(void *self, UINT hardware_format,
 // The context's command buffer, which titles write GPU packets into themselves: the write
 // pointer at 0x50 and its end at 0x58. There is no GPU to read them here, so they go to a
 // scratch buffer of the context's that MakeCeSpace hands out again whenever it is full.
-constexpr std::size_t command_write = 0x50 / 8, command_end = 0x58 / 8, scratch_bytes = 1 << 20;
-std::mutex scratch_mutex;
-std::map<void *, std::unique_ptr<std::byte[]>> scratch;
 void *STDMETHODCALLTYPE make_ce_space(void *self) {
     std::byte *buffer;
     {
@@ -766,7 +777,8 @@ void *STDMETHODCALLTYPE make_ce_space(void *self) {
     }
     auto *const words = static_cast<std::byte **>(self);
     words[command_write] = buffer;
-    words[command_end] = buffer + scratch_bytes - 4096;
+    words[command_end] = buffer + scratch_bytes - 4096; // the biased limit
+    words[command_end + 1] = buffer + scratch_bytes;
     return buffer;
 }
 void STDMETHODCALLTYPE clear_render_target_x(void *self, void *view, UINT, const FLOAT *color) {
@@ -986,7 +998,11 @@ const Layout &layout(Kind kind) {
         resource("texture 3D", 10),
         resource("resource", 9),
         view(),
-        child("state", 8),
+        [] {
+            auto state = child("state", 8);
+            state.words = child_words;
+            return state;
+        }(),
         child("device child", 6),
         dma(),
     };

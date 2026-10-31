@@ -1,5 +1,6 @@
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
 #include <atomic>
 #include <cstdio>
@@ -313,6 +314,8 @@ void *wrap(void *host_object, Kind kind) {
         else if (description.words > 1 && index >= 127)
             words[index] = slot_function(method, object_entries[index]);
     }
+    if (description.words > 1 && kind != Kind::context)
+        describe(words, host);
     objects.emplace(host, words);
     return words;
 }
