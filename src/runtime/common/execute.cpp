@@ -438,6 +438,32 @@ void report_guest_stack(const CONTEXT *context) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
+void print_location(DWORD64 address) {
+    std::fprintf(stderr, " %s", detail::guest_location(reinterpret_cast<void *>(address)).c_str());
+}
+// An unwind, through the function tables of the host and of the guest's images
+void report_unwound_stack(const CONTEXT *fault) {
+    CONTEXT context = *fault;
+    std::fprintf(stderr, "[Runtime] unwound:");
+    __try {
+        for (int depth = 0; depth < 24 && context.Rip; ++depth) {
+            print_location(context.Rip);
+            DWORD64 base = 0;
+            auto *const function = RtlLookupFunctionEntry(context.Rip, &base, nullptr);
+            if (!function) {
+                context.Rip = *reinterpret_cast<DWORD64 *>(context.Rsp);
+                context.Rsp += 8;
+                continue;
+            }
+            void *handler_data = nullptr;
+            DWORD64 frame = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, context.Rip, function, &context,
+                             &handler_data, &frame, nullptr);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    std::fprintf(stderr, "\n");
+}
 int report_fault(EXCEPTION_POINTERS *info) {
     const auto *record = info->ExceptionRecord;
     const auto address = reinterpret_cast<std::uint64_t>(record->ExceptionAddress);
@@ -463,6 +489,7 @@ int report_fault(EXCEPTION_POINTERS *info) {
     }
     report_cxx_type(record);
     report_guest_stack(info->ContextRecord);
+    report_unwound_stack(info->ContextRecord);
     report_recent_calls();
     std::fflush(nullptr);
     // Unwinding a guest in an unknown state can block or fault again.

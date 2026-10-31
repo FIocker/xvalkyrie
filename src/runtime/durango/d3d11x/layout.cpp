@@ -3,6 +3,7 @@
 #include "backends/surface/surface.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/placement.hpp"
+#include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <atomic>
 #include <cstdint>
@@ -486,6 +487,7 @@ Layout device() {
 
 // what follows each frame the title presents, whichever way it does
 void presented() {
+    frame_watchdog();
     if (auto *const window = winrt::current_title_window()) {
         window->show();
         static std::atomic<int> frames{0};
@@ -573,7 +575,13 @@ bool probing() {
 }
 void probe(IDXGISwapChain *swap_chain) {
     static std::atomic<int> frames{0};
-    if (!probing() || ++frames != 300)
+    // XS_D3D_PROBE=<frame>, 300 when it is not a number
+    static const int at = [] {
+        const auto *const text = std::getenv("XS_D3D_PROBE");
+        const int frame = text ? std::atoi(text) : 0;
+        return frame > 1 ? frame : 300;
+    }();
+    if (!probing() || ++frames != at)
         return;
     ID3D11Texture2D *buffer = nullptr;
     if (SUCCEEDED(swap_chain->GetBuffer(0, IID_PPV_ARGS(&buffer)))) {
@@ -581,13 +589,20 @@ void probe(IDXGISwapChain *swap_chain) {
         buffer->Release();
     }
 }
-// A console's window is never hidden: when the host's is (covered, minimized, the display
-// off), Present neither waits for the display nor succeeds, and titles stop drawing. That is
-// success here, a display refresh later.
+// What a console's Present never says: the desktop's statuses (occluded, mode changed,
+// present required...) are plain success. A hidden window (covered, minimized, the display
+// off) does not wait for the display either, so that wait is made here; titles that see
+// DXGI_STATUS_OCCLUDED stop drawing.
 HRESULT console_present_result(HRESULT result, UINT interval) {
-    if (result != DXGI_STATUS_OCCLUDED)
+    if (result == DXGI_STATUS_OCCLUDED)
+        Sleep(16 * std::max(interval, 1u));
+    if (FAILED(result)) {
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true))
+            std::fprintf(stderr, "[Runtime] Present failed on the host: 0x%08lx\n",
+                         static_cast<unsigned long>(result));
         return result;
-    Sleep(16 * std::max(interval, 1u));
+    }
     return S_OK;
 }
 HRESULT STDMETHODCALLTYPE present(void *self, UINT interval, UINT flags) {

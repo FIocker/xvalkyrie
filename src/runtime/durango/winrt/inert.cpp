@@ -281,11 +281,6 @@ constexpr Row rows[] = {
     {user, direct, 16, {Inert::offline, nullptr, 4}},
     {user, direct, 17, {Inert::offline, nullptr, 6}},
     {user, direct, 18, {Inert::offline, nullptr, 5}},
-    // a getter of an object the title does without when there is none
-    {L"Windows.ApplicationModel.Core.CoreApplication",
-     guid("1ada0e3e-e4a2-4123-b451-dc96bf800419"),
-     6,
-     {Inert::zero64}},
     // IPackageStatics::Current: the one package there is
     {L"Windows.ApplicationModel.Package",
      guid("4e534bdf-2960-4878-97a4-9624deb72f2d"),

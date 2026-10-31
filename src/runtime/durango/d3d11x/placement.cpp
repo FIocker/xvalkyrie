@@ -30,10 +30,28 @@ PVOID handler = nullptr;
 constexpr std::uintptr_t page = 4096;
 std::uintptr_t page_down(std::uintptr_t address) { return address & ~(page - 1); }
 std::uintptr_t page_up(std::uintptr_t address) { return (address + page - 1) & ~(page - 1); }
+// region by region: VirtualProtect fails for a range over more than one allocation, and the
+// title's physical memory is mapped as many views
+void protect(std::uintptr_t start, std::uintptr_t end, DWORD protection) {
+    for (auto at = page_down(start); at < page_up(end);) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (!VirtualQuery(reinterpret_cast<void *>(at), &info, sizeof info))
+            return;
+        const auto region_end = std::min(
+            page_up(end), reinterpret_cast<std::uintptr_t>(info.BaseAddress) + info.RegionSize);
+        DWORD previous;
+        if (info.State == MEM_COMMIT)
+            VirtualProtect(reinterpret_cast<void *>(at), region_end - at, protection, &previous);
+        at = region_end;
+    }
+}
 void protect(const Placement &placement, DWORD protection) {
-    DWORD previous;
-    VirtualProtect(reinterpret_cast<void *>(page_down(placement.start)),
-                   page_up(placement.end) - page_down(placement.start), protection, &previous);
+    protect(placement.start, placement.end, protection);
+}
+bool writable(std::uintptr_t address) {
+    MEMORY_BASIC_INFORMATION info{};
+    return VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+           (info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY));
 }
 
 // the first write to a placement's memory since its last upload
@@ -58,7 +76,10 @@ LONG CALLBACK written(EXCEPTION_POINTERS *exception) {
             protect(placement, PAGE_READWRITE);
         }
     }
-    return ours ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+    // going on is only right if the write can now happen; otherwise it faults again forever
+    if (ours && !writable(address))
+        protect(address, address + 1, PAGE_READWRITE);
+    return ours && writable(address) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 }
 
 UINT row_bytes(UINT width, DXGI_FORMAT format) {
@@ -232,6 +253,7 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
         handler = AddVectoredExceptionHandler(1, &written);
     // a resource placed where an older one was replaces it
     if (const auto old = placements.find(start); old != placements.end()) {
+        protect(old->second, PAGE_READWRITE); // the new one may not cover all of it
         old->second.resource->Release();
         placements.erase(old);
     }
@@ -277,13 +299,20 @@ bool readable_memory(std::uint64_t address, std::size_t bytes) {
 
 void upload_placements(ID3D11DeviceContext *context) {
     const std::lock_guard lock(mutex);
-    for (const auto start : dirty)
-        if (const auto found = placements.find(start);
-            found != placements.end() && found->second.dirty) {
-            upload(context, found->second);
-            found->second.dirty = false;
-            protect(found->second, PAGE_READONLY);
+    for (const auto start : dirty) {
+        const auto found = placements.find(start);
+        if (found == placements.end() || !found->second.dirty)
+            continue;
+        // memory the title has let go of: what was in it is all the resource gets
+        if (!readable(found->second.start, found->second.end - found->second.start)) {
+            found->second.resource->Release();
+            placements.erase(found);
+            continue;
         }
+        upload(context, found->second);
+        found->second.dirty = false;
+        protect(found->second, PAGE_READONLY);
+    }
     dirty.clear();
 }
 } // namespace xs::runtime::durango::d3d11x

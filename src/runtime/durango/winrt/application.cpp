@@ -1,5 +1,6 @@
 #include "runtime/durango/winrt/application.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/durango/winrt/collection.hpp"
 #include "runtime/durango/winrt/object.hpp"
 #include <atomic>
 #include <corewindow.h>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <intrin.h>
 #include <memory>
+#include <vector>
 #include <windows.applicationmodel.activation.h>
 #include <windows.applicationmodel.core.h>
 #include <windows.foundation.h>
@@ -306,7 +308,8 @@ void step(const char *text) {
     std::fflush(stderr);
 }
 
-class Application : public Class<Application, IActivationFactory, ICoreApplication> {
+class Application
+    : public Class<Application, IActivationFactory, ICoreApplication, ICoreImmersiveApplication> {
   public:
     static constexpr wchar_t name[] = L"Windows.ApplicationModel.Core.CoreApplication";
     STDMETHODIMP ActivateInstance(IInspectable **instance) override {
@@ -370,6 +373,31 @@ class Application : public Class<Application, IActivationFactory, ICoreApplicati
         return result;
     }
     STDMETHODIMP RunWithActivationFactories(IGetActivationFactory *) override { return E_NOTIMPL; }
+    // ICoreImmersiveApplication: the one view there is, which is the main one
+    STDMETHODIMP get_Views(Collections::IVectorView<CoreApplicationView *> **value) override {
+        if (!value)
+            return E_POINTER;
+        std::vector<IInspectable *> views;
+        if (view_)
+            views.push_back(reinterpret_cast<IInspectable *>(view_.Get()));
+        *value = static_cast<Collections::IVectorView<CoreApplicationView *> *>(
+            make_vector_view(std::move(views)));
+        return S_OK;
+    }
+    STDMETHODIMP CreateNewView(HSTRING, HSTRING, ICoreApplicationView **value) override {
+        if (value)
+            *value = nullptr;
+        return E_NOTIMPL;
+    }
+    STDMETHODIMP get_MainView(ICoreApplicationView **value) override {
+        if (!value)
+            return E_POINTER;
+        if (!view_) {
+            *value = nullptr;
+            return E_FAIL;
+        }
+        return view_.CopyTo(value);
+    }
 
   private:
     ComPtr<View> view_;

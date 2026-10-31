@@ -14,6 +14,8 @@ void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address)
 // VirtualAlloc(MEM_COMMIT) as the title's kernelx does it, physical page reservations included
 void *commit_title_memory(void *address, std::size_t size);
 void install_acphal(Registry &registry);
+// XS_WATCHDOG: called at each present; dumps every thread's stack once frames stop for 5 s
+void frame_watchdog();
 // mmdevapi, mfplat, pixevt, toolhelpx
 void install_system(Registry &registry);
 // WinRT activation for C++/CX titles.
