@@ -57,7 +57,15 @@ struct ExecuteOptions {
     // host folder where the title's saved games go, see save_directory()
     std::filesystem::path save_directory{};
     ConsoleSettings console{};
+    // the console's System32 the title shipped with; found next to the package when empty
+    std::filesystem::path system_directory{};
 };
+// <package>\EmbeddedXvd\Windows\System32, next to the folder with the title's manifest or
+// one up from it; empty if there is none
+std::filesystem::path console_system_directory(const std::filesystem::path &executable);
+// Modules of the console's system that are only computation (texture layouts, the shader
+// compiler's back end), taken from that folder instead of ours or the host's when it has them
+bool console_system_module(std::string_view module);
 // Maps and runs the image, returns its exit code. No sandbox!
 // A guest that faults ends the process with exit_guest_fault.
 std::uint32_t execute(const std::filesystem::path &path, std::span<const std::uint8_t> file,
@@ -97,6 +105,9 @@ std::uint64_t guest_offset(const void *address);
 bool in_title(const void *address);
 // "image+0x...", "<dll>+0x..." or the address
 std::string guest_location(const void *address);
+// an export of a console system module from the title's system folder, mapping it on first
+// use; null without that folder or module
+void *system_export(std::string_view module, std::string_view symbol);
 // maps the title's DLL and runs its DllMain on first use
 void *title_export(std::string_view module, std::string_view symbol);
 // LoadLibrary and GetProcAddress for modules of ours and of the title; null for the host's

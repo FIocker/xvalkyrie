@@ -364,7 +364,8 @@ HRESULT STDMETHODCALLTYPE create_placement_texture1d(void *self, const D3D11_TEX
     return result;
 }
 HRESULT STDMETHODCALLTYPE create_placement_texture2d(void *self, const D3D11_TEXTURE2D_DESC *desc,
-                                                     UINT, UINT, const void *address,
+                                                     UINT tile_mode, UINT pitch,
+                                                     const void *address,
                                                      ID3D11Texture2D **texture) {
     if (!desc)
         return E_INVALIDARG;
@@ -382,7 +383,7 @@ HRESULT STDMETHODCALLTYPE create_placement_texture2d(void *self, const D3D11_TEX
     if (FAILED(result))
         return result;
     if (initial)
-        track_placement(static_cast<ID3D11Texture2D *>(unwrap(created)), address);
+        track_placement(static_cast<ID3D11Texture2D *>(unwrap(created)), address, tile_mode, pitch);
     if (texture)
         *texture = created;
     else

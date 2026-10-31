@@ -1,8 +1,11 @@
 #include "runtime/durango/d3d11x/placement.hpp"
+#include "runtime/common/runtime.hpp"
 #include "runtime/modules/xg.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -14,6 +17,7 @@ struct Placement {
     ID3D11Resource *resource; // one reference of ours
     std::uintptr_t start, end;
     bool dirty;
+    UINT tile_mode, pitch;
 };
 std::mutex mutex;
 std::vector<Placement> placements;
@@ -96,6 +100,73 @@ bool readable(std::uintptr_t start, std::size_t bytes) {
     }
     return true;
 }
+// XG_TEXTURE2D_DESC and the two XGTextureAddressComputer vtables of the console's xg_x.dll:
+// CopyFromSubresource is at 6 in the older one, at 9 in the newer, which has the resource
+// size at 3 where the older has the offset of a mip (0 for the first)
+struct XgTexture2D {
+    UINT width, height, mips, array_size, format, sample_count, sample_quality, usage, bind_flags,
+        cpu_access, misc_flags, esram_offset, esram_usage, tile_mode, pitch;
+};
+using CreateComputer = HRESULT(WINAPI *)(const XgTexture2D *, void **);
+using Copy = HRESULT(WINAPI *)(void *, void *, UINT, UINT, const void *, UINT, UINT);
+CreateComputer console_xg() {
+    static const auto create = reinterpret_cast<CreateComputer>(
+        detail::system_export("xg_x.dll", "XGCreateTexture2DComputer"));
+    return create;
+}
+// SEH only, no objects to unwind here
+bool copy_out(Copy copy, void *computer, void *destination, UINT subresource, const void *source,
+              UINT row_pitch, UINT slice_pitch) {
+    __try {
+        return SUCCEEDED(
+            copy(computer, destination, 0, subresource, source, row_pitch, slice_pitch));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+bool detile(ID3D11DeviceContext *context, ID3D11Texture2D *texture,
+            const D3D11_TEXTURE2D_DESC &desc, const Placement &placement) {
+    const auto create = console_xg();
+    if (!create)
+        return false;
+    const XgTexture2D xg{desc.Width,
+                         desc.Height,
+                         desc.MipLevels,
+                         desc.ArraySize,
+                         static_cast<UINT>(desc.Format),
+                         desc.SampleDesc.Count,
+                         desc.SampleDesc.Quality,
+                         static_cast<UINT>(desc.Usage),
+                         desc.BindFlags,
+                         desc.CPUAccessFlags,
+                         desc.MiscFlags,
+                         0,
+                         0,
+                         placement.tile_mode,
+                         placement.pitch};
+    void *computer = nullptr;
+    if (FAILED(create(&xg, &computer)) || !computer)
+        return false;
+    auto *const vtable = *static_cast<void ***>(computer);
+    const auto first = reinterpret_cast<std::uint64_t(WINAPI *)(void *, UINT, UINT)>(vtable[3]);
+    const auto copy = reinterpret_cast<Copy>(vtable[first(computer, 0, 0) ? 9 : 6]);
+    const UINT mips = std::max(desc.MipLevels, 1u);
+    std::vector<std::byte> linear;
+    bool ok = true;
+    for (UINT slice = 0; slice < std::max(desc.ArraySize, 1u) && ok; ++slice)
+        for (UINT mip = 0; mip < mips && ok; ++mip) {
+            const auto pitch = row_bytes(desc.Width >> mip, desc.Format);
+            const auto bytes = pitch * rows(desc.Height >> mip, desc.Format);
+            linear.resize(bytes);
+            const auto index = slice * mips + mip;
+            ok = copy_out(copy, computer, linear.data(), index,
+                          reinterpret_cast<const void *>(placement.start), pitch, bytes);
+            if (ok)
+                context->UpdateSubresource(texture, index, nullptr, linear.data(), pitch, bytes);
+        }
+    reinterpret_cast<ULONG(WINAPI *)(void *)>(vtable[1])(computer);
+    return ok;
+}
 void upload(ID3D11DeviceContext *context, const Placement &placement) {
     auto *const resource = placement.resource;
     D3D11_RESOURCE_DIMENSION dimension;
@@ -120,6 +191,16 @@ void upload(ID3D11DeviceContext *context, const Placement &placement) {
     static_cast<ID3D11Texture2D *>(resource)->GetDesc(&desc);
     if (desc.Usage != D3D11_USAGE_DEFAULT || desc.SampleDesc.Count > 1)
         return;
+    if (placement.tile_mode > 1) {
+        static std::atomic<bool> reported{false};
+        if (!detile(context, static_cast<ID3D11Texture2D *>(resource), desc, placement) &&
+            !reported.exchange(true))
+            std::fprintf(stderr,
+                         "[Runtime] a texture in tile mode %u, and no xg_x.dll of the console "
+                         "to read it: it stays as it is\n",
+                         placement.tile_mode);
+        return;
+    }
     std::vector<D3D11_SUBRESOURCE_DATA> data(std::size_t{std::max(desc.MipLevels, 1u)} *
                                              std::max(desc.ArraySize, 1u));
     texture_layout(desc, placement.start, data.data(), static_cast<UINT>(data.size()));
@@ -129,7 +210,7 @@ void upload(ID3D11DeviceContext *context, const Placement &placement) {
 }
 } // namespace
 
-void track_placement(ID3D11Resource *resource, const void *address) {
+void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mode, UINT pitch) {
     const auto start = reinterpret_cast<std::uintptr_t>(address);
     const auto bytes = resource ? resource_bytes(resource) : 0;
     if (!address || !bytes || !readable(start, bytes))
@@ -145,7 +226,9 @@ void track_placement(ID3D11Resource *resource, const void *address) {
         return replaced;
     });
     resource->AddRef();
-    placements.push_back({resource, start, start + bytes, false});
+    // a tiled texture was created from its memory as if it were linear: read it properly
+    // before its first use
+    placements.push_back({resource, start, start + bytes, tile_mode > 1, tile_mode, pitch});
     protect(placements.back(), PAGE_READONLY);
 }
 

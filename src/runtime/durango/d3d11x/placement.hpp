@@ -6,8 +6,10 @@
 // to date before draws and presents once the title has written it again: the memory is kept
 // read-only, and the first write to it marks every resource in it dirty.
 namespace xs::runtime::durango::d3d11x {
-// `resource` lives at `address` in the layout XG computes here (linear, mips in order)
-void track_placement(ID3D11Resource *resource, const void *address);
+// `resource` lives at `address`: linear (tile mode 0 or 1, the layout our XG computes) or in
+// a tiling the console's xg_x.dll copies out of, when the title's system folder has it
+void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mode = 0,
+                     UINT pitch = 0);
 // the data at `address` for a resource described by `desc`, if that memory can be read
 bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
                     D3D11_SUBRESOURCE_DATA *data, UINT count);

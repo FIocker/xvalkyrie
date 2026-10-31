@@ -91,6 +91,23 @@ std::filesystem::path package_directory(const std::filesystem::path &directory) 
     return directory;
 }
 
+std::filesystem::path console_system_directory(const std::filesystem::path &executable) {
+    std::error_code error;
+    const auto package =
+        package_directory(std::filesystem::absolute(executable, error).parent_path());
+    for (const auto &root : {package, package.parent_path()}) {
+        const auto folder = root / "EmbeddedXvd" / "Windows" / "System32";
+        if (std::filesystem::is_directory(folder, error))
+            return folder;
+    }
+    return {};
+}
+
+bool console_system_module(std::string_view module) {
+    const auto name = lower(module);
+    return name == "xg_x.dll" || name == "xg.dll";
+}
+
 std::filesystem::path detail::title_dll(const std::filesystem::path &directory,
                                         std::string_view module) {
     const auto name = lower(module);

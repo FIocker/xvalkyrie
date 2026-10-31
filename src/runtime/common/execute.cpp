@@ -46,6 +46,7 @@ struct Guest {
     std::deque<TitleModule> modules; // dependencies before what needs them
     Resolver resolve;                // imports of the title's DLLs loaded while it runs
     const Registry *registry = nullptr;
+    std::filesystem::path system_directory; // the console's System32 the title shipped with
     std::map<std::string, std::unique_ptr<std::string>> own_handles; // LoadLibrary of ours
     std::recursive_mutex loading;
     std::vector<std::string> missing; // "module!symbol", indexed by stub number
@@ -577,7 +578,20 @@ void *export_of(const TitleModule *library, std::string_view symbol) {
     return exported == library->exports.end() ? nullptr
                                               : reinterpret_cast<void *>(exported->second);
 }
+// a console system module of the allowed ones in the title's system folder, if it is there
+std::filesystem::path system_file(std::string_view module) {
+    if (!guest || guest->system_directory.empty() || !console_system_module(module))
+        return {};
+    std::error_code error;
+    const auto file = guest->system_directory / std::string(module);
+    return std::filesystem::is_regular_file(file, error) ? file : std::filesystem::path{};
+}
 } // namespace
+
+void *detail::system_export(std::string_view module, std::string_view symbol) {
+    const auto file = system_file(module);
+    return file.empty() ? nullptr : export_of(load_title(lower(module), file), symbol);
+}
 
 void *detail::title_export(std::string_view module, std::string_view symbol) {
     return guest ? export_of(load_title(module), symbol) : nullptr;
@@ -589,6 +603,9 @@ void *detail::guest_library(const wchar_t *path) {
     auto name = lower(std::filesystem::path(path).filename().string());
     if (name.find('.') == std::string::npos)
         name += ".dll";
+    if (const auto file = system_file(name); !file.empty())
+        if (const auto *library = load_title(name, file))
+            return reinterpret_cast<void *>(library->base);
     if (guest->registry->has(name)) {
         const std::lock_guard lock(guest->loading);
         auto &handle = guest->own_handles[name];
@@ -693,7 +710,13 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     resolve = [&](std::string_view module,
                   std::string_view symbol) -> std::optional<std::uint64_t> {
         const auto name = std::string(module) + "!" + std::string(symbol);
-        // a DLL the title brings wins over the host's, but not over ours
+        // the console's own computation modules win over ours; a DLL the title brings wins
+        // over the host's, but not over ours
+        if (const auto file = system_file(module); !file.empty())
+            if (const auto *library = title_module(module, resolve, file)) {
+                const auto exported = library->exports.find(std::string(symbol));
+                return exported == library->exports.end() ? make_stub(name) : exported->second;
+            }
         if (!registry.find(module, symbol) && registry.forwarded(module).empty()) {
             if (const auto *library = title_module(module, resolve)) {
                 const auto exported = library->exports.find(std::string(symbol));
@@ -709,6 +732,12 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     options.resolve = resolve;
     state.resolve = resolve;
     state.registry = &registry;
+    state.system_directory = execution.system_directory.empty()
+                                 ? console_system_directory(state.path)
+                                 : execution.system_directory;
+    if (!state.system_directory.empty())
+        std::fprintf(stderr, "[Runtime] console system modules from %ls\n",
+                     state.system_directory.c_str());
     const loader::MappedImage image(file, pe, options);
     const auto &layout = image.report();
     if (!layout.at("imports").at("modules_without_symbols").empty())
