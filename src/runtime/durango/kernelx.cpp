@@ -5,9 +5,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <shlwapi.h>
 #include <string>
+#include <string_view>
 #include <windows.h>
 
 #include <psapi.h> // after windows.h
@@ -90,18 +93,88 @@ void note_music(const wchar_t *name, HANDLE file) {
     std::fflush(stderr);
     SetLastError(error);
 }
+// The console's drives: G:\ (and the GAME:\ device name) is the title's package, T:\ its
+// temporary storage, kept with its saves. Other paths are the host's.
+std::wstring console_path(const wchar_t *name) {
+    if (!name)
+        return {};
+    const std::wstring_view path(name);
+    const auto drive = [&](std::wstring_view prefix) {
+        return path.size() > prefix.size() &&
+               CompareStringOrdinal(path.data(), static_cast<int>(prefix.size()), prefix.data(),
+                                    static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL &&
+               (path[prefix.size()] == L'\\' || path[prefix.size()] == L'/');
+    };
+    std::error_code error;
+    if (drive(L"G:") || drive(L"GAME:")) {
+        const auto rest = path.substr(path.find(L':') + 2);
+        return (package_directory(std::filesystem::current_path(error)) / rest).wstring();
+    }
+    if (drive(L"T:")) {
+        const auto folder = save_directory() / "Temp";
+        std::filesystem::create_directories(folder, error);
+        return (folder / path.substr(3)).wstring();
+    }
+    return std::wstring(path);
+}
+
+// XS_FILE_TRACE: every file the title looks for and does not find, to see what content it
+// expects where
+void note_missing(const char *call, const wchar_t *name, bool failed) {
+    static const bool enabled = std::getenv("XS_FILE_TRACE") != nullptr;
+    if (!enabled || !failed)
+        return;
+    const auto error = GetLastError();
+    std::fprintf(stderr, "[Runtime] %s(%ls): error %lu\n", call, name ? name : L"(null)", error);
+    std::fflush(stderr);
+    SetLastError(error);
+}
 HANDLE WINAPI create_file_w(const wchar_t *name, DWORD access, DWORD share,
                             SECURITY_ATTRIBUTES *security, DWORD creation, DWORD flags,
                             HANDLE model) {
-    const auto file = CreateFileW(name, access, share, security, creation, flags, model);
+    const auto file =
+        CreateFileW(console_path(name).c_str(), access, share, security, creation, flags, model);
     note_music(name, file);
+    note_missing("CreateFileW", name, file == INVALID_HANDLE_VALUE);
     return file;
 }
 HANDLE WINAPI create_file2(const wchar_t *name, DWORD access, DWORD share, DWORD creation,
                            CREATEFILE2_EXTENDED_PARAMETERS *parameters) {
-    const auto file = CreateFile2(name, access, share, creation, parameters);
+    const auto file = CreateFile2(console_path(name).c_str(), access, share, creation, parameters);
     note_music(name, file);
+    note_missing("CreateFile2", name, file == INVALID_HANDLE_VALUE);
     return file;
+}
+BOOL WINAPI get_file_attributes_ex_w(const wchar_t *name, GET_FILEEX_INFO_LEVELS level,
+                                     void *information) {
+    const auto found = GetFileAttributesExW(console_path(name).c_str(), level, information);
+    note_missing("GetFileAttributesExW", name, !found);
+    return found;
+}
+DWORD WINAPI get_file_attributes_w(const wchar_t *name) {
+    const auto attributes = GetFileAttributesW(console_path(name).c_str());
+    note_missing("GetFileAttributesW", name, attributes == INVALID_FILE_ATTRIBUTES);
+    return attributes;
+}
+HANDLE WINAPI find_first_file_ex_w(const wchar_t *name, FINDEX_INFO_LEVELS level, void *data,
+                                   FINDEX_SEARCH_OPS search, void *filter, DWORD flags) {
+    const auto find =
+        FindFirstFileExW(console_path(name).c_str(), level, data, search, filter, flags);
+    note_missing("FindFirstFileExW", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+BOOL WINAPI create_directory_w(const wchar_t *name, SECURITY_ATTRIBUTES *security) {
+    return CreateDirectoryW(console_path(name).c_str(), security);
+}
+BOOL WINAPI remove_directory_w(const wchar_t *name) {
+    return RemoveDirectoryW(console_path(name).c_str());
+}
+BOOL WINAPI delete_file_w(const wchar_t *name) { return DeleteFileW(console_path(name).c_str()); }
+BOOL WINAPI move_file_ex_w(const wchar_t *from, const wchar_t *to, DWORD flags) {
+    return MoveFileExW(console_path(from).c_str(), to ? console_path(to).c_str() : nullptr, flags);
+}
+BOOL WINAPI set_file_attributes_w(const wchar_t *name, DWORD attributes) {
+    return SetFileAttributesW(console_path(name).c_str(), attributes);
 }
 // What a title writes for a debugger: its own log, which is what says why it gives up.
 // Lines go to stderr as they come, without the trailing newline titles usually add.
@@ -230,6 +303,18 @@ void install_kernelx(Registry &registry) {
         registry.add("kernelx.dll", name, reinterpret_cast<void *>(&title_memory_status));
     registry.add("kernelx.dll", "CreateFileW", reinterpret_cast<void *>(&create_file_w));
     registry.add("kernelx.dll", "CreateFile2", reinterpret_cast<void *>(&create_file2));
+    registry.add("kernelx.dll", "GetFileAttributesExW",
+                 reinterpret_cast<void *>(&get_file_attributes_ex_w));
+    registry.add("kernelx.dll", "GetFileAttributesW",
+                 reinterpret_cast<void *>(&get_file_attributes_w));
+    registry.add("kernelx.dll", "FindFirstFileExW",
+                 reinterpret_cast<void *>(&find_first_file_ex_w));
+    registry.add("kernelx.dll", "CreateDirectoryW", reinterpret_cast<void *>(&create_directory_w));
+    registry.add("kernelx.dll", "RemoveDirectoryW", reinterpret_cast<void *>(&remove_directory_w));
+    registry.add("kernelx.dll", "DeleteFileW", reinterpret_cast<void *>(&delete_file_w));
+    registry.add("kernelx.dll", "MoveFileExW", reinterpret_cast<void *>(&move_file_ex_w));
+    registry.add("kernelx.dll", "SetFileAttributesW",
+                 reinterpret_cast<void *>(&set_file_attributes_w));
     registry.add("kernelx.dll", "LoadLibraryExW", reinterpret_cast<void *>(&load_library));
     registry.add("kernelx.dll", "LoadLibraryW", reinterpret_cast<void *>(&load_library_w));
     registry.add("kernelx.dll", "LoadLibraryExA", reinterpret_cast<void *>(&load_library_ex_a));

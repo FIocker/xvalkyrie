@@ -70,13 +70,13 @@ struct IGamepadReading : IInspectable {
     XS_PRESSED(DPadDown)
     XS_PRESSED(DPadLeft)
     XS_PRESSED(DPadRight)
-    XS_PRESSED(Menu) XS_PRESSED(View) XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick)
-        XS_PRESSED(LeftShoulder) XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B) XS_PRESSED(X)
-            XS_PRESSED(Y)
+    XS_PRESSED(Menu)
+    XS_PRESSED(View) XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick) XS_PRESSED(LeftShoulder)
+        XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B) XS_PRESSED(X) XS_PRESSED(Y)
 #undef XS_PRESSED
 #define XS_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
-                XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
-                    XS_AXIS(LeftThumbstickY) XS_AXIS(RightThumbstickX) XS_AXIS(RightThumbstickY)
+            XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
+                XS_AXIS(LeftThumbstickY) XS_AXIS(RightThumbstickX) XS_AXIS(RightThumbstickY)
 #undef XS_AXIS
 };
 // GamepadButtons, the same bits as the raw reading
@@ -119,21 +119,21 @@ class Reading final : public IGamepadReading {
     XS_PRESSED(DPadUp, 0x1)
     XS_PRESSED(DPadDown, 0x2)
     XS_PRESSED(DPadLeft, 0x4)
-  XS_PRESSED(DPadRight, 0x8)
-  XS_PRESSED(Menu, 0x10) XS_PRESSED(View, 0x20) XS_PRESSED(LeftThumbstick, 0x40)
-      XS_PRESSED(RightThumbstick, 0x80) XS_PRESSED(LeftShoulder, 0x100)
-          XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000) XS_PRESSED(B, 0x2000)
-              XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
+    XS_PRESSED(DPadRight, 0x8)
+  XS_PRESSED(Menu, 0x10)
+  XS_PRESSED(View, 0x20) XS_PRESSED(LeftThumbstick, 0x40) XS_PRESSED(RightThumbstick, 0x80)
+      XS_PRESSED(LeftShoulder, 0x100) XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000)
+          XS_PRESSED(B, 0x2000) XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
 #undef XS_PRESSED
 #define XS_AXIS(Name, Field)                                                                       \
     STDMETHODIMP get_##Name(float *value) override { return put(value, raw_.Field); }
-                  XS_AXIS(LeftTrigger, left_trigger) XS_AXIS(RightTrigger, right_trigger)
-                      XS_AXIS(LeftThumbstickX, left_x) XS_AXIS(LeftThumbstickY, left_y)
-                          XS_AXIS(RightThumbstickX, right_x) XS_AXIS(RightThumbstickY, right_y)
+              XS_AXIS(LeftTrigger, left_trigger) XS_AXIS(RightTrigger, right_trigger)
+                  XS_AXIS(LeftThumbstickX, left_x) XS_AXIS(LeftThumbstickY, left_y)
+                      XS_AXIS(RightThumbstickX, right_x) XS_AXIS(RightThumbstickY, right_y)
 #undef XS_AXIS
 
-                              private : template <class T>
-                                        static HRESULT put(T *value, T field) {
+                          private : template <class T>
+                                    static HRESULT put(T *value, T field) {
         if (!value)
             return E_POINTER;
         *value = field;

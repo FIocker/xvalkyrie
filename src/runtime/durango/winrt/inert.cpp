@@ -177,11 +177,19 @@ constexpr Row rows[] = {
      {Inert::shared, L"Windows.Devices.Input.MouseDevice"}},
     {L"Windows.Devices.Input.MouseDevice", direct, 6, {Inert::event_add}},
     {L"Windows.Devices.Input.MouseDevice", direct, 7, {Inert::accept}},
-    // console addition to CoreApplication
+    // the console's ICoreApplicationResourceAvailability: all of the console is the title's
+    {L"Windows.ApplicationModel.Core.CoreApplication",
+     guid("9ff3799e-6e83-468c-a5b0-501ce6bb0fa1"),
+     6,
+     {Inert::zero32}}, // ResourceAvailability_Full
     {L"Windows.ApplicationModel.Core.CoreApplication",
      guid("9ff3799e-6e83-468c-a5b0-501ce6bb0fa1"),
      7,
      {Inert::event_add}},
+    {L"Windows.ApplicationModel.Core.CoreApplication",
+     guid("9ff3799e-6e83-468c-a5b0-501ce6bb0fa1"),
+     8,
+     {Inert::accept}},
     {L"Windows.Xbox.Multiplayer.PartyConfig",
      guid("2fcec780-2e70-437a-ae46-72298ae2bac2"),
      7,

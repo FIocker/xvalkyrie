@@ -1,13 +1,16 @@
 #include "runtime/durango/winrt/application.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/collection.hpp"
 #include "runtime/durango/winrt/object.hpp"
 #include <atomic>
 #include <corewindow.h>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <intrin.h>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <windows.applicationmodel.activation.h>
 #include <windows.applicationmodel.core.h>
@@ -61,17 +64,70 @@ class CompletedAction : public Class<CompletedAction, IAsyncAction, IAsyncInfo> 
     STDMETHODIMP Close() override { return S_OK; }
 };
 
+// The arguments of the window events the shell raises when the title's window comes up
+class ActivatedArgs : public Class<ActivatedArgs, IWindowActivatedEventArgs, ICoreWindowEventArgs> {
+  public:
+    static constexpr wchar_t name[] = L"Windows.UI.Core.WindowActivatedEventArgs";
+    STDMETHODIMP get_WindowActivationState(CoreWindowActivationState *value) override {
+        *value = CoreWindowActivationState_CodeActivated;
+        return S_OK;
+    }
+    STDMETHODIMP get_Handled(boolean *value) override {
+        *value = handled_;
+        return S_OK;
+    }
+    STDMETHODIMP put_Handled(boolean value) override {
+        handled_ = value;
+        return S_OK;
+    }
+
+  private:
+    boolean handled_ = false;
+};
+class VisibilityArgs
+    : public Class<VisibilityArgs, IVisibilityChangedEventArgs, ICoreWindowEventArgs> {
+  public:
+    static constexpr wchar_t name[] = L"Windows.UI.Core.VisibilityChangedEventArgs";
+    STDMETHODIMP get_Visible(boolean *value) override {
+        *value = true;
+        return S_OK;
+    }
+    STDMETHODIMP get_Handled(boolean *value) override {
+        *value = handled_;
+        return S_OK;
+    }
+    STDMETHODIMP put_Handled(boolean value) override {
+        handled_ = value;
+        return S_OK;
+    }
+
+  private:
+    boolean handled_ = false;
+};
+
 class Dispatcher : public Class<Dispatcher, ICoreDispatcher> {
   public:
     static constexpr wchar_t name[] = L"Windows.UI.Core.CoreDispatcher";
     explicit Dispatcher(TitleWindow &window) : window_(window), thread_(GetCurrentThreadId()) {}
+    // what ProcessEvents runs next on the thread that calls it: window events
+    void post(std::function<void()> work) {
+        const std::lock_guard lock(mutex_);
+        pending_.push_back(std::move(work));
+    }
     STDMETHODIMP get_HasThreadAccess(boolean *value) override {
         *value = GetCurrentThreadId() == thread_;
         return S_OK;
     }
     STDMETHODIMP ProcessEvents(CoreProcessEventsOption options) override {
-        // The window's messages are handled on another thread, so there is nothing to
-        // process here, whichever thread asks: only the options that wait do something.
+        // The window's messages are handled on another thread; what there is to process
+        // here are the events raised for the title, then only the options that wait wait.
+        std::vector<std::function<void()>> work;
+        {
+            const std::lock_guard lock(mutex_);
+            work.swap(pending_);
+        }
+        for (auto &item : work)
+            item();
         if (options == CoreProcessEventsOption_ProcessUntilQuit)
             window_.wait_closed();
         return S_OK;
@@ -94,6 +150,8 @@ class Dispatcher : public Class<Dispatcher, ICoreDispatcher> {
   private:
     TitleWindow &window_;
     DWORD thread_;
+    std::mutex mutex_;
+    std::vector<std::function<void()>> pending_;
 };
 
 // ICoreWindow as the console has it, which is not the desktop one: the bounds are the first
@@ -123,6 +181,7 @@ class Window final : public IConsoleWindow {
     static constexpr wchar_t name[] = L"Windows.UI.Core.CoreWindow";
     Window() : host_(L"XScarlet", 1280, 720), dispatcher_(Make<Dispatcher>(host_)) {}
     TitleWindow &host() { return host_; }
+    Dispatcher &dispatcher() { return *dispatcher_.Get(); }
 
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
         if (!object)
@@ -178,7 +237,7 @@ class Window final : public IConsoleWindow {
     XS_UNKNOWN(12) XS_UNKNOWN(13) XS_UNKNOWN(14) XS_UNKNOWN(16) XS_UNKNOWN(18)
     XS_UNKNOWN(20) XS_UNKNOWN(21) XS_UNKNOWN(22) XS_UNKNOWN(24) XS_UNKNOWN(26)
     XS_UNKNOWN(28) XS_UNKNOWN(29) XS_UNKNOWN(30) XS_UNKNOWN(31) XS_UNKNOWN(32) XS_UNKNOWN(33)
-    XS_UNKNOWN(34) XS_UNKNOWN(35) XS_UNKNOWN(36) XS_UNKNOWN(38) XS_UNKNOWN(39)
+    XS_UNKNOWN(34) XS_UNKNOWN(36) XS_UNKNOWN(38) XS_UNKNOWN(39)
     XS_UNKNOWN(41) XS_UNKNOWN(43) XS_UNKNOWN(44) XS_UNKNOWN(45)
     XS_UNKNOWN(46) XS_UNKNOWN(47)
 #undef XS_UNKNOWN
@@ -189,14 +248,38 @@ class Window final : public IConsoleWindow {
         *static_cast<std::int64_t *>(token) = ++tokens_;                                           \
         return S_OK;                                                                               \
     }
-    XS_EVENT(15) XS_EVENT(17) XS_EVENT(19) XS_EVENT(23) XS_EVENT(25) XS_EVENT(27) XS_EVENT(37)
+    XS_EVENT(17) XS_EVENT(19) XS_EVENT(23) XS_EVENT(25) XS_EVENT(27) XS_EVENT(37)
     XS_EVENT(40) XS_EVENT(42)
 #undef XS_EVENT
-      // clang-format on
+        // clang-format on
+        // Activated (15) and VisibilityChanged (35), which the shell raises once the window is
+        // up: activated, and visible. Titles wait for them before they start.
+        STDMETHODIMP unknown15(void *handler, void *token) override {
+        return raise_once<ActivatedArgs>(handler, token);
+    }
+    STDMETHODIMP unknown35(void *handler, void *token) override {
+        return raise_once<VisibilityArgs>(handler, token);
+    }
+    template <class Args> HRESULT raise_once(void *handler, void *token) {
+        if (!handler || !token)
+            return E_POINTER;
+        *static_cast<std::int64_t *>(token) = ++tokens_;
+        ComPtr<IUnknown> held(static_cast<IUnknown *>(handler));
+        ComPtr<Window> self(this);
+        dispatcher_->post([held, self] {
+            // ITypedEventHandler<CoreWindow *, Args *>::Invoke(sender, args), slot 3
+            using Invoke = HRESULT(STDMETHODCALLTYPE *)(IUnknown *, IInspectable *, IInspectable *);
+            auto args = Make<Args>();
+            (*reinterpret_cast<Invoke **>(held.Get()))[3](
+                held.Get(),
+                reinterpret_cast<IInspectable *>(static_cast<IConsoleWindow *>(self.Get())),
+                reinterpret_cast<IInspectable *>(args.Get()));
+        });
+        return S_OK;
+    }
 
-      private : std::atomic<ULONG> references_ {
-          1
-      };
+  private:
+    std::atomic<ULONG> references_{1};
     std::atomic<std::int64_t> tokens_{0};
     TitleWindow host_;
     ComPtr<Dispatcher> dispatcher_;
@@ -275,7 +358,19 @@ class View : public Class<View, ICoreApplicationView> {
     STDMETHODIMP
     add_Activated(ITypedEventHandler<CoreApplicationView *, IActivatedEventArgs *> *handler,
                   EventRegistrationToken *token) override {
-        return activated_.Add(handler, token);
+        const auto result = activated_.Add(handler, token);
+        // the shell raises Activated through the dispatcher: a title that subscribes only in
+        // Run gets it at its next ProcessEvents
+        if (SUCCEEDED(result) && activated_once_ && handler) {
+            ComPtr<ITypedEventHandler<CoreApplicationView *, IActivatedEventArgs *>> held(handler);
+            ComPtr<View> self(this);
+            window_->dispatcher().post([held, self] {
+                const auto arguments = Make<LaunchArguments>();
+                held->Invoke(reinterpret_cast<ICoreApplicationView *>(self.Get()),
+                             static_cast<IActivatedEventArgs *>(arguments.Get()));
+            });
+        }
+        return result;
     }
     STDMETHODIMP remove_Activated(EventRegistrationToken token) override {
         return activated_.Remove(token);
@@ -289,6 +384,7 @@ class View : public Class<View, ICoreApplicationView> {
         return S_OK;
     }
     HRESULT activate() {
+        activated_once_ = true;
         const auto arguments = Make<LaunchArguments>();
         return activated_.InvokeAll(reinterpret_cast<ICoreApplicationView *>(this),
                                     static_cast<IActivatedEventArgs *>(arguments.Get()));
@@ -301,6 +397,7 @@ class View : public Class<View, ICoreApplicationView> {
         return window;
     }();
     EventSource<ITypedEventHandler<CoreApplicationView *, IActivatedEventArgs *>> activated_;
+    bool activated_once_ = false;
 };
 
 void step(const char *text) {
@@ -308,8 +405,15 @@ void step(const char *text) {
     std::fflush(stderr);
 }
 
-class Application
-    : public Class<Application, IActivationFactory, ICoreApplication, ICoreImmersiveApplication> {
+// ICoreImmersiveApplication as the console has it: MainView only, where the desktop's has
+// Views, CreateNewView and then MainView
+MIDL_INTERFACE("1ada0e3e-e4a2-4123-b451-dc96bf800419")
+IConsoleImmersiveApplication : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_MainView(ICoreApplicationView * *value) = 0;
+};
+
+class Application : public Class<Application, IActivationFactory, ICoreApplication,
+                                 IConsoleImmersiveApplication> {
   public:
     static constexpr wchar_t name[] = L"Windows.ApplicationModel.Core.CoreApplication";
     STDMETHODIMP ActivateInstance(IInspectable **instance) override {
@@ -365,6 +469,7 @@ class Application
         if (SUCCEEDED(result))
             result = view_->activate();
         step("CoreApplication: activated, entering the view's Run");
+        frame_watchdog(); // a title that never presents a frame counts as stalled from here
         if (SUCCEEDED(result))
             result = view->Run();
         step("CoreApplication: the view's Run returned");
@@ -373,22 +478,7 @@ class Application
         return result;
     }
     STDMETHODIMP RunWithActivationFactories(IGetActivationFactory *) override { return E_NOTIMPL; }
-    // ICoreImmersiveApplication: the one view there is, which is the main one
-    STDMETHODIMP get_Views(Collections::IVectorView<CoreApplicationView *> **value) override {
-        if (!value)
-            return E_POINTER;
-        std::vector<IInspectable *> views;
-        if (view_)
-            views.push_back(reinterpret_cast<IInspectable *>(view_.Get()));
-        *value = static_cast<Collections::IVectorView<CoreApplicationView *> *>(
-            make_vector_view(std::move(views)));
-        return S_OK;
-    }
-    STDMETHODIMP CreateNewView(HSTRING, HSTRING, ICoreApplicationView **value) override {
-        if (value)
-            *value = nullptr;
-        return E_NOTIMPL;
-    }
+    // the console's ICoreImmersiveApplication: the one view there is, the main one
     STDMETHODIMP get_MainView(ICoreApplicationView **value) override {
         if (!value)
             return E_POINTER;

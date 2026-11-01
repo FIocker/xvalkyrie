@@ -48,8 +48,15 @@ void dump_thread(DWORD id) {
                              &handler_data, &frame, nullptr);
         }
     ResumeThread(thread);
+    wchar_t *description = nullptr;
+    std::string name;
+    if (SUCCEEDED(GetThreadDescription(thread, &description)) && description) {
+        for (const wchar_t *at = description; *at; ++at)
+            name += *at < 0x80 ? static_cast<char>(*at) : '?';
+        LocalFree(description);
+    }
     CloseHandle(thread);
-    std::fprintf(stderr, "[Runtime] thread %lu:%s\n", id, frames.c_str());
+    std::fprintf(stderr, "[Runtime] thread %lu (%s):%s\n", id, name.c_str(), frames.c_str());
 }
 void dump_threads() {
     const auto self = GetCurrentThreadId();
