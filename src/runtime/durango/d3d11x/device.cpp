@@ -226,6 +226,40 @@ HRESULT WINAPI map_esram(UINT, void *address, UINT pages, const UINT *) {
     return commit_title_memory(address, std::size_t{pages} << 16) ? S_OK : E_OUTOFMEMORY;
 }
 HRESULT WINAPI ignored() { return S_OK; }
+
+// d3d12_x.dll: root signatures are the host's format as well; the device is not there yet
+template <class Function> Function host_d3d12(const char *name) {
+    static const auto library = LoadLibraryExW(L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    return library ? reinterpret_cast<Function>(GetProcAddress(library, name)) : nullptr;
+}
+HRESULT WINAPI serialize_root_signature(const void *desc, UINT version, void **blob,
+                                        void **errors) {
+    using Serialize = HRESULT(WINAPI *)(const void *, UINT, void **, void **);
+    static const auto serialize = host_d3d12<Serialize>("D3D12SerializeRootSignature");
+    return serialize ? serialize(desc, version, blob, errors) : E_NOTIMPL;
+}
+HRESULT WINAPI serialize_versioned_root_signature(const void *desc, void **blob, void **errors) {
+    using Serialize = HRESULT(WINAPI *)(const void *, void **, void **);
+    static const auto serialize = host_d3d12<Serialize>("D3D12SerializeVersionedRootSignature");
+    return serialize ? serialize(desc, blob, errors) : E_NOTIMPL;
+}
+HRESULT WINAPI create_device_12(void *adapter, UINT level, REFIID iid, void **device) {
+    if (device)
+        *device = nullptr;
+    std::fprintf(stderr, "[Runtime] D3D12CreateDevice(%p, 0x%x): Direct3D 12.X is not there yet\n",
+                 adapter, level);
+    std::fflush(stderr);
+    return E_NOTIMPL;
+}
+HRESULT WINAPI xbox_create_device(void *adapter, const void *parameters, REFIID, void **device) {
+    if (device)
+        *device = nullptr;
+    std::fprintf(stderr,
+                 "[Runtime] D3D12XboxCreateDevice(%p, %p): Direct3D 12.X is not there yet\n",
+                 adapter, parameters);
+    std::fflush(stderr);
+    return E_NOTIMPL;
+}
 } // namespace
 
 // IDXGIDevice of our device: the host's, with GetAdapter leading to our factory
@@ -250,5 +284,19 @@ void install_d3d11x(Registry &registry) {
         {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&ignored)}};
     for (const auto &[name, function] : functions)
         registry.add("d3d11_x.dll", name, function);
+    const std::pair<const char *, void *> d3d12[] = {
+        {"DXGIXPresentArray", reinterpret_cast<void *>(&present_array)},
+        {"DXGIXGetFrameStatistics", reinterpret_cast<void *>(&frame_statistics)},
+        {"D3DMapEsramMemory", reinterpret_cast<void *>(&map_esram)},
+        {"DXGIXSetVLineNotification", reinterpret_cast<void *>(&ignored)},
+        {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&ignored)},
+        {"D3D12XboxSetProcessDebugFlags", reinterpret_cast<void *>(&ignored)},
+        {"D3D12SerializeRootSignature", reinterpret_cast<void *>(&serialize_root_signature)},
+        {"D3D12SerializeVersionedRootSignature",
+         reinterpret_cast<void *>(&serialize_versioned_root_signature)},
+        {"D3D12CreateDevice", reinterpret_cast<void *>(&create_device_12)},
+        {"D3D12XboxCreateDevice", reinterpret_cast<void *>(&xbox_create_device)}};
+    for (const auto &[name, function] : d3d12)
+        registry.add("d3d12_x.dll", name, function);
 }
 } // namespace xs::runtime::durango
