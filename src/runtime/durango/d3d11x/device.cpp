@@ -478,7 +478,11 @@ constexpr std::size_t host_list_slots = 60, list_slots = 96, unmapped = ~std::si
 std::array<std::size_t, list_slots> list_map = [] {
     std::array<std::size_t, list_slots> map{};
     for (std::size_t slot = 0; slot < list_slots; ++slot)
-        map[slot] = slot <= 27 ? slot : slot < 32 ? unmapped : slot - 4;
+        map[slot] = slot <= 27                                 ? slot
+                    : slot < 32 || slot - 4 >= host_list_slots ? unmapped
+                                                               : slot - 4;
+    // CopyTextureRegion with one more argument, which the host's has not
+    map[83] = 16;
     return map;
 }();
 template <std::size_t Index>
@@ -486,9 +490,12 @@ std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::ui
                                             std::uint64_t c, std::uint64_t d, std::uint64_t e,
                                             std::uint64_t f, std::uint64_t g, std::uint64_t h,
                                             std::uint64_t i, std::uint64_t j) {
-    if (static std::atomic<int> calls{0}; calls++ < 2) {
-        std::fprintf(stderr, "[debug] list slot %zu (%llx %llx %llx %llx %llx) from %s\n", Index, a,
-                     b, c, d, e, detail::guest_location(_ReturnAddress()).c_str());
+    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    if (static std::atomic<int> calls{0}; tracing && calls++ < 2) {
+        std::fprintf(
+            stderr,
+            "[Runtime] Direct3D 12 command list slot %zu (%llx %llx %llx %llx %llx) from %s\n",
+            Index, a, b, c, d, e, detail::guest_location(_ReturnAddress()).c_str());
         std::fflush(stderr);
     }
     const auto target = list_map[Index];
