@@ -63,7 +63,7 @@ ULONG STDMETHODCALLTYPE release(Forwarder *self) {
 } // namespace
 
 Forwarder *make_forwarder(IUnknown *host, std::size_t slots, ForwarderQuery query_interface,
-                          std::initializer_list<SlotOverride> overrides) {
+                          std::span<const SlotOverride> overrides) {
     if (!host || slots < 3 || slots > slot_limit)
         throw std::invalid_argument("Bad COM forwarder");
     auto methods = std::make_unique<void *[]>(slots);

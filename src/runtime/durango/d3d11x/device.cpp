@@ -14,8 +14,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <d3d11_1.h>
+#include <d3d12.h>
 #include <dxgi1_6.h>
 #include <utility>
+#include <vector>
+#include <wrl/implements.h>
 
 // d3d11_x.dll on the host's Direct3D 11. Direct3D objects go to the title wrapped in the
 // console layout (wrap.hpp). The DXGI device, adapter and factory are the same as on the
@@ -117,12 +120,9 @@ HRESULT adapter_query(Forwarder *self, REFIID iid, void **object) {
     return forwarder_host(self)->QueryInterface(iid, object);
 }
 
-// IDXGIDevice::GetAdapter
-HRESULT STDMETHODCALLTYPE device_adapter(Forwarder *self, IDXGIAdapter **adapter) {
-    IDXGIAdapter *host = nullptr;
-    auto result = static_cast<IDXGIDevice *>(forwarder_host(self))->GetAdapter(&host);
-    if (FAILED(result))
-        return result;
+// The host's adapter, with GetParent leading to our factory; takes over `host`
+HRESULT wrap_adapter(IDXGIAdapter *host, IDXGIAdapter **adapter) {
+    HRESULT result = S_OK;
     // up to IDXGIAdapter4 where the host has it, 19 methods, else IDXGIAdapter2
     IDXGIAdapter4 *fourth = nullptr;
     latest_adapter = SUCCEEDED(host->QueryInterface(&fourth));
@@ -137,6 +137,12 @@ HRESULT STDMETHODCALLTYPE device_adapter(Forwarder *self, IDXGIAdapter **adapter
     *adapter = reinterpret_cast<IDXGIAdapter *>(make_forwarder(
         latest, latest_adapter ? 19 : 12, &adapter_query, {{6, slot(&adapter_parent)}}));
     return S_OK;
+}
+// IDXGIDevice::GetAdapter
+HRESULT STDMETHODCALLTYPE device_adapter(Forwarder *self, IDXGIAdapter **adapter) {
+    IDXGIAdapter *host = nullptr;
+    const auto result = static_cast<IDXGIDevice *>(forwarder_host(self))->GetAdapter(&host);
+    return FAILED(result) ? result : wrap_adapter(host, adapter);
 }
 // IDXGIObject::GetParent of the DXGI device, the other way to its adapter
 HRESULT STDMETHODCALLTYPE device_parent(Forwarder *self, REFIID iid, void **parent) {
@@ -251,14 +257,220 @@ HRESULT WINAPI create_device_12(void *adapter, UINT level, REFIID iid, void **de
     std::fflush(stderr);
     return E_NOTIMPL;
 }
-HRESULT WINAPI xbox_create_device(void *adapter, const void *parameters, REFIID, void **device) {
-    if (device)
-        *device = nullptr;
+// The console's Direct3D 12 device answers for IDXGIDevice1, which the host's does not: this
+// one leads to the adapter the device was made on, and from there to our factory.
+class D3D12DxgiDevice final
+    : public Microsoft::WRL::RuntimeClass<
+          Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDXGIDevice1> {
+  public:
+    explicit D3D12DxgiDevice(LUID luid) : luid_(luid) {}
+    STDMETHODIMP GetAdapter(IDXGIAdapter **adapter) override {
+        if (!adapter)
+            return E_POINTER;
+        *adapter = nullptr;
+        IDXGIFactory4 *factory = nullptr;
+        auto result = CreateDXGIFactory2(0, IID_PPV_ARGS(&factory));
+        if (FAILED(result))
+            return result;
+        IDXGIAdapter *host = nullptr;
+        result = factory->EnumAdapterByLuid(luid_, IID_PPV_ARGS(&host));
+        factory->Release();
+        return FAILED(result) ? result : wrap_adapter(host, adapter);
+    }
+    STDMETHODIMP GetParent(REFIID iid, void **parent) override {
+        if (!is_any<IDXGIAdapter, IDXGIAdapter1, IDXGIAdapter2, IDXGIAdapter3, IDXGIAdapter4>(iid))
+            return E_NOINTERFACE;
+        return GetAdapter(reinterpret_cast<IDXGIAdapter **>(parent));
+    }
+    STDMETHODIMP SetPrivateData(REFGUID, UINT, const void *) override { return S_OK; }
+    STDMETHODIMP SetPrivateDataInterface(REFGUID, const IUnknown *) override { return S_OK; }
+    STDMETHODIMP GetPrivateData(REFGUID, UINT *, void *) override { return DXGI_ERROR_NOT_FOUND; }
+    STDMETHODIMP CreateSurface(const DXGI_SURFACE_DESC *, UINT, DXGI_USAGE,
+                               const DXGI_SHARED_RESOURCE *, IDXGISurface **) override {
+        return E_NOTIMPL;
+    }
+    STDMETHODIMP QueryResourceResidency(IUnknown *const *, DXGI_RESIDENCY *, UINT) override {
+        return E_NOTIMPL;
+    }
+    STDMETHODIMP SetGPUThreadPriority(INT) override { return S_OK; }
+    STDMETHODIMP GetGPUThreadPriority(INT *priority) override {
+        *priority = 0;
+        return S_OK;
+    }
+    STDMETHODIMP SetMaximumFrameLatency(UINT) override { return S_OK; }
+    STDMETHODIMP GetMaximumFrameLatency(UINT *latency) override {
+        *latency = 3;
+        return S_OK;
+    }
+
+  private:
+    LUID luid_;
+};
+// The console's Direct3D 12 objects are the host's with a vtable of their own, one slot
+// before which is the host's: being the host's objects, they go back to the host's API as
+// they are, whichever way the title got hold of them.
+using Slot = void *;
+Slot *original_vtable(void *object) {
+    return static_cast<Slot *>((*static_cast<Slot **>(object))[-1]);
+}
+template <class Method> Method original(void *object, std::size_t index) {
+    return reinterpret_cast<Method>(original_vtable(object)[index]);
+}
+void console_vtable(void *object, std::size_t host_slots, std::size_t slots,
+                    const std::vector<std::pair<std::size_t, Slot>> &overrides) {
+    auto *const host = *static_cast<Slot **>(object);
+    auto *const block = new Slot[slots + 1]{};
+    block[0] = host;
+    std::copy(host, host + host_slots, block + 1);
+    for (const auto &[index, function] : overrides)
+        block[1 + index] = function;
+    *static_cast<Slot **>(object) = block + 1;
+}
+// Methods that return an 8-byte structure: the console's return it in RAX, where the
+// desktop's C++ methods write it through a hidden pointer
+template <std::size_t Index> std::uint64_t STDMETHODCALLTYPE returned_in_rax(void *self) {
+    std::uint64_t value = 0;
+    original<void *(STDMETHODCALLTYPE *)(void *, std::uint64_t *)>(self, Index)(self, &value);
+    return value;
+}
+
+// ID3D12Device::QueryInterface: the console's device is also its DXGI device
+HRESULT STDMETHODCALLTYPE device_query(ID3D12Device *self, REFIID iid, void **object) {
+    if (object && is_any<IDXGIObject, IDXGIDevice, IDXGIDevice1>(iid)) {
+        *object = static_cast<IDXGIDevice1 *>(
+            Microsoft::WRL::Make<D3D12DxgiDevice>(self->GetAdapterLuid()).Detach());
+        return S_OK;
+    }
+    return original<HRESULT(STDMETHODCALLTYPE *)(void *, REFIID, void **)>(self, 0)(self, iid,
+                                                                                    object);
+}
+// CheckFeatureSupport: some of the console's structures are larger than the desktop's
+// (D3D12_OPTIONS is 64 bytes there): the host fills its part, the rest is zero
+HRESULT STDMETHODCALLTYPE check_feature_support(ID3D12Device *self, D3D12_FEATURE feature,
+                                                void *data, UINT size) {
+    using Check = HRESULT(STDMETHODCALLTYPE *)(void *, D3D12_FEATURE, void *, UINT);
+    const auto check = original<Check>(self, 13);
+    auto result = check(self, feature, data, size);
+    if (result != E_INVALIDARG || !data)
+        return result;
+    std::vector<std::uint8_t> input(static_cast<std::uint8_t *>(data),
+                                    static_cast<std::uint8_t *>(data) + size);
+    for (UINT smaller = size - 4; smaller >= 4 && smaller + 32 >= size; smaller -= 4) {
+        std::memcpy(data, input.data(), size);
+        if (SUCCEEDED(result = check(self, feature, data, smaller))) {
+            std::memset(static_cast<std::uint8_t *>(data) + smaller, 0, size - smaller);
+            break;
+        }
+    }
+    return result;
+}
+// CreateDescriptorHeap: the heap's Get{CPU,GPU}DescriptorHandleForHeapStart (9, 10) return
+// their handles in RAX
+HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
+                                                 const D3D12_DESCRIPTOR_HEAP_DESC *desc, REFIID iid,
+                                                 void **heap) {
+    using Create =
+        HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_DESCRIPTOR_HEAP_DESC *, REFIID, void **);
+    const auto result = original<Create>(self, 14)(self, desc, iid, heap);
+    if (SUCCEEDED(result) && heap && *heap)
+        console_vtable(*heap, 11, 11,
+                       {{9, reinterpret_cast<Slot>(&returned_in_rax<9>)},
+                        {10, reinterpret_cast<Slot>(&returned_in_rax<10>)}});
+    return result;
+}
+// slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
+HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
+                                               const D3D12_COMMAND_QUEUE_DESC *desc, REFIID iid,
+                                               void **queue) {
+    return self->CreateCommandQueue(desc, iid, queue);
+}
+// CreateCommittedResource, reported when the host turns it down
+HRESULT STDMETHODCALLTYPE create_committed_resource(
+    ID3D12Device *self, const D3D12_HEAP_PROPERTIES *heap, D3D12_HEAP_FLAGS flags,
+    const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear,
+    REFIID iid, void **resource) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(
+        void *, const D3D12_HEAP_PROPERTIES *, D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC *,
+        D3D12_RESOURCE_STATES, const D3D12_CLEAR_VALUE *, REFIID, void **);
+    // the console's D3D12_RESOURCE_STATE_GENERIC_READ (0x8c3) has no index buffer bit, the
+    // desktop's (0xac3), which upload heaps require, does
+    constexpr auto console_generic_read = static_cast<D3D12_RESOURCE_STATES>(0x8c3);
+    if (state == console_generic_read)
+        state = D3D12_RESOURCE_STATE_GENERIC_READ;
+    const auto result =
+        original<Create>(self, 27)(self, heap, flags, desc, state, clear, iid, resource);
+    if (FAILED(result) && heap && desc) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommittedResource heap %d/%d/%d flags 0x%x dimension %d "
+                     "alignment %llu %llux%ux%u mips %u format %d samples %u layout %d flags "
+                     "0x%x state 0x%x: 0x%08lx\n",
+                     heap->Type, heap->CPUPageProperty, heap->MemoryPoolPreference, flags,
+                     desc->Dimension, desc->Alignment, desc->Width, desc->Height,
+                     desc->DepthOrArraySize, desc->MipLevels, desc->Format, desc->SampleDesc.Count,
+                     desc->Layout, desc->Flags, state, static_cast<unsigned long>(result));
+        std::fflush(stderr);
+    }
+    return result;
+}
+// slot 73: a command list from a description (Unreal's call site: the type, 0, the node mask,
+// 0), an allocator, a pipeline state, then the interface and the list
+HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *desc,
+                                              ID3D12CommandAllocator *allocator,
+                                              ID3D12PipelineState *state, REFIID iid, void **list) {
+    if (!desc)
+        return E_INVALIDARG;
+    if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] console CreateCommandList description %u %u %u %u\n",
+                     desc[0], desc[1], desc[2], desc[3]);
+        std::fflush(stderr);
+    }
+    return self->CreateCommandList(desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]),
+                                   allocator, state, iid, list);
+}
+// The console's ID3D12Device goes on past the desktop's 44 methods with its own. Those not
+// known yet say which they are and fail.
+template <std::size_t Index>
+HRESULT STDMETHODCALLTYPE unknown_device_method(void *, void *first, void *second) {
     std::fprintf(stderr,
-                 "[Runtime] D3D12XboxCreateDevice(%p, %p): Direct3D 12.X is not there yet\n",
-                 adapter, parameters);
+                 "[Runtime] unimplemented Direct3D 12 call: device slot %zu (%p, %p) from %s\n",
+                 Index, first, second, detail::guest_location(_ReturnAddress()).c_str());
     std::fflush(stderr);
     return E_NOTIMPL;
+}
+constexpr std::size_t host_device_slots = 44, device_slots = 96;
+template <std::size_t... Index>
+std::vector<std::pair<std::size_t, Slot>> unknown_device_methods(std::index_sequence<Index...>) {
+    return {{host_device_slots + Index,
+             reinterpret_cast<Slot>(&unknown_device_method<host_device_slots + Index>)}...};
+}
+
+// D3D12XBOX_CREATE_DEVICE_PARAMETERS sizes the console's rings, which mean nothing here
+HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **device) {
+    if (!device)
+        return E_POINTER;
+    *device = nullptr;
+    using Create = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
+    static const auto create = host_d3d12<Create>("D3D12CreateDevice");
+    ID3D12Device *host = nullptr;
+    const auto result =
+        create ? create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&host)) : E_NOTIMPL;
+    std::fprintf(stderr, "[Runtime] Direct3D 12 device on the host: 0x%08lx\n",
+                 static_cast<unsigned long>(result));
+    std::fflush(stderr);
+    if (FAILED(result))
+        return result;
+    auto overrides =
+        unknown_device_methods(std::make_index_sequence<device_slots - host_device_slots>{});
+    overrides.push_back({0, reinterpret_cast<Slot>(&device_query)});
+    overrides.push_back({13, reinterpret_cast<Slot>(&check_feature_support)});
+    overrides.push_back({14, reinterpret_cast<Slot>(&create_descriptor_heap)});
+    overrides.push_back({27, reinterpret_cast<Slot>(&create_committed_resource)});
+    overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
+    overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
+    console_vtable(host, host_device_slots, device_slots, overrides);
+    const auto queried = host->QueryInterface(iid, device);
+    host->Release();
+    return queried;
 }
 } // namespace
 
