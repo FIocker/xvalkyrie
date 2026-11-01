@@ -83,8 +83,6 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
         d3d12->Release();
         if (auto *const queue = direct_queue.load())
             presenter = queue;
-        std::fprintf(stderr, "[Runtime] Direct3D 12 swap chain for queue %p\n",
-                     static_cast<void *>(direct_queue.load()));
     }
     const auto result = factory->CreateSwapChainForHwnd(
         presenter, static_cast<HWND>(window->native()), &host, nullptr, nullptr, swap_chain);
