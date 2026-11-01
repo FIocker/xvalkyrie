@@ -9,6 +9,7 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -316,14 +317,43 @@ Slot *original_vtable(void *object) {
 template <class Method> Method original(void *object, std::size_t index) {
     return reinterpret_cast<Method>(original_vtable(object)[index]);
 }
+// The host's runtime calls its own objects through their vtable too: a slot the console has
+// differently runs the console's method only when the title calls it, and the host's
+// otherwise (its callers pass the object first; the title's, for methods that return a
+// structure, second). The console's methods are one table per kind of object.
+enum class Family { device, list, heap };
+constexpr std::size_t max_slots = 128;
+template <Family Kind> std::array<Slot, max_slots> console_table{};
+using Raw = std::uint64_t(STDMETHODCALLTYPE *)(void *, std::uint64_t, std::uint64_t, std::uint64_t,
+                                               std::uint64_t, std::uint64_t, std::uint64_t,
+                                               std::uint64_t, std::uint64_t, std::uint64_t,
+                                               std::uint64_t);
+template <Family Kind, std::size_t Index>
+std::uint64_t STDMETHODCALLTYPE by_caller(void *first, std::uint64_t a, std::uint64_t b,
+                                          std::uint64_t c, std::uint64_t d, std::uint64_t e,
+                                          std::uint64_t f, std::uint64_t g, std::uint64_t h,
+                                          std::uint64_t i, std::uint64_t j) {
+    const auto method = detail::in_title(_ReturnAddress()) ? console_table<Kind>[Index]
+                                                           : original_vtable(first)[Index];
+    return reinterpret_cast<Raw>(method)(first, a, b, c, d, e, f, g, h, i, j);
+}
+template <Family Kind, std::size_t... Index>
+std::array<Slot, max_slots> by_caller_slots(std::index_sequence<Index...>) {
+    return {reinterpret_cast<Slot>(&by_caller<Kind, Index>)...};
+}
+template <Family Kind>
+const auto dispatchers = by_caller_slots<Kind>(std::make_index_sequence<max_slots>{});
+template <Family Kind>
 void console_vtable(void *object, std::size_t host_slots, std::size_t slots,
                     const std::vector<std::pair<std::size_t, Slot>> &overrides) {
     auto *const host = *static_cast<Slot **>(object);
     auto *const block = new Slot[slots + 1]{};
     block[0] = host;
     std::copy(host, host + host_slots, block + 1);
-    for (const auto &[index, function] : overrides)
-        block[1 + index] = function;
+    for (const auto &[index, function] : overrides) {
+        console_table<Kind>[index] = function;
+        block[1 + index] = dispatchers<Kind>[index];
+    }
     *static_cast<Slot **>(object) = block + 1;
 }
 // Methods that return an 8-byte structure: the console's return it in RAX, where the
@@ -334,6 +364,26 @@ template <std::size_t Index> std::uint64_t STDMETHODCALLTYPE returned_in_rax(voi
     return value;
 }
 
+// Methods that return a larger structure: the console's take the place for it first and the
+// object second, the desktop's C++ methods the other way round
+D3D12_RESOURCE_ALLOCATION_INFO *STDMETHODCALLTYPE
+resource_allocation_info(D3D12_RESOURCE_ALLOCATION_INFO *info, ID3D12Device *self, UINT mask,
+                         UINT count, const D3D12_RESOURCE_DESC *descs) {
+    std::vector<D3D12_RESOURCE_DESC> host(descs, descs + (descs ? count : 0));
+    for (auto &desc : host)
+        desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(desc.Flags & 0xff);
+    using Get = D3D12_RESOURCE_ALLOCATION_INFO *(
+        STDMETHODCALLTYPE *)(void *, D3D12_RESOURCE_ALLOCATION_INFO *, UINT, UINT,
+                             const D3D12_RESOURCE_DESC *);
+    return original<Get>(self, 25)(self, info, mask, count, host.data());
+}
+D3D12_HEAP_PROPERTIES *STDMETHODCALLTYPE custom_heap_properties(D3D12_HEAP_PROPERTIES *properties,
+                                                                ID3D12Device *self, UINT node,
+                                                                D3D12_HEAP_TYPE type) {
+    using Get = D3D12_HEAP_PROPERTIES *(STDMETHODCALLTYPE *)(void *, D3D12_HEAP_PROPERTIES *, UINT,
+                                                             D3D12_HEAP_TYPE);
+    return original<Get>(self, 26)(self, properties, node, type);
+}
 // ID3D12Device::QueryInterface: the console's device is also its DXGI device
 HRESULT STDMETHODCALLTYPE device_query(ID3D12Device *self, REFIID iid, void **object) {
     if (object && is_any<IDXGIObject, IDXGIDevice, IDXGIDevice1>(iid)) {
@@ -373,9 +423,9 @@ HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
         HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_DESCRIPTOR_HEAP_DESC *, REFIID, void **);
     const auto result = original<Create>(self, 14)(self, desc, iid, heap);
     if (SUCCEEDED(result) && heap && *heap)
-        console_vtable(*heap, 11, 11,
-                       {{9, reinterpret_cast<Slot>(&returned_in_rax<9>)},
-                        {10, reinterpret_cast<Slot>(&returned_in_rax<10>)}});
+        console_vtable<Family::heap>(*heap, 11, 11,
+                                     {{9, reinterpret_cast<Slot>(&returned_in_rax<9>)},
+                                      {10, reinterpret_cast<Slot>(&returned_in_rax<10>)}});
     return result;
 }
 // slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
@@ -397,8 +447,15 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     constexpr auto console_generic_read = static_cast<D3D12_RESOURCE_STATES>(0x8c3);
     if (state == console_generic_read)
         state = D3D12_RESOURCE_STATE_GENERIC_READ;
-    const auto result =
-        original<Create>(self, 27)(self, heap, flags, desc, state, clear, iid, resource);
+    // resource flags above the desktop's (0x100000, 0x200000 on Unreal's render targets) are
+    // the console's own
+    D3D12_RESOURCE_DESC host_desc{};
+    if (desc) {
+        host_desc = *desc;
+        host_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host_desc.Flags & 0xff);
+    }
+    const auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr,
+                                                   state, clear, iid, resource);
     if (FAILED(result) && heap && desc) {
         std::fprintf(stderr,
                      "[Runtime] CreateCommittedResource heap %d/%d/%d flags 0x%x dimension %d "
@@ -412,6 +469,48 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     }
     return result;
 }
+// ID3D12GraphicsCommandList as the console has it, mapped onto the host's: each console slot
+// calls this host slot. The arguments go on as they came, integer registers and stack.
+// Unreal's call sites put Close, Reset, CopyBufferRegion and ResourceBarrier where the
+// desktop has them, and SetDescriptorHeaps 4 later: the console's own four come after
+// ExecuteBundle (27), at 28 to 31.
+constexpr std::size_t host_list_slots = 60, list_slots = 96, unmapped = ~std::size_t{0};
+std::array<std::size_t, list_slots> list_map = [] {
+    std::array<std::size_t, list_slots> map{};
+    for (std::size_t slot = 0; slot < list_slots; ++slot)
+        map[slot] = slot <= 27 ? slot : slot < 32 ? unmapped : slot - 4;
+    return map;
+}();
+template <std::size_t Index>
+std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::uint64_t b,
+                                            std::uint64_t c, std::uint64_t d, std::uint64_t e,
+                                            std::uint64_t f, std::uint64_t g, std::uint64_t h,
+                                            std::uint64_t i, std::uint64_t j) {
+    if (static std::atomic<int> calls{0}; calls++ < 2) {
+        std::fprintf(stderr, "[debug] list slot %zu (%llx %llx %llx %llx %llx) from %s\n", Index, a,
+                     b, c, d, e, detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    const auto target = list_map[Index];
+    if (target >= host_list_slots) {
+        if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+            std::fprintf(stderr,
+                         "[Runtime] unimplemented Direct3D 12 call: command list slot %zu (%llx, "
+                         "%llx) from %s\n",
+                         Index, a, b, detail::guest_location(_ReturnAddress()).c_str());
+            std::fflush(stderr);
+        }
+        return E_NOTIMPL;
+    }
+    using Method = std::uint64_t(STDMETHODCALLTYPE *)(
+        void *, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
+        std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+    return original<Method>(self, target)(self, a, b, c, d, e, f, g, h, i, j);
+}
+template <std::size_t... Index>
+std::vector<std::pair<std::size_t, Slot>> list_methods(std::index_sequence<Index...>) {
+    return {{3 + Index, reinterpret_cast<Slot>(&list_method<3 + Index>)}...};
+}
 // slot 73: a command list from a description (Unreal's call site: the type, 0, the node mask,
 // 0), an allocator, a pipeline state, then the interface and the list
 HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *desc,
@@ -424,8 +523,12 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
                      desc[0], desc[1], desc[2], desc[3]);
         std::fflush(stderr);
     }
-    return self->CreateCommandList(desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]),
-                                   allocator, state, iid, list);
+    const auto result = self->CreateCommandList(
+        desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]), allocator, state, iid, list);
+    if (SUCCEEDED(result) && list && *list)
+        console_vtable<Family::list>(*list, list_slots, list_slots,
+                                     list_methods(std::make_index_sequence<list_slots - 3>{}));
+    return result;
 }
 // The console's ID3D12Device goes on past the desktop's 44 methods with its own. Those not
 // known yet say which they are and fail.
@@ -464,10 +567,13 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({0, reinterpret_cast<Slot>(&device_query)});
     overrides.push_back({13, reinterpret_cast<Slot>(&check_feature_support)});
     overrides.push_back({14, reinterpret_cast<Slot>(&create_descriptor_heap)});
+    overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
+    overrides.push_back({26, reinterpret_cast<Slot>(&custom_heap_properties)});
     overrides.push_back({27, reinterpret_cast<Slot>(&create_committed_resource)});
     overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
-    console_vtable(host, host_device_slots, device_slots, overrides);
+    // all of the host's vtable, which its runtime calls past the desktop's first 44 too
+    console_vtable<Family::device>(host, device_slots, device_slots, overrides);
     const auto queried = host->QueryInterface(iid, device);
     host->Release();
     return queried;
