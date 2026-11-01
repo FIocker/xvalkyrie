@@ -17,6 +17,8 @@
 #include <d3d11_1.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <map>
+#include <mutex>
 #include <utility>
 #include <vector>
 #include <wrl/implements.h>
@@ -41,6 +43,9 @@ HRESULT keep(Forwarder *self, void **object) {
 void *slot(auto *function) { return reinterpret_cast<void *>(function); }
 
 // IDXGIFactory2::CreateSwapChainForCoreWindow
+// The title's first direct queue: a console Direct3D 12 swap chain is made for the device,
+// the host's for the queue that presents
+std::atomic<ID3D12CommandQueue *> direct_queue{nullptr};
 HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, IUnknown *,
                                             const DXGI_SWAP_CHAIN_DESC1 *description, IDXGIOutput *,
                                             IDXGISwapChain1 **swap_chain) {
@@ -50,6 +55,15 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
     auto *const factory = static_cast<IDXGIFactory2 *>(forwarder_host(self));
     // what a CoreWindow takes and a window handle does not
     auto host = *description;
+    // flip swap chains take no typeless formats, which the console's do
+    if (host.Format == DXGI_FORMAT_R10G10B10A2_TYPELESS)
+        host.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+    else if (host.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS)
+        host.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    else if (host.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS)
+        host.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    else if (host.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS)
+        host.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     if (host.Scaling == DXGI_SCALING_ASPECT_RATIO_STRETCH)
         host.Scaling = DXGI_SCALING_STRETCH;
     if (host.AlphaMode != DXGI_ALPHA_MODE_UNSPECIFIED && host.AlphaMode != DXGI_ALPHA_MODE_IGNORE)
@@ -63,9 +77,17 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
     host.Flags &= DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE |
                   DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
                   DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+    auto *presenter = static_cast<IUnknown *>(d3d11x::unwrap(device));
+    if (ID3D12Device *d3d12 = nullptr;
+        presenter && SUCCEEDED(presenter->QueryInterface(IID_PPV_ARGS(&d3d12)))) {
+        d3d12->Release();
+        if (auto *const queue = direct_queue.load())
+            presenter = queue;
+        std::fprintf(stderr, "[Runtime] Direct3D 12 swap chain for queue %p\n",
+                     static_cast<void *>(direct_queue.load()));
+    }
     const auto result = factory->CreateSwapChainForHwnd(
-        static_cast<IUnknown *>(d3d11x::unwrap(device)), static_cast<HWND>(window->native()), &host,
-        nullptr, nullptr, swap_chain);
+        presenter, static_cast<HWND>(window->native()), &host, nullptr, nullptr, swap_chain);
     if (SUCCEEDED(result))
         *swap_chain =
             static_cast<IDXGISwapChain1 *>(d3d11x::wrap(*swap_chain, d3d11x::Kind::swap_chain));
@@ -414,25 +436,219 @@ HRESULT STDMETHODCALLTYPE check_feature_support(ID3D12Device *self, D3D12_FEATUR
     }
     return result;
 }
-// CreateDescriptorHeap: the heap's Get{CPU,GPU}DescriptorHandleForHeapStart (9, 10) return
-// their handles in RAX
+// Descriptor heaps as the console has them: a CPU handle is the address of the descriptor,
+// below 4 GiB, and titles write descriptors there themselves. Each heap gets such memory of
+// its own, a descriptor's worth per host descriptor; the host's descriptor at the same index
+// is the one that counts. Descriptors made through the device are the host's already (the
+// shadow holds a mark); those the title wrote are hardware descriptors, read when used.
+struct ShadowHeap {
+    std::uintptr_t base, end;
+    D3D12_CPU_DESCRIPTOR_HANDLE host;
+    UINT stride;
+    D3D12_DESCRIPTOR_HEAP_TYPE type;
+    ID3D12Device *device;
+};
+std::mutex shadow_mutex;
+std::map<std::uintptr_t, ShadowHeap> shadow_heaps;         // by base
+std::map<void *, std::uintptr_t> shadow_of;                // heap -> base
+constexpr std::uint64_t host_mark = 0x5853'4844'4553'4352; // "XSHDESCR"
+void *low_memory(std::size_t bytes) {
+    MEM_ADDRESS_REQUIREMENTS requirements{};
+    requirements.HighestEndingAddress = reinterpret_cast<void *>(0xffff'ffffull);
+    MEM_EXTENDED_PARAMETER parameter{};
+    parameter.Type = MemExtendedParameterAddressRequirements;
+    parameter.Pointer = &requirements;
+    return VirtualAlloc2(nullptr, nullptr, (bytes + 0xffff) & ~std::size_t{0xffff},
+                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, &parameter, 1);
+}
+const ShadowHeap *shadow_heap(std::uintptr_t address) {
+    auto found = shadow_heaps.upper_bound(address);
+    if (found == shadow_heaps.begin())
+        return nullptr;
+    --found;
+    return address < found->second.end ? &found->second : nullptr;
+}
+// the host's handle for a console one; others are the host's already
+D3D12_CPU_DESCRIPTOR_HANDLE host_handle(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    const std::lock_guard lock(shadow_mutex);
+    if (const auto *heap = shadow_heap(handle.ptr))
+        return {heap->host.ptr + (handle.ptr - heap->base) / heap->stride * heap->stride};
+    return handle;
+}
+void mark_host(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    const std::lock_guard lock(shadow_mutex);
+    if (shadow_heap(handle.ptr))
+        std::memcpy(reinterpret_cast<void *>(handle.ptr), &host_mark, sizeof host_mark);
+}
+// A descriptor the title wrote: made on the host from what the hardware descriptor says.
+// Buffers (V#: 48-bit address, stride in bits 48-61, record count in the third dword) become
+// constant buffer views.
+void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    const ShadowHeap *heap;
+    {
+        const std::lock_guard lock(shadow_mutex);
+        heap = shadow_heap(handle.ptr);
+    }
+    if (!heap || heap->type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+        return;
+    std::uint32_t words[4];
+    std::memcpy(words, reinterpret_cast<const void *>(handle.ptr), sizeof words);
+    std::uint64_t first;
+    std::memcpy(&first, words, sizeof first);
+    if (first == host_mark || first == 0)
+        return;
+    const std::uint64_t address = first & 0xffff'ffff'ffffull;
+    const std::uint32_t stride = (words[1] >> 16) & 0x3fff;
+    const std::uint64_t size = std::uint64_t{words[2]} * (stride ? stride : 1);
+    const D3D12_CONSTANT_BUFFER_VIEW_DESC view{
+        address, static_cast<UINT>(std::min<std::uint64_t>((size + 255) & ~255ull, 65536))};
+    using Create = void(STDMETHODCALLTYPE *)(void *, const D3D12_CONSTANT_BUFFER_VIEW_DESC *,
+                                             D3D12_CPU_DESCRIPTOR_HANDLE);
+    original<Create>(heap->device, 17)(heap->device, &view, host_handle(handle));
+}
+void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HEAP_DESC &desc,
+                     D3D12_CPU_DESCRIPTOR_HANDLE host) {
+    const UINT stride = device->GetDescriptorHandleIncrementSize(desc.Type);
+    auto *const memory = low_memory(std::size_t{desc.NumDescriptors} * stride);
+    if (!memory) {
+        std::fprintf(stderr, "[Runtime] no memory below 4 GiB for a descriptor heap\n");
+        return;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    const std::lock_guard lock(shadow_mutex);
+    shadow_heaps[base] = {
+        base, base + std::size_t{desc.NumDescriptors} * stride, host, stride, desc.Type, device};
+    shadow_of[heap] = base;
+}
+// ID3D12DescriptorHeap::GetCPUDescriptorHandleForHeapStart: the shadow's start
+std::uint64_t STDMETHODCALLTYPE cpu_heap_start(void *self) {
+    {
+        const std::lock_guard lock(shadow_mutex);
+        if (const auto found = shadow_of.find(self); found != shadow_of.end())
+            return found->second;
+    }
+    return returned_in_rax<9>(self);
+}
+
+// The device's methods that take CPU handles: the host's handle, and the shadow marked
+using Handle = D3D12_CPU_DESCRIPTOR_HANDLE;
+void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc,
+                                  Handle handle) {
+    original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 17)(
+        self, desc, host_handle(handle));
+    mark_host(handle);
+}
+void STDMETHODCALLTYPE create_srv(ID3D12Device *self, ID3D12Resource *resource, const void *desc,
+                                  Handle handle) {
+    original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, 18)(
+        self, resource, desc, host_handle(handle));
+    mark_host(handle);
+}
+void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
+                                  ID3D12Resource *counter, const void *desc, Handle handle) {
+    original<void(STDMETHODCALLTYPE *)(void *, void *, void *, const void *, Handle)>(self, 19)(
+        self, resource, counter, desc, host_handle(handle));
+    mark_host(handle);
+}
+template <std::size_t Index>
+void STDMETHODCALLTYPE create_target_view(ID3D12Device *self, ID3D12Resource *resource,
+                                          const void *desc, Handle handle) {
+    original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, Index)(
+        self, resource, desc, host_handle(handle));
+    mark_host(handle);
+}
+void STDMETHODCALLTYPE create_sampler(ID3D12Device *self, const D3D12_SAMPLER_DESC *desc,
+                                      Handle handle) {
+    original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 22)(
+        self, desc, host_handle(handle));
+    mark_host(handle);
+}
+void STDMETHODCALLTYPE copy_descriptors(ID3D12Device *self, UINT destination_ranges,
+                                        const Handle *destinations, const UINT *destination_sizes,
+                                        UINT source_ranges, const Handle *sources,
+                                        const UINT *source_sizes, D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    std::vector<Handle> host_destinations(destinations, destinations + destination_ranges);
+    std::vector<Handle> host_sources(sources, sources + source_ranges);
+    UINT stride = self->GetDescriptorHandleIncrementSize(type);
+    for (UINT range = 0; range < source_ranges; ++range) {
+        const UINT count = source_sizes ? source_sizes[range] : 1;
+        for (UINT i = 0; i < count; ++i)
+            decode_written({sources[range].ptr + std::size_t{i} * stride});
+        host_sources[range] = host_handle(sources[range]);
+    }
+    for (UINT range = 0; range < destination_ranges; ++range) {
+        const UINT count = destination_sizes ? destination_sizes[range] : 1;
+        for (UINT i = 0; i < count; ++i)
+            mark_host({destinations[range].ptr + std::size_t{i} * stride});
+        host_destinations[range] = host_handle(destinations[range]);
+    }
+    using Copy =
+        void(STDMETHODCALLTYPE *)(void *, UINT, const Handle *, const UINT *, UINT, const Handle *,
+                                  const UINT *, D3D12_DESCRIPTOR_HEAP_TYPE);
+    original<Copy>(self, 23)(self, destination_ranges, host_destinations.data(), destination_sizes,
+                             source_ranges, host_sources.data(), source_sizes, type);
+}
+void STDMETHODCALLTYPE copy_descriptors_simple(ID3D12Device *self, UINT count, Handle destination,
+                                               Handle source, D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    const UINT stride = self->GetDescriptorHandleIncrementSize(type);
+    for (UINT i = 0; i < count; ++i) {
+        decode_written({source.ptr + std::size_t{i} * stride});
+        mark_host({destination.ptr + std::size_t{i} * stride});
+    }
+    using Copy =
+        void(STDMETHODCALLTYPE *)(void *, UINT, Handle, Handle, D3D12_DESCRIPTOR_HEAP_TYPE);
+    original<Copy>(self, 24)(self, count, host_handle(destination), host_handle(source), type);
+}
+// CreateDescriptorHeap: the heap's CPU handles are the console's (shadow memory), its GPU
+// handles the host's, returned in RAX (9, 10)
 HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
                                                  const D3D12_DESCRIPTOR_HEAP_DESC *desc, REFIID iid,
                                                  void **heap) {
     using Create =
         HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_DESCRIPTOR_HEAP_DESC *, REFIID, void **);
     const auto result = original<Create>(self, 14)(self, desc, iid, heap);
-    if (SUCCEEDED(result) && heap && *heap)
-        console_vtable<Family::heap>(*heap, 11, 11,
-                                     {{9, reinterpret_cast<Slot>(&returned_in_rax<9>)},
-                                      {10, reinterpret_cast<Slot>(&returned_in_rax<10>)}});
+    if (FAILED(result) || !heap || !*heap || !desc)
+        return result;
+    const auto host =
+        static_cast<ID3D12DescriptorHeap *>(*heap)->GetCPUDescriptorHandleForHeapStart();
+    console_vtable<Family::heap>(*heap, 11, 11,
+                                 {{9, reinterpret_cast<Slot>(&cpu_heap_start)},
+                                  {10, reinterpret_cast<Slot>(&returned_in_rax<10>)}});
+    register_shadow(self, *heap, *desc, host);
     return result;
+}
+HRESULT STDMETHODCALLTYPE create_committed_resource(ID3D12Device *, const D3D12_HEAP_PROPERTIES *,
+                                                    D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC *,
+                                                    D3D12_RESOURCE_STATES,
+                                                    const D3D12_CLEAR_VALUE *, REFIID, void **);
+// slot 44: CreatePlacedResourceX(address, desc, state, clear, iid, resource), a resource on
+// memory of the title's (Unreal's XboxOneD3D12Texture.cpp names it). The host cannot place a
+// resource at an address: a committed one in GPU memory stands for it.
+HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint64_t address,
+                                                   const D3D12_RESOURCE_DESC *desc,
+                                                   D3D12_RESOURCE_STATES state,
+                                                   const D3D12_CLEAR_VALUE *clear, REFIID iid,
+                                                   void **resource) {
+    (void)address;
+    const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+    return create_committed_resource(self, &heap, D3D12_HEAP_FLAG_NONE, desc, state, clear, iid,
+                                     resource);
 }
 // slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
 HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
                                                const D3D12_COMMAND_QUEUE_DESC *desc, REFIID iid,
                                                void **queue) {
-    return self->CreateCommandQueue(desc, iid, queue);
+    using Create =
+        HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_COMMAND_QUEUE_DESC *, REFIID, void **);
+    const auto result = original<Create>(self, 8)(self, desc, iid, queue);
+    if (SUCCEEDED(result) && queue && *queue && desc &&
+        desc->Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+        ID3D12CommandQueue *expected = nullptr;
+        if (direct_queue.compare_exchange_strong(expected,
+                                                 static_cast<ID3D12CommandQueue *>(*queue)))
+            direct_queue.load()->AddRef();
+    }
+    return result;
 }
 // CreateCommittedResource, reported when the host turns it down
 HRESULT STDMETHODCALLTYPE create_committed_resource(
@@ -574,9 +790,19 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({0, reinterpret_cast<Slot>(&device_query)});
     overrides.push_back({13, reinterpret_cast<Slot>(&check_feature_support)});
     overrides.push_back({14, reinterpret_cast<Slot>(&create_descriptor_heap)});
+    overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
+    overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});
+    overrides.push_back({19, reinterpret_cast<Slot>(&create_uav)});
+    overrides.push_back({20, reinterpret_cast<Slot>(&create_target_view<20>)});
+    overrides.push_back({21, reinterpret_cast<Slot>(&create_target_view<21>)});
+    overrides.push_back({22, reinterpret_cast<Slot>(&create_sampler)});
+    overrides.push_back({23, reinterpret_cast<Slot>(&copy_descriptors)});
+    overrides.push_back({24, reinterpret_cast<Slot>(&copy_descriptors_simple)});
     overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
     overrides.push_back({26, reinterpret_cast<Slot>(&custom_heap_properties)});
     overrides.push_back({27, reinterpret_cast<Slot>(&create_committed_resource)});
+    overrides.push_back({44, reinterpret_cast<Slot>(&create_placed_resource_x)});
+    overrides.push_back({8, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
     // all of the host's vtable, which its runtime calls past the desktop's first 44 too
