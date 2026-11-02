@@ -732,6 +732,82 @@ template <std::size_t... Index>
 std::vector<std::pair<std::size_t, Slot>> list_methods(std::index_sequence<Index...>) {
     return {{3 + Index, reinterpret_cast<Slot>(&list_method<3 + Index>)}...};
 }
+// The command list's methods that take CPU handles, at their console slots (the desktop's +
+// 4): the host's handles. They go straight into the vtable, the depth clear having a float in
+// a register the generic path does not carry.
+void set_slot(void *object, std::size_t index, void *function) {
+    (*static_cast<Slot **>(object))[index] = function;
+}
+using List = ID3D12GraphicsCommandList;
+void STDMETHODCALLTYPE om_set_render_targets(List *self, UINT count, const Handle *targets,
+                                             BOOL single, const Handle *depth) {
+    std::vector<Handle> host(targets ? (single ? 1 : count) : 0);
+    for (std::size_t i = 0; i < host.size(); ++i)
+        host[i] = host_handle(targets[i]);
+    Handle host_depth{};
+    if (depth)
+        host_depth = host_handle(*depth);
+    original<void(STDMETHODCALLTYPE *)(void *, UINT, const Handle *, BOOL, const Handle *)>(
+        self, 46)(self, count, targets ? host.data() : nullptr, single,
+                  depth ? &host_depth : nullptr);
+}
+void STDMETHODCALLTYPE clear_depth_stencil(List *self, Handle view, D3D12_CLEAR_FLAGS flags,
+                                           FLOAT depth, UINT8 stencil, UINT count,
+                                           const D3D12_RECT *rects) {
+    original<void(STDMETHODCALLTYPE *)(void *, Handle, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT,
+                                       const D3D12_RECT *)>(self, 47)(
+        self, host_handle(view), flags, depth, stencil, count, rects);
+}
+void STDMETHODCALLTYPE clear_render_target(List *self, Handle view, const FLOAT *color, UINT count,
+                                           const D3D12_RECT *rects) {
+    original<void(STDMETHODCALLTYPE *)(void *, Handle, const FLOAT *, UINT, const D3D12_RECT *)>(
+        self, 48)(self, host_handle(view), color, count, rects);
+}
+template <std::size_t Host, class Values>
+void STDMETHODCALLTYPE clear_unordered_access(List *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu,
+                                              Handle cpu, ID3D12Resource *resource,
+                                              const Values *values, UINT count,
+                                              const D3D12_RECT *rects) {
+    original<void(STDMETHODCALLTYPE *)(void *, D3D12_GPU_DESCRIPTOR_HANDLE, Handle,
+                                       ID3D12Resource *, const Values *, UINT, const D3D12_RECT *)>(
+        self, Host)(self, gpu, host_handle(cpu), resource, values, count, rects);
+}
+void console_list(void *list);
+HRESULT STDMETHODCALLTYPE close_list(List *self);
+void console_list_close(void *list) { set_slot(list, 9, reinterpret_cast<void *>(&close_list)); }
+void console_list(void *list) {
+    set_slot(list, 50, reinterpret_cast<void *>(&om_set_render_targets));
+    set_slot(list, 51, reinterpret_cast<void *>(&clear_depth_stencil));
+    set_slot(list, 52, reinterpret_cast<void *>(&clear_render_target));
+    set_slot(list, 53, reinterpret_cast<void *>(&clear_unordered_access<49, UINT>));
+    set_slot(list, 54, reinterpret_cast<void *>(&clear_unordered_access<50, FLOAT>));
+}
+// XS_D3D_DEBUG: the host's debug layer, whose messages go to the log when a command list
+// fails to close
+std::atomic<ID3D12InfoQueue *> debug_messages{nullptr};
+void report_debug_messages() {
+    auto *const queue = debug_messages.load();
+    if (!queue)
+        return;
+    for (UINT64 i = 0, count = queue->GetNumStoredMessages(); i < count; ++i) {
+        SIZE_T size = 0;
+        queue->GetMessage(i, nullptr, &size);
+        std::vector<std::uint8_t> buffer(size);
+        auto *const message = reinterpret_cast<D3D12_MESSAGE *>(buffer.data());
+        if (SUCCEEDED(queue->GetMessage(i, message, &size)) &&
+            message->Severity <= D3D12_MESSAGE_SEVERITY_WARNING)
+            std::fprintf(stderr, "[Runtime] Direct3D 12 debug layer: %.*s\n",
+                         static_cast<int>(message->DescriptionByteLength), message->pDescription);
+    }
+    queue->ClearStoredMessages();
+    std::fflush(stderr);
+}
+HRESULT STDMETHODCALLTYPE close_list(List *self) {
+    const auto result = original<HRESULT(STDMETHODCALLTYPE *)(void *)>(self, 9)(self);
+    if (FAILED(result))
+        report_debug_messages();
+    return result;
+}
 // slot 73: a command list from a description (Unreal's call site: the type, 0, the node mask,
 // 0), an allocator, a pipeline state, then the interface and the list
 HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *desc,
@@ -749,6 +825,10 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
     if (SUCCEEDED(result) && list && *list)
         console_vtable<Family::list>(*list, list_slots, list_slots,
                                      list_methods(std::make_index_sequence<list_slots - 3>{}));
+    if (SUCCEEDED(result) && list && *list) {
+        console_list(*list);
+        console_list_close(*list);
+    }
     return result;
 }
 // The console's ID3D12Device goes on past the desktop's 44 methods with its own. Those not
@@ -775,9 +855,20 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     *device = nullptr;
     using Create = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
     static const auto create = host_d3d12<Create>("D3D12CreateDevice");
+    if (std::getenv("XS_D3D_DEBUG")) {
+        using GetDebug = HRESULT(WINAPI *)(REFIID, void **);
+        static const auto get_debug = host_d3d12<GetDebug>("D3D12GetDebugInterface");
+        if (ID3D12Debug *debug = nullptr; get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&debug)))) {
+            debug->EnableDebugLayer();
+            debug->Release();
+        }
+    }
     ID3D12Device *host = nullptr;
     const auto result =
         create ? create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&host)) : E_NOTIMPL;
+    if (ID3D12InfoQueue *queue = nullptr;
+        SUCCEEDED(result) && SUCCEEDED(host->QueryInterface(IID_PPV_ARGS(&queue))))
+        debug_messages = queue;
     std::fprintf(stderr, "[Runtime] Direct3D 12 device on the host: 0x%08lx\n",
                  static_cast<unsigned long>(result));
     std::fflush(stderr);
