@@ -1164,6 +1164,80 @@ void d3d11x::report_d3d12_failure() {
     dred->Release();
     std::fflush(stderr);
 }
+bool d3d11x::read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
+                             unsigned &pitch, unsigned &width, unsigned &height,
+                             DXGI_FORMAT &format) {
+    auto *const queue = direct_queue.load();
+    ID3D12Device *device = nullptr;
+    if (!queue || FAILED(resource->GetDevice(IID_PPV_ARGS(&device))))
+        return false;
+    const auto desc = resource->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT64 bytes = 0;
+    device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
+    const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC buffer_desc{D3D12_RESOURCE_DIMENSION_BUFFER,
+                                    0,
+                                    bytes,
+                                    1,
+                                    1,
+                                    1,
+                                    DXGI_FORMAT_UNKNOWN,
+                                    {1, 0},
+                                    D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                                    D3D12_RESOURCE_FLAG_NONE};
+    ID3D12Resource *buffer = nullptr;
+    ID3D12CommandAllocator *allocator = nullptr;
+    ID3D12GraphicsCommandList *list = nullptr;
+    ID3D12Fence *fence = nullptr;
+    bool done = false;
+    if (SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer_desc,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                  IID_PPV_ARGS(&buffer))) &&
+        SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                 IID_PPV_ARGS(&allocator))) &&
+        SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
+                                            IID_PPV_ARGS(&list))) &&
+        SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Transition = {resource, 0, D3D12_RESOURCE_STATE_PRESENT,
+                              D3D12_RESOURCE_STATE_COPY_SOURCE};
+        list->ResourceBarrier(1, &barrier);
+        const D3D12_TEXTURE_COPY_LOCATION target{
+            buffer, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {.PlacedFootprint = footprint}};
+        const D3D12_TEXTURE_COPY_LOCATION source{
+            resource, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {.SubresourceIndex = 0}};
+        list->CopyTextureRegion(&target, 0, 0, 0, &source, nullptr);
+        std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+        list->ResourceBarrier(1, &barrier);
+        list->Close();
+        ID3D12CommandList *const lists[] = {list};
+        queue->ExecuteCommandLists(1, lists);
+        queue->Signal(fence, 1);
+        auto *const event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        fence->SetEventOnCompletion(1, event);
+        WaitForSingleObject(event, 5000);
+        CloseHandle(event);
+        void *mapped = nullptr;
+        if (SUCCEEDED(buffer->Map(0, nullptr, &mapped))) {
+            const auto *start = static_cast<const std::uint8_t *>(mapped) + footprint.Offset;
+            data.assign(start, start + std::size_t{footprint.Footprint.RowPitch} *
+                                           footprint.Footprint.Height);
+            buffer->Unmap(0, nullptr);
+            pitch = footprint.Footprint.RowPitch;
+            width = footprint.Footprint.Width;
+            height = footprint.Footprint.Height;
+            format = desc.Format;
+            done = true;
+        }
+    }
+    for (IUnknown *object : {static_cast<IUnknown *>(fence), static_cast<IUnknown *>(list),
+                             static_cast<IUnknown *>(allocator), static_cast<IUnknown *>(buffer),
+                             static_cast<IUnknown *>(device)})
+        if (object)
+            object->Release();
+    return done;
+}
 // IDXGIDevice of our device: the host's, with GetAdapter leading to our factory
 HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
     IDXGIDevice1 *host = nullptr;

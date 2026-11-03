@@ -1,6 +1,9 @@
 #pragma once
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include <array>
+#include <cstdint>
+#include <d3d12.h>
+#include <vector>
 
 namespace xs::runtime::durango::d3d11x {
 // What to do with one argument of a method. Argument 0 is the object itself.
@@ -46,4 +49,8 @@ const Layout &layout(Kind kind);
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
 // why the host's Direct3D 12 device stopped, and what its debug layer said, to the log
 void report_d3d12_failure();
+// a Direct3D 12 texture's first subresource, copied to the CPU through the title's direct
+// queue (XS_D3D_PROBE)
+bool read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data, unsigned &pitch,
+                     unsigned &width, unsigned &height, DXGI_FORMAT &format);
 } // namespace xs::runtime::durango::d3d11x

@@ -10,8 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <d3d12.h>
 #include <d3d11_1.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
 #include <initializer_list>
 #include <intrin.h>
 #include <iterator>
@@ -498,8 +499,68 @@ void presented() {
         }
     }
 }
-// XS_D3D_PROBE: the average colour of a texture, to tell a title that draws nothing from a
-// picture that does not reach the window
+// XS_D3D_PROBE: the average colour of a picture, to tell a title that draws nothing from a
+// picture that does not reach the window, and the picture itself as a 32-bit BMP in the
+// temporary folder
+void report_picture(const std::uint8_t *data, UINT pitch, UINT width, UINT height,
+                    DXGI_FORMAT format, const char *what) {
+    const bool rgba = format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                      format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                      format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    const bool ten_bits =
+        format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R10G10B10A2_TYPELESS;
+    // one pixel as blue, green, red, alpha
+    const auto pixel = [&](UINT x, UINT y, std::uint8_t *out) {
+        const auto *in = data + std::size_t{y} * pitch + std::size_t{x} * 4;
+        if (ten_bits) {
+            std::uint32_t value;
+            std::memcpy(&value, in, 4);
+            out[2] = static_cast<std::uint8_t>((value & 0x3ff) >> 2);
+            out[1] = static_cast<std::uint8_t>(((value >> 10) & 0x3ff) >> 2);
+            out[0] = static_cast<std::uint8_t>(((value >> 20) & 0x3ff) >> 2);
+            out[3] = static_cast<std::uint8_t>((value >> 30) * 85);
+        } else {
+            std::memcpy(out, in, 4);
+            if (rgba)
+                std::swap(out[0], out[2]);
+        }
+    };
+    double sum[4]{};
+    std::uint8_t bgra[4];
+    for (UINT y = 0; y < height; y += 8)
+        for (UINT x = 0; x < width; x += 8) {
+            pixel(x, y, bgra);
+            sum[0] += bgra[2], sum[1] += bgra[1], sum[2] += bgra[0], sum[3] += bgra[3];
+        }
+    if (const auto *folder = std::getenv("TEMP"); folder && format != DXGI_FORMAT_D32_FLOAT)
+        if (auto *file =
+                std::fopen((std::string(folder) + "\\xs_" + what + ".bmp").c_str(), "wb")) {
+            const std::uint32_t pixels = width * height * 4;
+            std::uint8_t header[54]{'B', 'M'};
+            const std::uint32_t size = 54 + pixels, offset = 54, info = 40,
+                                planes_bits = 1 | (32 << 16);
+            const std::int32_t signed_width = width,
+                               signed_height = -static_cast<std::int32_t>(height);
+            std::memcpy(header + 2, &size, 4);
+            std::memcpy(header + 10, &offset, 4);
+            std::memcpy(header + 14, &info, 4);
+            std::memcpy(header + 18, &signed_width, 4);
+            std::memcpy(header + 22, &signed_height, 4);
+            std::memcpy(header + 26, &planes_bits, 4);
+            std::fwrite(header, 1, sizeof header, file);
+            std::vector<std::uint8_t> row(std::size_t{width} * 4);
+            for (UINT y = 0; y < height; ++y) {
+                for (UINT x = 0; x < width; ++x)
+                    pixel(x, y, row.data() + std::size_t{x} * 4);
+                std::fwrite(row.data(), 1, row.size(), file);
+            }
+            std::fclose(file);
+        }
+    const double count = (width / 8.0) * (height / 8.0);
+    std::fprintf(stderr, "[Runtime] %s %ux%u format %u average %.1f %.1f %.1f %.1f\n", what, width,
+                 height, static_cast<unsigned>(format), sum[0] / count, sum[1] / count,
+                 sum[2] / count, sum[3] / count);
+}
 void average(ID3D11Texture2D *texture, const char *what) {
     ID3D11Device *device = nullptr;
     ID3D11DeviceContext *context = nullptr;
@@ -517,52 +578,8 @@ void average(ID3D11Texture2D *texture, const char *what) {
     if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging))) {
         context->CopySubresourceRegion(staging, 0, 0, 0, 0, texture, 0, nullptr);
         if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
-            double sum[4]{};
-            for (UINT y = 0; y < desc.Height; y += 8)
-                for (UINT x = 0; x < desc.Width; x += 8) {
-                    const auto *pixel = static_cast<const std::uint8_t *>(mapped.pData) +
-                                        y * mapped.RowPitch + x * 4;
-                    for (int c = 0; c < 4; ++c)
-                        sum[c] += pixel[c];
-                }
-            // and the picture itself, as a 32-bit BMP in the temporary folder
-            if (const auto *folder = std::getenv("TEMP");
-                folder && desc.Format != DXGI_FORMAT_D32_FLOAT)
-                if (auto *file =
-                        std::fopen((std::string(folder) + "\\xs_" + what + ".bmp").c_str(), "wb")) {
-                    const std::uint32_t pixels = desc.Width * desc.Height * 4;
-                    std::uint8_t header[54]{'B', 'M'};
-                    const std::uint32_t size = 54 + pixels, offset = 54, info = 40,
-                                        planes_bits = 1 | (32 << 16);
-                    const std::int32_t width = desc.Width,
-                                       height = -static_cast<std::int32_t>(desc.Height);
-                    std::memcpy(header + 2, &size, 4);
-                    std::memcpy(header + 10, &offset, 4);
-                    std::memcpy(header + 14, &info, 4);
-                    std::memcpy(header + 18, &width, 4);
-                    std::memcpy(header + 22, &height, 4);
-                    std::memcpy(header + 26, &planes_bits, 4);
-                    std::fwrite(header, 1, sizeof header, file);
-                    const bool rgba = desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-                                      desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                                      desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
-                    std::vector<std::uint8_t> row(desc.Width * 4);
-                    for (UINT y = 0; y < desc.Height; ++y) {
-                        std::memcpy(row.data(),
-                                    static_cast<const std::uint8_t *>(mapped.pData) +
-                                        y * mapped.RowPitch,
-                                    row.size());
-                        if (rgba)
-                            for (UINT x = 0; x < desc.Width; ++x)
-                                std::swap(row[x * 4], row[x * 4 + 2]);
-                        std::fwrite(row.data(), 1, row.size(), file);
-                    }
-                    std::fclose(file);
-                }
-            const double count = (desc.Width / 8.0) * (desc.Height / 8.0);
-            std::fprintf(stderr, "[Runtime] %s %ux%u format %u average %.1f %.1f %.1f %.1f\n", what,
-                         desc.Width, desc.Height, static_cast<unsigned>(desc.Format),
-                         sum[0] / count, sum[1] / count, sum[2] / count, sum[3] / count);
+            report_picture(static_cast<const std::uint8_t *>(mapped.pData), mapped.RowPitch,
+                           desc.Width, desc.Height, desc.Format, what);
             context->Unmap(staging, 0);
         }
         staging->Release();
@@ -588,7 +605,22 @@ void probe(IDXGISwapChain *swap_chain) {
     if (SUCCEEDED(swap_chain->GetBuffer(0, IID_PPV_ARGS(&buffer)))) {
         average(buffer, "back buffer");
         buffer->Release();
+        return;
     }
+    // a Direct3D 12 swap chain: the buffer about to be presented, read back on the host
+    IDXGISwapChain3 *third = nullptr;
+    if (FAILED(swap_chain->QueryInterface(IID_PPV_ARGS(&third))))
+        return;
+    ID3D12Resource *resource = nullptr;
+    if (SUCCEEDED(third->GetBuffer(third->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&resource)))) {
+        std::vector<std::uint8_t> data;
+        UINT pitch = 0, width = 0, height = 0;
+        DXGI_FORMAT format{};
+        if (read_back_d3d12(resource, data, pitch, width, height, format))
+            report_picture(data.data(), pitch, width, height, format, "back buffer");
+        resource->Release();
+    }
+    third->Release();
 }
 // What a console's Present never says: the desktop's statuses (occluded, mode changed,
 // present required...) are plain success. A hidden window (covered, minimized, the display
