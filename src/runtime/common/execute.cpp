@@ -518,10 +518,11 @@ LONG WINAPI unhandled(EXCEPTION_POINTERS *info) {
     }
     return title_filter ? title_filter(info) : EXCEPTION_CONTINUE_SEARCH;
 }
-// XS_FIRST_CHANCE: access violations as they happen, also those the title handles itself
-// (engines that catch a thread's fault and only say that it crashed)
+// XS_FIRST_CHANCE: exceptions as they happen, also those the title handles itself (engines
+// that catch a thread's fault and only say that it crashed); not thread names or debug text
 LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
-    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+    const auto code = info->ExceptionRecord->ExceptionCode;
+    if (code != 0x406d1388 && code != DBG_PRINTEXCEPTION_C && code != DBG_PRINTEXCEPTION_WIDE_C) {
         static std::atomic<int> reported{0};
         if (reported++ < 8) {
             std::fprintf(stderr, "[Runtime] first chance, thread %lu:\n", GetCurrentThreadId());

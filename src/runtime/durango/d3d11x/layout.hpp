@@ -44,4 +44,6 @@ struct Layout {
 const Layout &layout(Kind kind);
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
+// why the host's Direct3D 12 device stopped, and what its debug layer said, to the log
+void report_d3d12_failure();
 } // namespace xs::runtime::durango::d3d11x

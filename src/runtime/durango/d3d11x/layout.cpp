@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <d3d12.h>
 #include <d3d11_1.h>
 #include <initializer_list>
 #include <intrin.h>
@@ -598,9 +599,11 @@ HRESULT console_present_result(HRESULT result, UINT interval) {
         Sleep(16 * std::max(interval, 1u));
     if (FAILED(result)) {
         static std::atomic<bool> reported{false};
-        if (!reported.exchange(true))
+        if (!reported.exchange(true)) {
             std::fprintf(stderr, "[Runtime] Present failed on the host: 0x%08lx\n",
                          static_cast<unsigned long>(result));
+            report_d3d12_failure();
+        }
         return result;
     }
     return S_OK;
@@ -632,10 +635,13 @@ long present_swap_chain(void *swap_chain, unsigned interval) {
 }
 
 namespace {
-// GetBuffer: the console hands out every back buffer by index; a flip swap chain of the
-// host only buffer 0, which is always the one being drawn
-HRESULT STDMETHODCALLTYPE get_buffer(void *self, UINT, REFIID iid, void **surface) {
-    const auto result = static_cast<IDXGISwapChain *>(unwrap(self))->GetBuffer(0, iid, surface);
+// GetBuffer: the console hands out every back buffer by index; a Direct3D 11 flip swap chain
+// of the host only buffer 0, which is always the one being drawn. Direct3D 12's has one
+// resource per index, as the console's.
+HRESULT STDMETHODCALLTYPE get_buffer(void *self, UINT index, REFIID iid, void **surface) {
+    const bool d3d12 = iid == __uuidof(ID3D12Resource);
+    const auto result =
+        static_cast<IDXGISwapChain *>(unwrap(self))->GetBuffer(d3d12 ? index : 0, iid, surface);
     if (SUCCEEDED(result) && surface &&
         (iid == __uuidof(ID3D11Texture2D) || iid == __uuidof(ID3D11Resource)))
         *surface = wrap(*surface, Kind::texture2d);

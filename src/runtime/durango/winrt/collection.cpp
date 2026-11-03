@@ -1,6 +1,7 @@
 #include "runtime/durango/winrt/collection.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <inspectable.h>
 #include <mutex>
 #include <utility>
@@ -8,8 +9,9 @@
 
 namespace xs::runtime::durango::winrt {
 namespace {
+// GetAt takes the whole register: see Items::GetAt
 struct IObjectVectorView : IInspectable {
-    virtual HRESULT STDMETHODCALLTYPE GetAt(unsigned index, IInspectable **item) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetAt(std::uint64_t index, IInspectable **item) = 0;
     virtual HRESULT STDMETHODCALLTYPE get_Size(unsigned *size) = 0;
     virtual HRESULT STDMETHODCALLTYPE IndexOf(IInspectable *item, unsigned *index,
                                               boolean *found) = 0;
@@ -18,7 +20,7 @@ struct IObjectVectorView : IInspectable {
 };
 // IVector<T>, in the order of windows.foundation.collections.h
 struct IObjectVector : IInspectable {
-    virtual HRESULT STDMETHODCALLTYPE GetAt(unsigned index, IInspectable **item) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetAt(std::uint64_t index, IInspectable **item) = 0;
     virtual HRESULT STDMETHODCALLTYPE get_Size(unsigned *size) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetView(IObjectVectorView **view) = 0;
     virtual HRESULT STDMETHODCALLTYPE IndexOf(IInspectable *item, unsigned *index,
@@ -34,6 +36,7 @@ struct IObjectVector : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE ReplaceAll(unsigned count, IInspectable **items) = 0;
 };
 
+IInspectable *make_iterator(const std::vector<IInspectable *> &items);
 // Items, each holding a reference, and the IInspectable part of both kinds
 template <class Interface> class Items : public Interface {
   public:
@@ -74,8 +77,16 @@ template <class Interface> class Items : public Interface {
         *level = BaseTrust;
         return S_OK;
     }
-    STDMETHODIMP GetAt(unsigned index, IInspectable **item) override {
+    // Slot 6 is GetAt for IVectorView<T> and IVector<T>, and First for IIterable<T>, which
+    // the collection is as well: those interface ids depend on T, so every id gets the same
+    // object. An index is 32 bits, the register's upper half zero; First's argument is a
+    // pointer, where it is not.
+    STDMETHODIMP GetAt(std::uint64_t index, IInspectable **item) override {
         const std::lock_guard lock(mutex_);
+        if (index >> 32) {
+            *reinterpret_cast<IInspectable **>(index) = make_iterator(items_);
+            return S_OK;
+        }
         if (index >= items_.size())
             return E_BOUNDS;
         *item = hold(items_[index]);
@@ -179,6 +190,84 @@ class Vector final : public Items<IObjectVector> {
         return S_OK;
     }
 };
+// IIterator<T>, in the order of windows.foundation.collections.h, over a copy of the items
+class Iterator final : public IInspectable {
+  public:
+    explicit Iterator(std::vector<IInspectable *> items) : items_(std::move(items)) {
+        for (auto *item : items_)
+            if (item)
+                item->AddRef();
+    }
+    ~Iterator() {
+        for (auto *item : items_)
+            if (item)
+                item->Release();
+    }
+    STDMETHODIMP QueryInterface(REFIID, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = this;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left)
+            delete this;
+        return left;
+    }
+    STDMETHODIMP GetIids(ULONG *count, IID **iids) override {
+        *count = 0;
+        *iids = nullptr;
+        return S_OK;
+    }
+    STDMETHODIMP GetRuntimeClassName(HSTRING *name) override {
+        *name = nullptr;
+        return S_OK;
+    }
+    STDMETHODIMP GetTrustLevel(TrustLevel *level) override {
+        *level = BaseTrust;
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE get_Current(IInspectable **item) {
+        if (at_ >= items_.size())
+            return E_BOUNDS;
+        *item = items_[at_];
+        if (*item)
+            (*item)->AddRef();
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE get_HasCurrent(boolean *value) {
+        *value = at_ < items_.size();
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE MoveNext(boolean *value) {
+        if (at_ < items_.size())
+            ++at_;
+        *value = at_ < items_.size();
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE GetMany(unsigned capacity, IInspectable **items,
+                                              unsigned *actual) {
+        unsigned count = 0;
+        for (; count < capacity && at_ < items_.size(); ++count, ++at_) {
+            items[count] = items_[at_];
+            if (items[count])
+                items[count]->AddRef();
+        }
+        *actual = count;
+        return S_OK;
+    }
+
+  private:
+    std::vector<IInspectable *> items_;
+    std::size_t at_ = 0;
+    std::atomic<ULONG> references_{1};
+};
+IInspectable *make_iterator(const std::vector<IInspectable *> &items) {
+    return new Iterator(items);
+}
 } // namespace
 
 void *make_vector_view(std::vector<IInspectable *> items) {

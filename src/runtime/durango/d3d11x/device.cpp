@@ -634,7 +634,7 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
     return create_committed_resource(self, &heap, D3D12_HEAP_FLAG_NONE, desc, state, clear, iid,
                                      resource);
 }
-void report_debug_messages();
+void report_d3d12_messages();
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -650,7 +650,7 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreateGraphicsPipelineState: 0x%08lx\n",
                      static_cast<unsigned long>(result));
-        report_debug_messages();
+        report_d3d12_messages();
     }
     return result;
 }
@@ -711,7 +711,7 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
             std::fprintf(stderr, "[Runtime] its chunks:%s\n", tags.c_str());
         }
         std::fflush(stderr);
-        report_debug_messages();
+        report_d3d12_messages();
     }
     return result;
 }
@@ -811,7 +811,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
 // XS_D3D_DEBUG: the host's debug layer, whose messages go to the log when something the title
 // asked for is turned down
 std::atomic<ID3D12InfoQueue *> debug_messages{nullptr};
-void report_debug_messages() {
+void report_d3d12_messages() {
     auto *const queue = debug_messages.load();
     if (!queue)
         return;
@@ -925,10 +925,11 @@ ULONG STDMETHODCALLTYPE list_release(void *self) {
 // The methods that take CPU handles, at their console slots (the desktop's + 4): the host's
 // handles. The depth clear has a float in a register the generic path does not carry.
 using Handle = D3D12_CPU_DESCRIPTOR_HANDLE;
+std::atomic<ID3D12Device *> d3d12_device{nullptr};
 HRESULT STDMETHODCALLTYPE close_list(void *self) {
     const auto result = host_of(self)->Close();
     if (FAILED(result))
-        report_debug_messages();
+        report_d3d12_messages();
     return result;
 }
 // ResourceBarrier: transitions name states the console's way (GENERIC_READ is 0x8c3 there)
@@ -1079,10 +1080,19 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
             debug->EnableDebugLayer();
             debug->Release();
         }
+        // what the GPU was doing when the device goes, and where it faulted
+        if (ID3D12DeviceRemovedExtendedDataSettings *dred = nullptr;
+            get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&dred)))) {
+            dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            dred->Release();
+        }
     }
     ID3D12Device *host = nullptr;
     const auto result =
         create ? create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&host)) : E_NOTIMPL;
+    if (SUCCEEDED(result))
+        d3d12_device = host;
     if (ID3D12InfoQueue *queue = nullptr;
         SUCCEEDED(result) && SUCCEEDED(host->QueryInterface(IID_PPV_ARGS(&queue))))
         debug_messages = queue;
@@ -1124,6 +1134,36 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
 }
 } // namespace
 
+void d3d11x::report_d3d12_failure() {
+    auto *const device = d3d12_device.load();
+    if (!device)
+        return;
+    std::fprintf(stderr, "[Runtime] Direct3D 12 device removed: 0x%08lx\n",
+                 static_cast<unsigned long>(device->GetDeviceRemovedReason()));
+    report_d3d12_messages();
+    ID3D12DeviceRemovedExtendedData *dred = nullptr;
+    if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dred))))
+        return;
+    if (D3D12_DRED_PAGE_FAULT_OUTPUT fault{}; SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)))
+        std::fprintf(stderr, "[Runtime] GPU page fault at 0x%llx\n",
+                     static_cast<unsigned long long>(fault.PageFaultVA));
+    if (D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs{};
+        SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&crumbs)))
+        for (auto *node = crumbs.pHeadAutoBreadcrumbNode; node; node = node->pNext) {
+            const UINT done = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+            if (done >= node->BreadcrumbCount)
+                continue;
+            std::fprintf(stderr, "[Runtime] GPU stopped after %u of %u operations:", done,
+                         node->BreadcrumbCount);
+            for (UINT i = done > 3 ? done - 3 : 0; i < std::min(done + 3, node->BreadcrumbCount);
+                 ++i)
+                std::fprintf(stderr, " %s%d", i == done ? ">" : "",
+                             static_cast<int>(node->pCommandHistory[i]));
+            std::fprintf(stderr, "\n");
+        }
+    dred->Release();
+    std::fflush(stderr);
+}
 // IDXGIDevice of our device: the host's, with GetAdapter leading to our factory
 HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
     IDXGIDevice1 *host = nullptr;
