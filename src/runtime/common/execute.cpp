@@ -518,6 +518,18 @@ LONG WINAPI unhandled(EXCEPTION_POINTERS *info) {
     }
     return title_filter ? title_filter(info) : EXCEPTION_CONTINUE_SEARCH;
 }
+// XS_FIRST_CHANCE: access violations as they happen, also those the title handles itself
+// (engines that catch a thread's fault and only say that it crashed)
+LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        static std::atomic<int> reported{0};
+        if (reported++ < 8) {
+            std::fprintf(stderr, "[Runtime] first chance, thread %lu:\n", GetCurrentThreadId());
+            report_fault(info);
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 #endif
 DWORD WINAPI guest_thread(void *start) {
 #ifdef _MSC_VER
@@ -804,6 +816,8 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     }
 #ifdef _MSC_VER
     SetUnhandledExceptionFilter(&unhandled);
+    if (std::getenv("XS_FIRST_CHANCE"))
+        AddVectoredExceptionHandler(0, &first_chance);
 #endif
     std::fflush(nullptr);
     const auto thread = CreateThread(nullptr, 0, guest_thread, &start, 0, nullptr);
