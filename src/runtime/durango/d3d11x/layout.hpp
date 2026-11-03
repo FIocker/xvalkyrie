@@ -52,5 +52,8 @@ void report_d3d12_failure();
 // a Direct3D 12 texture's first subresource, copied to the CPU through the title's direct
 // queue (XS_D3D_PROBE)
 bool read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data, unsigned &pitch,
-                     unsigned &width, unsigned &height, DXGI_FORMAT &format);
+                     unsigned &width, unsigned &height, DXGI_FORMAT &format,
+                     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT);
+// the render target the title bound last, for XS_D3D_PROBE
+ID3D12Resource *last_render_target();
 } // namespace xs::runtime::durango::d3d11x

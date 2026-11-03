@@ -618,6 +618,11 @@ void probe(IDXGISwapChain *swap_chain) {
         DXGI_FORMAT format{};
         if (read_back_d3d12(resource, data, pitch, width, height, format))
             report_picture(data.data(), pitch, width, height, format, "back buffer");
+        if (auto *const target = last_render_target();
+            target && read_back_d3d12(target, data, pitch, width, height, format,
+                                      D3D12_RESOURCE_STATE_RENDER_TARGET))
+            report_picture(data.data(), pitch, width, height, format, "render target");
+        report_d3d12_failure();
         resource->Release();
     }
     third->Release();

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -447,6 +448,7 @@ struct ShadowHeap {
     UINT stride;
     D3D12_DESCRIPTOR_HEAP_TYPE type;
     ID3D12Device *device;
+    bool shader_visible;
 };
 std::mutex shadow_mutex;
 std::map<std::uintptr_t, ShadowHeap> shadow_heaps;         // by base
@@ -459,7 +461,7 @@ void *low_memory(std::size_t bytes) {
     parameter.Type = MemExtendedParameterAddressRequirements;
     parameter.Pointer = &requirements;
     return VirtualAlloc2(nullptr, nullptr, (bytes + 0xffff) & ~std::size_t{0xffff},
-                         MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, &parameter, 1);
+                         MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE, &parameter, 1);
 }
 const ShadowHeap *shadow_heap(std::uintptr_t address) {
     auto found = shadow_heaps.upper_bound(address);
@@ -497,6 +499,14 @@ void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     std::memcpy(&first, words, sizeof first);
     if (first == host_mark || first == 0)
         return;
+    // what kinds of descriptors titles write, by the type in the last dword (buffers 0, images
+    // 8 and up), once each
+    if (static std::atomic<std::uint32_t> seen{0}; std::getenv("XS_D3D_TRACE")) {
+        const std::uint32_t bit = 1u << (words[3] >> 28);
+        if (!(seen.fetch_or(bit) & bit))
+            std::fprintf(stderr, "[Runtime] descriptor written by the title: %08x %08x %08x %08x\n",
+                         words[0], words[1], words[2], words[3]);
+    }
     const std::uint64_t address = first & 0xffff'ffff'ffffull;
     const std::uint32_t stride = (words[1] >> 16) & 0x3fff;
     const std::uint64_t size = std::uint64_t{words[2]} * (stride ? stride : 1);
@@ -516,9 +526,43 @@ void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HE
     }
     const auto base = reinterpret_cast<std::uintptr_t>(memory);
     const std::lock_guard lock(shadow_mutex);
-    shadow_heaps[base] = {
-        base, base + std::size_t{desc.NumDescriptors} * stride, host, stride, desc.Type, device};
+    shadow_heaps[base] = {base,
+                          base + std::size_t{desc.NumDescriptors} * stride,
+                          host,
+                          stride,
+                          desc.Type,
+                          device,
+                          (desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) != 0};
     shadow_of[heap] = base;
+}
+// Before the GPU runs: what the title wrote straight into a shader-visible heap since last
+// time, read from the pages written to
+void decode_written_heaps() {
+    std::vector<ShadowHeap> heaps;
+    {
+        const std::lock_guard lock(shadow_mutex);
+        for (const auto &[base, heap] : shadow_heaps)
+            if (heap.shader_visible && heap.type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+                heaps.push_back(heap);
+    }
+    std::vector<void *> pages(4096);
+    for (const auto &heap : heaps) {
+        ULONG_PTR count = pages.size();
+        ULONG size = 0;
+        const auto bytes = ((heap.end - heap.base) + 0xffff) & ~std::uintptr_t{0xffff};
+        if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, reinterpret_cast<void *>(heap.base), bytes,
+                          pages.data(), &count, &size) != 0)
+            continue;
+        for (ULONG_PTR i = 0; i < count; ++i) {
+            const auto page = reinterpret_cast<std::uintptr_t>(pages[i]);
+            const auto first = std::max(heap.base, page);
+            const auto last = std::min(heap.end, page + size);
+            for (auto at =
+                     heap.base + (first - heap.base + heap.stride - 1) / heap.stride * heap.stride;
+                 at + heap.stride <= last; at += heap.stride)
+                decode_written({at});
+        }
+    }
 }
 // ID3D12DescriptorHeap::GetCPUDescriptorHandleForHeapStart: the shadow's start
 std::uint64_t STDMETHODCALLTYPE cpu_heap_start(void *self) {
@@ -550,12 +594,20 @@ void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
         self, resource, counter, desc, host_handle(handle));
     mark_host(handle);
 }
+// the resource behind each render target view, for XS_D3D_PROBE
+std::mutex target_mutex;
+std::map<std::uint64_t, ID3D12Resource *> target_of;
+std::atomic<ID3D12Resource *> last_target{nullptr};
 template <std::size_t Index>
 void STDMETHODCALLTYPE create_target_view(ID3D12Device *self, ID3D12Resource *resource,
                                           const void *desc, Handle handle) {
     original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, Index)(
         self, resource, desc, host_handle(handle));
     mark_host(handle);
+    if (Index == 20) {
+        const std::lock_guard lock(target_mutex);
+        target_of[host_handle(handle).ptr] = resource;
+    }
 }
 void STDMETHODCALLTYPE create_sampler(ID3D12Device *self, const D3D12_SAMPLER_DESC *desc,
                                       Handle handle) {
@@ -852,16 +904,21 @@ using List = ID3D12GraphicsCommandList;
 List *host_of(void *self) { return static_cast<ListProxy *>(self)->host; }
 
 // Each console slot calls this host slot, the arguments going on as they came (integer
-// registers and stack). Unreal's call sites put Close, Reset, CopyBufferRegion and
-// ResourceBarrier where the desktop has them, and SetDescriptorHeaps 4 later: the console's
-// own four come after ExecuteBundle (27), at 28 to 31.
+// registers and stack). The console has the desktop's methods in another order: the queries
+// (BeginQuery, EndQuery, ResolveQueryData, SetPredication; the desktop's 52 to 55) come right
+// after ExecuteBundle, at 28 to 31, and push SetDescriptorHeaps to ClearUnorderedAccessView-
+// Float 4 slots later; from SetMarker (56) on they agree again. Unreal's call sites show it:
+// Close, Reset, CopyBufferRegion and ResourceBarrier in place, SetDescriptorHeaps at 32, its
+// timestamps' EndQuery and ResolveQueryData at 29 and 30.
 constexpr std::size_t host_list_slots = 60, list_slots = 96, unmapped = ~std::size_t{0};
 std::array<std::size_t, list_slots> list_map = [] {
     std::array<std::size_t, list_slots> map{};
     for (std::size_t slot = 0; slot < list_slots; ++slot)
-        map[slot] = slot <= 27                                 ? slot
-                    : slot < 32 || slot - 4 >= host_list_slots ? unmapped
-                                                               : slot - 4;
+        map[slot] = slot <= 27               ? slot
+                    : slot < 32              ? slot + 24
+                    : slot < 56              ? slot - 4
+                    : slot < host_list_slots ? slot
+                                             : unmapped;
     // CopyTextureRegion with one more argument, which the host's has not
     map[83] = 16;
     return map;
@@ -950,11 +1007,29 @@ void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
 void STDMETHODCALLTYPE execute_bundle(void *self, ID3D12GraphicsCommandList *bundle) {
     host_of(self)->ExecuteBundle(static_cast<List *>(host_list(bundle)));
 }
+// XS_D3D_TRACE: the first calls of a method, with a handle and the host's for it
+void trace_handle(const char *method, Handle handle) {
+    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static std::atomic<int> calls{0};
+    if (tracing && calls++ < 24) {
+        std::fprintf(stderr, "[Runtime] Direct3D 12 %s(%llx -> %llx)\n", method,
+                     static_cast<unsigned long long>(handle.ptr),
+                     static_cast<unsigned long long>(host_handle(handle).ptr));
+        std::fflush(stderr);
+    }
+}
 void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handle *targets,
                                              BOOL single, const Handle *depth) {
+    if (targets && count)
+        trace_handle("OMSetRenderTargets", targets[0]);
     std::vector<Handle> host(targets ? (single ? 1 : count) : 0);
     for (std::size_t i = 0; i < host.size(); ++i)
         host[i] = host_handle(targets[i]);
+    if (!host.empty()) {
+        const std::lock_guard lock(target_mutex);
+        if (const auto found = target_of.find(host[0].ptr); found != target_of.end())
+            last_target = found->second;
+    }
     Handle host_depth{};
     if (depth)
         host_depth = host_handle(*depth);
@@ -1026,6 +1101,7 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
 // ID3D12CommandQueue::ExecuteCommandLists: the host's lists for the title's proxies
 void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
                                              ID3D12CommandList *const *lists) {
+    decode_written_heaps();
     std::vector<ID3D12CommandList *> host(count);
     for (UINT i = 0; i < count; ++i)
         host[i] = host_list(lists[i]);
@@ -1164,9 +1240,10 @@ void d3d11x::report_d3d12_failure() {
     dred->Release();
     std::fflush(stderr);
 }
+ID3D12Resource *d3d11x::last_render_target() { return last_target.load(); }
 bool d3d11x::read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
                              unsigned &pitch, unsigned &width, unsigned &height,
-                             DXGI_FORMAT &format) {
+                             DXGI_FORMAT &format, D3D12_RESOURCE_STATES state) {
     auto *const queue = direct_queue.load();
     ID3D12Device *device = nullptr;
     if (!queue || FAILED(resource->GetDevice(IID_PPV_ARGS(&device))))
@@ -1200,8 +1277,7 @@ bool d3d11x::read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t>
                                             IID_PPV_ARGS(&list))) &&
         SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)))) {
         D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Transition = {resource, 0, D3D12_RESOURCE_STATE_PRESENT,
-                              D3D12_RESOURCE_STATE_COPY_SOURCE};
+        barrier.Transition = {resource, 0, state, D3D12_RESOURCE_STATE_COPY_SOURCE};
         list->ResourceBarrier(1, &barrier);
         const D3D12_TEXTURE_COPY_LOCATION target{
             buffer, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {.PlacedFootprint = footprint}};
