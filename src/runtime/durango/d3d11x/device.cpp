@@ -19,6 +19,7 @@
 #include <dxgi1_6.h>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -653,7 +654,22 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     }
     return result;
 }
-// slot 62: CreateComputePipelineState(desc, iid, state), by Unreal's message
+// slot 74: (data, size, out), still to be named; what it is given goes to the log
+void STDMETHODCALLTYPE device_slot_74(ID3D12Device *, const std::uint8_t *data, UINT size,
+                                      void **out) {
+    if (static std::atomic<int> shown{0}; shown++ < 2) {
+        std::string text;
+        char hex[4];
+        for (UINT i = 0; data && i < std::min(size, 96u); ++i) {
+            std::snprintf(hex, sizeof hex, "%02x ", data[i]);
+            text += hex;
+        }
+        std::fprintf(stderr, "[Runtime] device slot 74: %u bytes: %s out %p\n", size, text.c_str(),
+                     static_cast<void *>(out));
+        std::fflush(stderr);
+    }
+}
+// CreateComputePipelineState (11)
 HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
                                                   const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc,
                                                   REFIID iid, void **state) {
@@ -712,6 +728,8 @@ std::uint64_t STDMETHODCALLTYPE unknown_queue_method(void *, std::uint64_t a, st
     }
     return E_NOTIMPL;
 }
+void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
+                                             ID3D12CommandList *const *lists);
 // slot 23: SignalX(fence, value, flush flags), by Unreal's message; the host's caches need no
 // flushing asked for
 HRESULT STDMETHODCALLTYPE signal_x(ID3D12CommandQueue *self, ID3D12Fence *fence, UINT64 value,
@@ -723,6 +741,13 @@ template <std::size_t... Index>
 std::vector<std::pair<std::size_t, Slot>> unknown_queue_methods(std::index_sequence<Index...>) {
     return {{host_queue_slots + Index,
              reinterpret_cast<Slot>(&unknown_queue_method<host_queue_slots + Index>)}...};
+}
+// slot 62: CreateComputePipelineState as the console has it (Unreal's message names it): two
+// more arguments, 0 at its call site, before the interface and the state
+HRESULT STDMETHODCALLTYPE create_compute_pipeline_x(ID3D12Device *self,
+                                                    const D3D12_COMPUTE_PIPELINE_STATE_DESC *desc,
+                                                    void *, void *, REFIID iid, void **state) {
+    return create_compute_pipeline(self, desc, iid, state);
 }
 // slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
 HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
@@ -736,6 +761,7 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
             auto overrides =
                 unknown_queue_methods(std::make_index_sequence<queue_slots - host_queue_slots>{});
             overrides.push_back({23, reinterpret_cast<Slot>(&signal_x)});
+            overrides.push_back({10, reinterpret_cast<Slot>(&execute_command_lists)});
             return overrides;
         }());
     if (SUCCEEDED(result) && queue && *queue && desc &&
@@ -782,11 +808,53 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     }
     return result;
 }
-// ID3D12GraphicsCommandList as the console has it, mapped onto the host's: each console slot
-// calls this host slot. The arguments go on as they came, integer registers and stack.
-// Unreal's call sites put Close, Reset, CopyBufferRegion and ResourceBarrier where the
-// desktop has them, and SetDescriptorHeaps 4 later: the console's own four come after
-// ExecuteBundle (27), at 28 to 31.
+// XS_D3D_DEBUG: the host's debug layer, whose messages go to the log when something the title
+// asked for is turned down
+std::atomic<ID3D12InfoQueue *> debug_messages{nullptr};
+void report_debug_messages() {
+    auto *const queue = debug_messages.load();
+    if (!queue)
+        return;
+    for (UINT64 i = 0, count = queue->GetNumStoredMessages(); i < count; ++i) {
+        SIZE_T size = 0;
+        queue->GetMessage(i, nullptr, &size);
+        std::vector<std::uint8_t> buffer(size);
+        auto *const message = reinterpret_cast<D3D12_MESSAGE *>(buffer.data());
+        if (SUCCEEDED(queue->GetMessage(i, message, &size)) &&
+            message->Severity <= D3D12_MESSAGE_SEVERITY_WARNING)
+            std::fprintf(stderr, "[Runtime] Direct3D 12 debug layer: %.*s\n",
+                         static_cast<int>(message->DescriptionByteLength), message->pDescription);
+    }
+    queue->ClearStoredMessages();
+    std::fflush(stderr);
+}
+
+// ID3D12GraphicsCommandList as the console has it. The title reads the object itself: a
+// write pointer at +0x38 and its limit at +0x50, between which it records commands inline
+// when there is room. The title gets a proxy of the console's size whose inline space is
+// always full, so that every command comes through a method, and the proxy hands those to
+// the host's list.
+struct ListProxy {
+    Slot *vtable;
+    std::uint8_t fields[0x200 - sizeof(Slot *)];
+    ID3D12GraphicsCommandList *host;
+    std::atomic<ULONG> references;
+};
+std::mutex proxy_mutex;
+std::set<const void *> list_proxies;
+// the host's list for a title's one, which may be either
+ID3D12CommandList *host_list(void *list) {
+    const std::lock_guard lock(proxy_mutex);
+    return list_proxies.contains(list) ? static_cast<ListProxy *>(list)->host
+                                       : static_cast<ID3D12CommandList *>(list);
+}
+using List = ID3D12GraphicsCommandList;
+List *host_of(void *self) { return static_cast<ListProxy *>(self)->host; }
+
+// Each console slot calls this host slot, the arguments going on as they came (integer
+// registers and stack). Unreal's call sites put Close, Reset, CopyBufferRegion and
+// ResourceBarrier where the desktop has them, and SetDescriptorHeaps 4 later: the console's
+// own four come after ExecuteBundle (27), at 28 to 31.
 constexpr std::size_t host_list_slots = 60, list_slots = 96, unmapped = ~std::size_t{0};
 std::array<std::size_t, list_slots> list_map = [] {
     std::array<std::size_t, list_slots> map{};
@@ -812,7 +880,7 @@ std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::ui
         std::fflush(stderr);
     }
     const auto target = list_map[Index];
-    if (target >= host_list_slots) {
+    if (target == unmapped) {
         if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
             std::fprintf(stderr,
                          "[Runtime] unimplemented Direct3D 12 call: command list slot %zu (%llx, "
@@ -822,61 +890,53 @@ std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::ui
         }
         return E_NOTIMPL;
     }
-    using Method = std::uint64_t(STDMETHODCALLTYPE *)(
-        void *, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
-        std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
-    return original<Method>(self, target)(self, a, b, c, d, e, f, g, h, i, j);
+    auto *const host = host_of(self);
+    return reinterpret_cast<Raw>((*reinterpret_cast<Slot **>(host))[target])(host, a, b, c, d, e, f,
+                                                                             g, h, i, j);
 }
-template <std::size_t... Index>
-std::vector<std::pair<std::size_t, Slot>> list_methods(std::index_sequence<Index...>) {
-    return {{3 + Index, reinterpret_cast<Slot>(&list_method<3 + Index>)}...};
+HRESULT STDMETHODCALLTYPE list_query(void *self, REFIID iid, void **object) {
+    if (!object)
+        return E_POINTER;
+    if (is_any<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12CommandList,
+               ID3D12GraphicsCommandList>(iid)) {
+        ++static_cast<ListProxy *>(self)->references;
+        *object = self;
+        return S_OK;
+    }
+    return host_of(self)->QueryInterface(iid, object);
 }
-// The command list's methods that take CPU handles, at their console slots (the desktop's +
-// 4): the host's handles. They go straight into the vtable, the depth clear having a float in
-// a register the generic path does not carry.
-void set_slot(void *object, std::size_t index, void *function) {
-    (*static_cast<Slot **>(object))[index] = function;
+ULONG STDMETHODCALLTYPE list_add_ref(void *self) {
+    return ++static_cast<ListProxy *>(self)->references;
 }
-using List = ID3D12GraphicsCommandList;
-void STDMETHODCALLTYPE om_set_render_targets(List *self, UINT count, const Handle *targets,
-                                             BOOL single, const Handle *depth) {
-    std::vector<Handle> host(targets ? (single ? 1 : count) : 0);
-    for (std::size_t i = 0; i < host.size(); ++i)
-        host[i] = host_handle(targets[i]);
-    Handle host_depth{};
-    if (depth)
-        host_depth = host_handle(*depth);
-    original<void(STDMETHODCALLTYPE *)(void *, UINT, const Handle *, BOOL, const Handle *)>(
-        self, 46)(self, count, targets ? host.data() : nullptr, single,
-                  depth ? &host_depth : nullptr);
+ULONG STDMETHODCALLTYPE list_release(void *self) {
+    auto *const proxy = static_cast<ListProxy *>(self);
+    const auto left = --proxy->references;
+    if (left == 0) {
+        {
+            const std::lock_guard lock(proxy_mutex);
+            list_proxies.erase(proxy);
+        }
+        proxy->host->Release();
+        delete proxy;
+    }
+    return left;
 }
-void STDMETHODCALLTYPE clear_depth_stencil(List *self, Handle view, D3D12_CLEAR_FLAGS flags,
-                                           FLOAT depth, UINT8 stencil, UINT count,
-                                           const D3D12_RECT *rects) {
-    original<void(STDMETHODCALLTYPE *)(void *, Handle, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT,
-                                       const D3D12_RECT *)>(self, 47)(
-        self, host_handle(view), flags, depth, stencil, count, rects);
-}
-void STDMETHODCALLTYPE clear_render_target(List *self, Handle view, const FLOAT *color, UINT count,
-                                           const D3D12_RECT *rects) {
-    original<void(STDMETHODCALLTYPE *)(void *, Handle, const FLOAT *, UINT, const D3D12_RECT *)>(
-        self, 48)(self, host_handle(view), color, count, rects);
-}
-template <std::size_t Host, class Values>
-void STDMETHODCALLTYPE clear_unordered_access(List *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu,
-                                              Handle cpu, ID3D12Resource *resource,
-                                              const Values *values, UINT count,
-                                              const D3D12_RECT *rects) {
-    original<void(STDMETHODCALLTYPE *)(void *, D3D12_GPU_DESCRIPTOR_HANDLE, Handle,
-                                       ID3D12Resource *, const Values *, UINT, const D3D12_RECT *)>(
-        self, Host)(self, gpu, host_handle(cpu), resource, values, count, rects);
+
+// The methods that take CPU handles, at their console slots (the desktop's + 4): the host's
+// handles. The depth clear has a float in a register the generic path does not carry.
+using Handle = D3D12_CPU_DESCRIPTOR_HANDLE;
+HRESULT STDMETHODCALLTYPE close_list(void *self) {
+    const auto result = host_of(self)->Close();
+    if (FAILED(result))
+        report_debug_messages();
+    return result;
 }
 // ResourceBarrier: transitions name states the console's way (GENERIC_READ is 0x8c3 there)
 D3D12_RESOURCE_STATES host_state(D3D12_RESOURCE_STATES state) {
     return state == static_cast<D3D12_RESOURCE_STATES>(0x8c3) ? D3D12_RESOURCE_STATE_GENERIC_READ
                                                               : state;
 }
-void STDMETHODCALLTYPE resource_barrier(List *self, UINT count,
+void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
                                         const D3D12_RESOURCE_BARRIER *barriers) {
     std::vector<D3D12_RESOURCE_BARRIER> host(barriers, barriers + (barriers ? count : 0));
     for (auto &barrier : host)
@@ -884,69 +944,108 @@ void STDMETHODCALLTYPE resource_barrier(List *self, UINT count,
             barrier.Transition.StateBefore = host_state(barrier.Transition.StateBefore);
             barrier.Transition.StateAfter = host_state(barrier.Transition.StateAfter);
         }
-    original<void(STDMETHODCALLTYPE *)(void *, UINT, const D3D12_RESOURCE_BARRIER *)>(self, 26)(
-        self, count, host.data());
+    host_of(self)->ResourceBarrier(count, host.data());
 }
-void console_list(void *list);
-HRESULT STDMETHODCALLTYPE close_list(List *self);
-void console_list_close(void *list) {
-    set_slot(list, 9, reinterpret_cast<void *>(&close_list));
-    set_slot(list, 26, reinterpret_cast<void *>(&resource_barrier));
+void STDMETHODCALLTYPE execute_bundle(void *self, ID3D12GraphicsCommandList *bundle) {
+    host_of(self)->ExecuteBundle(static_cast<List *>(host_list(bundle)));
 }
-void console_list(void *list) {
-    set_slot(list, 50, reinterpret_cast<void *>(&om_set_render_targets));
-    set_slot(list, 51, reinterpret_cast<void *>(&clear_depth_stencil));
-    set_slot(list, 52, reinterpret_cast<void *>(&clear_render_target));
-    set_slot(list, 53, reinterpret_cast<void *>(&clear_unordered_access<49, UINT>));
-    set_slot(list, 54, reinterpret_cast<void *>(&clear_unordered_access<50, FLOAT>));
+void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handle *targets,
+                                             BOOL single, const Handle *depth) {
+    std::vector<Handle> host(targets ? (single ? 1 : count) : 0);
+    for (std::size_t i = 0; i < host.size(); ++i)
+        host[i] = host_handle(targets[i]);
+    Handle host_depth{};
+    if (depth)
+        host_depth = host_handle(*depth);
+    host_of(self)->OMSetRenderTargets(count, targets ? host.data() : nullptr, single,
+                                      depth ? &host_depth : nullptr);
 }
-// XS_D3D_DEBUG: the host's debug layer, whose messages go to the log when a command list
-// fails to close
-std::atomic<ID3D12InfoQueue *> debug_messages{nullptr};
-void report_debug_messages() {
-    auto *const queue = debug_messages.load();
-    if (!queue)
-        return;
-    for (UINT64 i = 0, count = queue->GetNumStoredMessages(); i < count; ++i) {
-        SIZE_T size = 0;
-        queue->GetMessage(i, nullptr, &size);
-        std::vector<std::uint8_t> buffer(size);
-        auto *const message = reinterpret_cast<D3D12_MESSAGE *>(buffer.data());
-        if (SUCCEEDED(queue->GetMessage(i, message, &size)) &&
-            message->Severity <= D3D12_MESSAGE_SEVERITY_WARNING)
-            std::fprintf(stderr, "[Runtime] Direct3D 12 debug layer: %.*s\n",
-                         static_cast<int>(message->DescriptionByteLength), message->pDescription);
-    }
-    queue->ClearStoredMessages();
-    std::fflush(stderr);
+void STDMETHODCALLTYPE clear_depth_stencil(void *self, Handle view, D3D12_CLEAR_FLAGS flags,
+                                           FLOAT depth, UINT8 stencil, UINT count,
+                                           const D3D12_RECT *rects) {
+    host_of(self)->ClearDepthStencilView(host_handle(view), flags, depth, stencil, count, rects);
 }
-HRESULT STDMETHODCALLTYPE close_list(List *self) {
-    const auto result = original<HRESULT(STDMETHODCALLTYPE *)(void *)>(self, 9)(self);
-    if (FAILED(result))
-        report_debug_messages();
-    return result;
+void STDMETHODCALLTYPE clear_render_target(void *self, Handle view, const FLOAT *color, UINT count,
+                                           const D3D12_RECT *rects) {
+    host_of(self)->ClearRenderTargetView(host_handle(view), color, count, rects);
 }
+void STDMETHODCALLTYPE clear_uav_uint(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
+                                      ID3D12Resource *resource, const UINT *values, UINT count,
+                                      const D3D12_RECT *rects) {
+    host_of(self)->ClearUnorderedAccessViewUint(gpu, host_handle(cpu), resource, values, count,
+                                                rects);
+}
+void STDMETHODCALLTYPE clear_uav_float(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
+                                       ID3D12Resource *resource, const FLOAT *values, UINT count,
+                                       const D3D12_RECT *rects) {
+    host_of(self)->ClearUnorderedAccessViewFloat(gpu, host_handle(cpu), resource, values, count,
+                                                 rects);
+}
+template <std::size_t... Index>
+std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
+    std::array<Slot, list_slots> vtable{reinterpret_cast<Slot>(&list_method<Index>)...};
+    vtable[0] = reinterpret_cast<Slot>(&list_query);
+    vtable[1] = reinterpret_cast<Slot>(&list_add_ref);
+    vtable[2] = reinterpret_cast<Slot>(&list_release);
+    vtable[9] = reinterpret_cast<Slot>(&close_list);
+    vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
+    vtable[27] = reinterpret_cast<Slot>(&execute_bundle);
+    vtable[50] = reinterpret_cast<Slot>(&om_set_render_targets);
+    vtable[51] = reinterpret_cast<Slot>(&clear_depth_stencil);
+    vtable[52] = reinterpret_cast<Slot>(&clear_render_target);
+    vtable[53] = reinterpret_cast<Slot>(&clear_uav_uint);
+    vtable[54] = reinterpret_cast<Slot>(&clear_uav_float);
+    return vtable;
+}
+std::array<Slot, list_slots> list_vtable = list_vtable_of(std::make_index_sequence<list_slots>{});
+void *make_list_proxy(List *host) {
+    auto *const proxy = new ListProxy{};
+    proxy->vtable = list_vtable.data();
+    proxy->host = host;
+    proxy->references = 1;
+    const std::lock_guard lock(proxy_mutex);
+    list_proxies.insert(proxy);
+    return proxy;
+}
+
 // slot 73: a command list from a description (Unreal's call site: the type, 0, the node mask,
 // 0), an allocator, a pipeline state, then the interface and the list
 HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *desc,
                                               ID3D12CommandAllocator *allocator,
-                                              ID3D12PipelineState *state, REFIID iid, void **list) {
-    if (!desc)
+                                              ID3D12PipelineState *state, REFIID, void **list) {
+    if (!desc || !list)
         return E_INVALIDARG;
-    if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
-        std::fprintf(stderr, "[Runtime] console CreateCommandList description %u %u %u %u\n",
-                     desc[0], desc[1], desc[2], desc[3]);
-        std::fflush(stderr);
-    }
-    const auto result = self->CreateCommandList(
-        desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]), allocator, state, iid, list);
-    if (SUCCEEDED(result) && list && *list)
-        console_vtable<Family::list>(*list, list_slots, list_slots,
-                                     list_methods(std::make_index_sequence<list_slots - 3>{}));
-    if (SUCCEEDED(result) && list && *list) {
-        console_list(*list);
-        console_list_close(*list);
-    }
+    List *host = nullptr;
+    const auto result =
+        self->CreateCommandList(desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]), allocator,
+                                state, IID_PPV_ARGS(&host));
+    *list = SUCCEEDED(result) ? make_list_proxy(host) : nullptr;
+    return result;
+}
+// ID3D12CommandQueue::ExecuteCommandLists: the host's lists for the title's proxies
+void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
+                                             ID3D12CommandList *const *lists) {
+    std::vector<ID3D12CommandList *> host(count);
+    for (UINT i = 0; i < count; ++i)
+        host[i] = host_list(lists[i]);
+    original<void(STDMETHODCALLTYPE *)(void *, UINT, ID3D12CommandList *const *)>(self, 10)(
+        self, count, host.data());
+}
+// CreateCommandList (12), the desktop's way: a proxy as well
+HRESULT STDMETHODCALLTYPE create_command_list_desktop(ID3D12Device *self, UINT node,
+                                                      D3D12_COMMAND_LIST_TYPE type,
+                                                      ID3D12CommandAllocator *allocator,
+                                                      ID3D12PipelineState *state, REFIID,
+                                                      void **list) {
+    if (!list)
+        return E_POINTER;
+    List *host = nullptr;
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, UINT, D3D12_COMMAND_LIST_TYPE,
+                                                ID3D12CommandAllocator *, ID3D12PipelineState *,
+                                                REFIID, void **);
+    const auto result =
+        original<Create>(self, 12)(self, node, type, allocator, state, IID_PPV_ARGS(&host));
+    *list = SUCCEEDED(result) ? make_list_proxy(host) : nullptr;
     return result;
 }
 // The console's ID3D12Device goes on past the desktop's 44 methods with its own. Those not
@@ -1010,11 +1109,13 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({27, reinterpret_cast<Slot>(&create_committed_resource)});
     overrides.push_back({44, reinterpret_cast<Slot>(&create_placed_resource_x)});
     overrides.push_back({8, reinterpret_cast<Slot>(&create_command_queue)});
-    overrides.push_back({62, reinterpret_cast<Slot>(&create_compute_pipeline)});
+    overrides.push_back({62, reinterpret_cast<Slot>(&create_compute_pipeline_x)});
+    overrides.push_back({74, reinterpret_cast<Slot>(&device_slot_74)});
     overrides.push_back({10, reinterpret_cast<Slot>(&create_graphics_pipeline)});
     overrides.push_back({11, reinterpret_cast<Slot>(&create_compute_pipeline)});
     overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
+    overrides.push_back({12, reinterpret_cast<Slot>(&create_command_list_desktop)});
     // all of the host's vtable, which its runtime calls past the desktop's first 44 too
     console_vtable<Family::device>(host, device_slots, device_slots, overrides);
     const auto queried = host->QueryInterface(iid, device);
