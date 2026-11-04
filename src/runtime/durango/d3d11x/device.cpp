@@ -731,20 +731,14 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     }
     return result;
 }
-// slot 74: (data, size, out), still to be named; what it is given goes to the log
-void STDMETHODCALLTYPE device_slot_74(ID3D12Device *, const std::uint8_t *data, UINT size,
-                                      void **out) {
-    if (static std::atomic<int> shown{0}; shown++ < 2) {
-        std::string text;
-        char hex[4];
-        for (UINT i = 0; data && i < std::min(size, 96u); ++i) {
-            std::snprintf(hex, sizeof hex, "%02x ", data[i]);
-            text += hex;
-        }
-        std::fprintf(stderr, "[Runtime] device slot 74: %u bytes: %s out %p\n", size, text.c_str(),
-                     static_cast<void *>(out));
-        std::fflush(stderr);
-    }
+// slot 74: RegisterPagePoolX(address, page count, handle): the pages are the title's memory,
+// mapped for the GPU by later page mapping calls; here the pool is only a handle
+HRESULT STDMETHODCALLTYPE register_page_pool(ID3D12Device *, std::uint64_t address, UINT,
+                                             HANDLE *handle) {
+    if (!handle)
+        return E_POINTER;
+    *handle = reinterpret_cast<HANDLE>(address);
+    return S_OK;
 }
 // CreateComputePipelineState (11)
 HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
@@ -858,7 +852,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     using Create = HRESULT(STDMETHODCALLTYPE *)(
         void *, const D3D12_HEAP_PROPERTIES *, D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC *,
         D3D12_RESOURCE_STATES, const D3D12_CLEAR_VALUE *, REFIID, void **);
-    // the console's D3D12_RESOURCE_STATE_GENERIC_READ (0x8c3) has no index buffer bit, the
+    // the console's D3D12_RESOURCE_STATE_GENERIC_READ (0x8c3) has no indirect argument bit, the
     // desktop's (0xac3), which upload heaps require, does
     constexpr auto console_generic_read = static_cast<D3D12_RESOURCE_STATES>(0x8c3);
     if (state == console_generic_read)
@@ -1110,6 +1104,7 @@ void STDMETHODCALLTYPE clear_uav_float(void *self, D3D12_GPU_DESCRIPTOR_HANDLE g
     host_of(self)->ClearUnorderedAccessViewFloat(gpu, host_handle(cpu), resource, values, count,
                                                  rects);
 }
+void STDMETHODCALLTYPE ignored_list_method(void *) {}
 template <std::size_t... Index>
 std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     std::array<Slot, list_slots> vtable{reinterpret_cast<Slot>(&list_method<Index>)...};
@@ -1126,6 +1121,10 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     vtable[52] = reinterpret_cast<Slot>(&clear_render_target);
     vtable[53] = reinterpret_cast<Slot>(&clear_uav_uint);
     vtable[54] = reinterpret_cast<Slot>(&clear_uav_float);
+    // FlushPipelineX and OMSetDepthBoundsX: cache flushes the host makes itself, and a depth
+    // bounds test no host pipeline here enables
+    vtable[67] = reinterpret_cast<Slot>(&ignored_list_method);
+    vtable[68] = reinterpret_cast<Slot>(&ignored_list_method);
     return vtable;
 }
 std::array<Slot, list_slots> list_vtable = list_vtable_of(std::make_index_sequence<list_slots>{});
@@ -1364,7 +1363,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({44, reinterpret_cast<Slot>(&create_placed_resource_x)});
     overrides.push_back({8, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({62, reinterpret_cast<Slot>(&create_compute_pipeline_x)});
-    overrides.push_back({74, reinterpret_cast<Slot>(&device_slot_74)});
+    overrides.push_back({74, reinterpret_cast<Slot>(&register_page_pool)});
     overrides.push_back({10, reinterpret_cast<Slot>(&create_graphics_pipeline)});
     overrides.push_back({11, reinterpret_cast<Slot>(&create_compute_pipeline)});
     overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
