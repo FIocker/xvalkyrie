@@ -56,4 +56,6 @@ bool read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data, 
                      D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT);
 // the render target the title bound last, for XS_D3D_PROBE
 ID3D12Resource *last_render_target();
+// the first render target of each size and format the title bound
+std::vector<ID3D12Resource *> bound_render_targets();
 } // namespace xs::runtime::durango::d3d11x

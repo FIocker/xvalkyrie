@@ -5,6 +5,7 @@
 #include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
+#include "runtime/durango/d3d11x/placement.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
@@ -598,6 +599,7 @@ void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
 std::mutex target_mutex;
 std::map<std::uint64_t, ID3D12Resource *> target_of;
 std::atomic<ID3D12Resource *> last_target{nullptr};
+std::vector<ID3D12Resource *> bound_targets; // the first of each size, under target_mutex
 template <std::size_t Index>
 void STDMETHODCALLTYPE create_target_view(ID3D12Device *self, ID3D12Resource *resource,
                                           const void *desc, Handle handle) {
@@ -681,10 +683,33 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
                                                    D3D12_RESOURCE_STATES state,
                                                    const D3D12_CLEAR_VALUE *clear, REFIID iid,
                                                    void **resource) {
-    (void)address;
+    if (static std::atomic<int> shown{0}; desc && std::getenv("XS_D3D_TRACE") && shown++ < 12) {
+        std::uint64_t first = 0;
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+            info.State == MEM_COMMIT)
+            std::memcpy(&first, reinterpret_cast<const void *>(address), sizeof first);
+        std::fprintf(stderr,
+                     "[Runtime] CreatePlacedResourceX at %llx: dimension %d %llux%ux%u mips %u "
+                     "format %d layout %d flags 0x%x state 0x%x, memory %s %llx\n",
+                     static_cast<unsigned long long>(address), desc->Dimension, desc->Width,
+                     desc->Height, desc->DepthOrArraySize, desc->MipLevels, desc->Format,
+                     desc->Layout, desc->Flags, state,
+                     info.State == MEM_COMMIT ? "committed" : "not committed",
+                     static_cast<unsigned long long>(first));
+        std::fflush(stderr);
+    }
     const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
-    return create_committed_resource(self, &heap, D3D12_HEAP_FLAG_NONE, desc, state, clear, iid,
-                                     resource);
+    const auto result = create_committed_resource(self, &heap, D3D12_HEAP_FLAG_NONE, desc, state,
+                                                  clear, iid, resource);
+    // a texture the title fills in its memory: the host's copy follows it
+    if (SUCCEEDED(result) && resource && *resource && desc &&
+        !(desc->Flags &
+          (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
+           D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)))
+        d3d11x::track_placement(static_cast<ID3D12Resource *>(*resource),
+                                reinterpret_cast<const void *>(address));
+    return result;
 }
 void report_d3d12_messages();
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
@@ -1018,6 +1043,25 @@ void trace_handle(const char *method, Handle handle) {
         std::fflush(stderr);
     }
 }
+void STDMETHODCALLTYPE set_viewports(void *self, UINT count, const D3D12_VIEWPORT *viewports) {
+    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    if (static std::atomic<int> calls{0}; tracing && viewports && count && calls++ < 6) {
+        std::fprintf(stderr, "[Runtime] Direct3D 12 RSSetViewports(%u: %g %g %g %g %g %g)\n", count,
+                     viewports->TopLeftX, viewports->TopLeftY, viewports->Width, viewports->Height,
+                     viewports->MinDepth, viewports->MaxDepth);
+        std::fflush(stderr);
+    }
+    host_of(self)->RSSetViewports(count, viewports);
+}
+void STDMETHODCALLTYPE set_scissors(void *self, UINT count, const D3D12_RECT *rects) {
+    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    if (static std::atomic<int> calls{0}; tracing && rects && count && calls++ < 6) {
+        std::fprintf(stderr, "[Runtime] Direct3D 12 RSSetScissorRects(%u: %ld %ld %ld %ld)\n",
+                     count, rects->left, rects->top, rects->right, rects->bottom);
+        std::fflush(stderr);
+    }
+    host_of(self)->RSSetScissorRects(count, rects);
+}
 void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handle *targets,
                                              BOOL single, const Handle *depth) {
     if (targets && count)
@@ -1027,8 +1071,17 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
         host[i] = host_handle(targets[i]);
     if (!host.empty()) {
         const std::lock_guard lock(target_mutex);
-        if (const auto found = target_of.find(host[0].ptr); found != target_of.end())
+        if (const auto found = target_of.find(host[0].ptr); found != target_of.end()) {
             last_target = found->second;
+            const auto desc = found->second->GetDesc();
+            if (bound_targets.size() < 12 &&
+                std::none_of(bound_targets.begin(), bound_targets.end(), [&](auto *other) {
+                    const auto known = other->GetDesc();
+                    return known.Width == desc.Width && known.Height == desc.Height &&
+                           known.Format == desc.Format;
+                }))
+                bound_targets.push_back(found->second);
+        }
     }
     Handle host_depth{};
     if (depth)
@@ -1064,6 +1117,8 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     vtable[1] = reinterpret_cast<Slot>(&list_add_ref);
     vtable[2] = reinterpret_cast<Slot>(&list_release);
     vtable[9] = reinterpret_cast<Slot>(&close_list);
+    vtable[21] = reinterpret_cast<Slot>(&set_viewports);
+    vtable[22] = reinterpret_cast<Slot>(&set_scissors);
     vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
     vtable[27] = reinterpret_cast<Slot>(&execute_bundle);
     vtable[50] = reinterpret_cast<Slot>(&om_set_render_targets);
@@ -1098,10 +1153,123 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
     *list = SUCCEEDED(result) ? make_list_proxy(host) : nullptr;
     return result;
 }
+// The uploads of placement textures the title wrote, on a list of ours that runs before the
+// title's on the same queue. Textures are where the title keeps them between its own lists:
+// shader resources.
+struct Uploader {
+    ID3D12CommandAllocator *allocator = nullptr;
+    ID3D12GraphicsCommandList *list = nullptr;
+    ID3D12Fence *fence = nullptr;
+    UINT64 value = 0;
+    std::vector<ID3D12Resource *> buffers; // until the GPU is past them
+};
+std::mutex uploader_mutex;
+void upload_placements_d3d12(ID3D12CommandQueue *queue) {
+    auto uploads = d3d11x::take_d3d12_uploads();
+    if (uploads.empty())
+        return;
+    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5) {
+        std::fprintf(stderr,
+                     "[Runtime] uploading %zu placement textures, the first with %zu "
+                     "subresources\n",
+                     uploads.size(), uploads[0].subresources.size());
+        std::fflush(stderr);
+    }
+    const std::lock_guard lock(uploader_mutex);
+    static Uploader uploader;
+    ID3D12Device *device = nullptr;
+    queue->GetDevice(IID_PPV_ARGS(&device));
+    if (!uploader.list &&
+        (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                               IID_PPV_ARGS(&uploader.allocator))) ||
+         FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, uploader.allocator,
+                                          nullptr, IID_PPV_ARGS(&uploader.list))) ||
+         FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&uploader.fence))))) {
+        device->Release();
+        return;
+    }
+    if (uploader.value) {
+        if (uploader.fence->GetCompletedValue() < uploader.value) {
+            auto *const event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            uploader.fence->SetEventOnCompletion(uploader.value, event);
+            WaitForSingleObject(event, 5000);
+            CloseHandle(event);
+        }
+        for (auto *buffer : uploader.buffers)
+            buffer->Release();
+        uploader.buffers.clear();
+        uploader.allocator->Reset();
+        uploader.list->Reset(uploader.allocator, nullptr);
+    }
+    for (auto &upload : uploads) {
+        const auto desc = upload.resource->GetDesc();
+        const auto count = static_cast<UINT>(upload.subresources.size());
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(count);
+        std::vector<UINT> rows(count);
+        UINT64 bytes = 0;
+        device->GetCopyableFootprints(&desc, 0, count, 0, footprints.data(), rows.data(), nullptr,
+                                      &bytes);
+        const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_UPLOAD};
+        const D3D12_RESOURCE_DESC buffer_desc{D3D12_RESOURCE_DIMENSION_BUFFER,
+                                              0,
+                                              bytes,
+                                              1,
+                                              1,
+                                              1,
+                                              DXGI_FORMAT_UNKNOWN,
+                                              {1, 0},
+                                              D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                                              D3D12_RESOURCE_FLAG_NONE};
+        ID3D12Resource *buffer = nullptr;
+        void *mapped = nullptr;
+        if (SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer_desc,
+                                                      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                      IID_PPV_ARGS(&buffer))) &&
+            SUCCEEDED(buffer->Map(0, nullptr, &mapped))) {
+            for (UINT i = 0; i < count; ++i) {
+                const auto &source = upload.subresources[i];
+                const auto pitch = upload.pitches[i];
+                for (UINT row = 0; row < rows[i] && std::size_t{row + 1} * pitch <= source.size();
+                     ++row)
+                    std::memcpy(static_cast<std::uint8_t *>(mapped) + footprints[i].Offset +
+                                    std::size_t{row} * footprints[i].Footprint.RowPitch,
+                                source.data() + std::size_t{row} * pitch, pitch);
+            }
+            buffer->Unmap(0, nullptr);
+            D3D12_RESOURCE_BARRIER barrier{};
+            barrier.Transition = {upload.resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                  D3D12_RESOURCE_STATE_COPY_DEST};
+            uploader.list->ResourceBarrier(1, &barrier);
+            for (UINT i = 0; i < count; ++i) {
+                const D3D12_TEXTURE_COPY_LOCATION target{upload.resource,
+                                                         D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                                                         {.SubresourceIndex = i}};
+                const D3D12_TEXTURE_COPY_LOCATION source{buffer,
+                                                         D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                                                         {.PlacedFootprint = footprints[i]}};
+                uploader.list->CopyTextureRegion(&target, 0, 0, 0, &source, nullptr);
+            }
+            std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+            uploader.list->ResourceBarrier(1, &barrier);
+            uploader.buffers.push_back(buffer);
+        } else if (buffer) {
+            buffer->Release();
+        }
+        upload.resource->Release();
+    }
+    uploader.list->Close();
+    ID3D12CommandList *const lists[] = {uploader.list};
+    original<void(STDMETHODCALLTYPE *)(void *, UINT, ID3D12CommandList *const *)>(queue, 10)(
+        queue, 1, lists);
+    queue->Signal(uploader.fence, ++uploader.value);
+    device->Release();
+}
 // ID3D12CommandQueue::ExecuteCommandLists: the host's lists for the title's proxies
 void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
                                              ID3D12CommandList *const *lists) {
     decode_written_heaps();
+    upload_placements_d3d12(self);
     std::vector<ID3D12CommandList *> host(count);
     for (UINT i = 0; i < count; ++i)
         host[i] = host_list(lists[i]);
@@ -1241,6 +1409,10 @@ void d3d11x::report_d3d12_failure() {
     std::fflush(stderr);
 }
 ID3D12Resource *d3d11x::last_render_target() { return last_target.load(); }
+std::vector<ID3D12Resource *> d3d11x::bound_render_targets() {
+    const std::lock_guard lock(target_mutex);
+    return bound_targets;
+}
 bool d3d11x::read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
                              unsigned &pitch, unsigned &width, unsigned &height,
                              DXGI_FORMAT &format, D3D12_RESOURCE_STATES state) {

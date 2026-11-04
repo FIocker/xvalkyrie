@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <d3d11.h>
+#include <d3d12.h>
+#include <vector>
 
 // Placement resources: the title owns their memory and writes it directly, as the console's
 // GPU reads it. Here the host's resource is a copy, created from that memory and brought up
@@ -16,6 +18,15 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
 bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
                     D3D11_SUBRESOURCE_DATA *data, UINT count);
 void upload_placements(ID3D11DeviceContext *context);
+// The same for a Direct3D 12 texture, in the tiling the console picks for it. Its uploads are
+// recorded by whoever submits work: each dirty one's subresources, linear and tightly packed.
+void track_placement(ID3D12Resource *resource, const void *address);
+struct PlacementUpload {
+    ID3D12Resource *resource; // one reference, the taker's
+    std::vector<std::vector<std::byte>> subresources;
+    std::vector<UINT> pitches;
+};
+std::vector<PlacementUpload> take_d3d12_uploads();
 // before the host writes [address, address + bytes) (ReadFile into it): a write there from
 // the kernel fails instead of faulting, so the placements in it are let go and marked dirty
 void prepare_title_write(const void *address, std::size_t bytes);

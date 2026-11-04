@@ -16,11 +16,19 @@
 namespace xs::runtime::durango::d3d11x {
 namespace {
 struct Placement {
-    ID3D11Resource *resource; // one reference of ours
+    ID3D11Resource *resource; // one reference of ours, or null for a Direct3D 12 one
     std::uintptr_t start, end;
     bool dirty;
     UINT tile_mode, pitch;
+    ID3D12Resource *d3d12 = nullptr; // one reference of ours
+    D3D12_RESOURCE_DESC desc{};
 };
+void release(Placement &placement) {
+    if (placement.resource)
+        placement.resource->Release();
+    if (placement.d3d12)
+        placement.d3d12->Release();
+}
 std::mutex mutex;
 std::map<std::uintptr_t, Placement> placements; // by start
 std::vector<std::uintptr_t> dirty;              // starts of the ones written since uploaded
@@ -254,7 +262,7 @@ void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mo
     // a resource placed where an older one was replaces it
     if (const auto old = placements.find(start); old != placements.end()) {
         protect(old->second, PAGE_READWRITE); // the new one may not cover all of it
-        old->second.resource->Release();
+        release(old->second);
         placements.erase(old);
     }
     resource->AddRef();
@@ -299,13 +307,18 @@ bool readable_memory(std::uint64_t address, std::size_t bytes) {
 
 void upload_placements(ID3D11DeviceContext *context) {
     const std::lock_guard lock(mutex);
+    std::vector<std::uintptr_t> kept;
     for (const auto start : dirty) {
         const auto found = placements.find(start);
         if (found == placements.end() || !found->second.dirty)
             continue;
         // memory the title has let go of: what was in it is all the resource gets
+        if (found->second.d3d12) {
+            kept.push_back(start); // uploaded by whoever submits Direct3D 12 work
+            continue;
+        }
         if (!readable(found->second.start, found->second.end - found->second.start)) {
-            found->second.resource->Release();
+            release(found->second);
             placements.erase(found);
             continue;
         }
@@ -313,6 +326,163 @@ void upload_placements(ID3D11DeviceContext *context) {
         found->second.dirty = false;
         protect(found->second, PAGE_READONLY);
     }
-    dirty.clear();
+    dirty = std::move(kept);
+}
+} // namespace xs::runtime::durango::d3d11x
+
+namespace xs::runtime::durango::d3d11x {
+namespace {
+// XGComputeOptimalTileMode(dimension, format, width, height, array size, samples, bind flags,
+// misc flags), by its code in the console's xg_x.dll: the tiling the console gives a texture
+// whose description does not name one
+using OptimalTileMode = UINT(WINAPI *)(UINT, UINT, UINT, UINT, UINT, UINT, UINT, UINT);
+constexpr UINT bind_shader_resource = 8;
+XgTexture2D xg_desc(const D3D12_RESOURCE_DESC &desc, UINT tile_mode) {
+    return {static_cast<UINT>(desc.Width),
+            desc.Height,
+            desc.MipLevels,
+            desc.DepthOrArraySize,
+            static_cast<UINT>(desc.Format),
+            desc.SampleDesc.Count,
+            desc.SampleDesc.Quality,
+            0,
+            bind_shader_resource,
+            0,
+            0,
+            0,
+            0,
+            tile_mode,
+            0};
+}
+// what a texture's subresources hold, linear: through xg_x.dll for a tiling, as XG's linear
+// layout otherwise
+bool linear_subresources(const Placement &placement, PlacementUpload &upload) {
+    const auto &desc = placement.desc;
+    const UINT mips = std::max<UINT>(desc.MipLevels, 1),
+               slices = std::max<UINT>(desc.DepthOrArraySize, 1);
+    void *computer = nullptr;
+    Copy copy = nullptr;
+    if (placement.tile_mode > 1) {
+        const auto create = console_xg();
+        const auto xg = xg_desc(desc, placement.tile_mode);
+        if (!create || FAILED(create(&xg, &computer)) || !computer)
+            return false;
+        auto *const vtable = *static_cast<void ***>(computer);
+        const auto first = reinterpret_cast<std::uint64_t(WINAPI *)(void *, UINT, UINT)>(vtable[3]);
+        copy = reinterpret_cast<Copy>(vtable[first(computer, 0, 0) ? 9 : 6]);
+    }
+    bool ok = true;
+    std::size_t offset = 0;
+    for (UINT slice = 0; slice < slices && ok; ++slice)
+        for (UINT mip = 0; mip < mips && ok; ++mip) {
+            const auto pitch = row_bytes(static_cast<UINT>(desc.Width >> mip), desc.Format);
+            const auto bytes = std::size_t{pitch} * rows(desc.Height >> mip, desc.Format);
+            std::vector<std::byte> linear(bytes);
+            if (computer)
+                ok = copy_out(copy, computer, linear.data(), slice * mips + mip,
+                              reinterpret_cast<const void *>(placement.start), pitch,
+                              static_cast<UINT>(bytes));
+            else
+                std::memcpy(linear.data(), reinterpret_cast<const void *>(placement.start + offset),
+                            bytes);
+            offset += bytes;
+            upload.subresources.push_back(std::move(linear));
+            upload.pitches.push_back(pitch);
+        }
+    if (computer)
+        reinterpret_cast<ULONG(WINAPI *)(void *)>((*static_cast<void ***>(computer))[1])(computer);
+    return ok;
+}
+// how many bytes of the title's memory a texture takes in its tiling
+std::size_t placed_bytes(const D3D12_RESOURCE_DESC &desc, UINT tile_mode) {
+    std::size_t linear = 0;
+    const UINT mips = std::max<UINT>(desc.MipLevels, 1);
+    for (UINT slice = 0; slice < std::max<UINT>(desc.DepthOrArraySize, 1); ++slice)
+        for (UINT mip = 0; mip < mips; ++mip)
+            linear += std::size_t{row_bytes(static_cast<UINT>(desc.Width >> mip), desc.Format)} *
+                      rows(desc.Height >> mip, desc.Format);
+    if (tile_mode <= 1)
+        return linear;
+    // a tiling pads to its tiles: the size XG computes for it, where the console's xg_x.dll
+    // is the newer one that says (its first method after Release), the linear one otherwise
+    const auto create = console_xg();
+    const auto xg = xg_desc(desc, tile_mode);
+    void *computer = nullptr;
+    if (!create || FAILED(create(&xg, &computer)) || !computer)
+        return linear;
+    auto *const vtable = *static_cast<void ***>(computer);
+    const auto size = reinterpret_cast<std::uint64_t(WINAPI *)(void *, UINT, UINT)>(vtable[3])(
+        computer, 0, 0);
+    reinterpret_cast<ULONG(WINAPI *)(void *)>(vtable[1])(computer);
+    return size ? static_cast<std::size_t>(size) : linear;
+}
+} // namespace
+
+void track_placement(ID3D12Resource *resource, const void *address) {
+    if (!resource || !address)
+        return;
+    const auto desc = resource->GetDesc();
+    if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count > 1)
+        return;
+    static const auto optimal = reinterpret_cast<OptimalTileMode>(
+        detail::system_export("xg_x.dll", "XGComputeOptimalTileMode"));
+    const UINT tile_mode =
+        optimal
+            ? optimal(3, static_cast<UINT>(desc.Format), static_cast<UINT>(desc.Width), desc.Height,
+                      desc.DepthOrArraySize, desc.SampleDesc.Count, bind_shader_resource, 0)
+            : 0;
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    const auto bytes = placed_bytes(desc, tile_mode);
+    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5)
+        std::fprintf(stderr, "[Runtime] placement texture at %llx, tile mode %u, %zu bytes%s\n",
+                     static_cast<unsigned long long>(start), tile_mode, bytes,
+                     readable(start, bytes) ? "" : ", not all readable");
+    if (!readable(start, bytes))
+        return;
+    const std::lock_guard lock(mutex);
+    if (!handler)
+        handler = AddVectoredExceptionHandler(1, &written);
+    if (const auto old = placements.find(start); old != placements.end()) {
+        protect(old->second, PAGE_READWRITE);
+        release(old->second);
+        placements.erase(old);
+    }
+    resource->AddRef();
+    largest = std::max<std::uintptr_t>(largest, bytes);
+    auto &placement = placements[start] = {nullptr, start, start + bytes, true, tile_mode, 0};
+    placement.d3d12 = resource;
+    placement.desc = desc;
+    dirty.push_back(start);
+    protect(placement, PAGE_READONLY);
+}
+
+std::vector<PlacementUpload> take_d3d12_uploads() {
+    std::vector<PlacementUpload> uploads;
+    const std::lock_guard lock(mutex);
+    std::vector<std::uintptr_t> kept;
+    for (const auto start : dirty) {
+        const auto found = placements.find(start);
+        if (found == placements.end() || !found->second.dirty)
+            continue;
+        auto &placement = found->second;
+        if (!placement.d3d12) {
+            kept.push_back(start);
+            continue;
+        }
+        if (!readable(placement.start, placement.end - placement.start)) {
+            release(placement);
+            placements.erase(found);
+            continue;
+        }
+        PlacementUpload upload{placement.d3d12};
+        if (linear_subresources(placement, upload)) {
+            placement.d3d12->AddRef();
+            uploads.push_back(std::move(upload));
+        }
+        placement.dirty = false;
+        protect(placement, PAGE_READONLY);
+    }
+    dirty = std::move(kept);
+    return uploads;
 }
 } // namespace xs::runtime::durango::d3d11x
