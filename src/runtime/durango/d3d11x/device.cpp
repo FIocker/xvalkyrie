@@ -345,7 +345,7 @@ template <class Method> Method original(void *object, std::size_t index) {
 // differently runs the console's method only when the title calls it, and the host's
 // otherwise (its callers pass the object first; the title's, for methods that return a
 // structure, second). The console's methods are one table per kind of object.
-enum class Family { device, list, heap, queue };
+enum class Family { device, list, heap, queue, resource };
 constexpr std::size_t max_slots = 128;
 template <Family Kind> std::array<Slot, max_slots> console_table{};
 using Raw = std::uint64_t(STDMETHODCALLTYPE *)(void *, std::uint64_t, std::uint64_t, std::uint64_t,
@@ -367,18 +367,30 @@ std::array<Slot, max_slots> by_caller_slots(std::index_sequence<Index...>) {
 }
 template <Family Kind>
 const auto dispatchers = by_caller_slots<Kind>(std::make_index_sequence<max_slots>{});
+// One console vtable per host vtable (one per class of the host's runtime); an object that
+// has one already keeps it
 template <Family Kind>
 void console_vtable(void *object, std::size_t host_slots, std::size_t slots,
                     const std::vector<std::pair<std::size_t, Slot>> &overrides) {
+    static std::mutex mutex;
+    static std::map<Slot *, Slot *> blocks; // host vtable -> console vtable
+    const std::lock_guard lock(mutex);
     auto *const host = *static_cast<Slot **>(object);
-    auto *const block = new Slot[slots + 1]{};
-    block[0] = host;
-    std::copy(host, host + host_slots, block + 1);
-    for (const auto &[index, function] : overrides) {
-        console_table<Kind>[index] = function;
-        block[1 + index] = dispatchers<Kind>[index];
+    for (const auto &[from, to] : blocks)
+        if (to == host)
+            return;
+    auto &block = blocks[host];
+    if (!block) {
+        auto *const memory = new Slot[slots + 1]{};
+        memory[0] = host;
+        std::copy(host, host + host_slots, memory + 1);
+        for (const auto &[index, function] : overrides) {
+            console_table<Kind>[index] = function;
+            memory[1 + index] = dispatchers<Kind>[index];
+        }
+        block = memory + 1;
     }
-    *static_cast<Slot **>(object) = block + 1;
+    *static_cast<Slot **>(object) = block;
 }
 // Methods that return an 8-byte structure: the console's return it in RAX, where the
 // desktop's C++ methods write it through a hidden pointer
@@ -407,6 +419,23 @@ D3D12_HEAP_PROPERTIES *STDMETHODCALLTYPE custom_heap_properties(D3D12_HEAP_PROPE
     using Get = D3D12_HEAP_PROPERTIES *(STDMETHODCALLTYPE *)(void *, D3D12_HEAP_PROPERTIES *, UINT,
                                                              D3D12_HEAP_TYPE);
     return original<Get>(self, 26)(self, properties, node, type);
+}
+// a console method that is a host one at another slot, with the same arguments
+template <std::size_t Host>
+std::uint64_t STDMETHODCALLTYPE moved_method(void *self, std::uint64_t a, std::uint64_t b,
+                                             std::uint64_t c, std::uint64_t d) {
+    return reinterpret_cast<std::uint64_t(STDMETHODCALLTYPE *)(void *, std::uint64_t, std::uint64_t,
+                                                               std::uint64_t, std::uint64_t)>(
+        original_vtable(self)[Host])(self, a, b, c, d);
+}
+// ID3D12Resource as the console has it: the desktop's methods, then GetPlacementDescX and
+// GetOpaqueResourceTypeX, which nothing here has
+HRESULT STDMETHODCALLTYPE no_console_method(void *) { return E_NOTIMPL; }
+void console_resource(void *resource) {
+    if (resource)
+        console_vtable<Family::resource>(resource, 15, 17,
+                                         {{15, reinterpret_cast<Slot>(&no_console_method)},
+                                          {16, reinterpret_cast<Slot>(&no_console_method)}});
 }
 // ID3D12Device::QueryInterface: the console's device is also its DXGI device
 HRESULT STDMETHODCALLTYPE device_query(ID3D12Device *self, REFIID iid, void **object) {
@@ -801,6 +830,7 @@ std::uint64_t STDMETHODCALLTYPE unknown_queue_method(void *, std::uint64_t a, st
 }
 void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
                                              ID3D12CommandList *const *lists);
+HRESULT STDMETHODCALLTYPE ignored_queue_method(void *) { return S_OK; }
 // slot 23: SignalX(fence, value, flush flags), by Unreal's message; the host's caches need no
 // flushing asked for
 HRESULT STDMETHODCALLTYPE signal_x(ID3D12CommandQueue *self, ID3D12Fence *fence, UINT64 value,
@@ -832,6 +862,11 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
             auto overrides =
                 unknown_queue_methods(std::make_index_sequence<queue_slots - host_queue_slots>{});
             overrides.push_back({23, reinterpret_cast<Slot>(&signal_x)});
+            // PIXGpuCaptureNextFrame, PIXGpuBeginCapture, PIXGpuEndCapture where the desktop
+            // has GetDesc, which is at 26
+            for (const std::size_t pix : {18, 19, 20})
+                overrides.push_back({pix, reinterpret_cast<Slot>(&ignored_queue_method)});
+            overrides.push_back({26, reinterpret_cast<Slot>(&moved_method<18>)});
             overrides.push_back({10, reinterpret_cast<Slot>(&execute_command_lists)});
             return overrides;
         }());
@@ -863,9 +898,14 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     if (desc) {
         host_desc = *desc;
         host_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host_desc.Flags & 0xff);
+        // a console layout names a tile mode (0x100 | mode): the host picks its own
+        if (host_desc.Layout >= 0x100)
+            host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     }
     const auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr,
                                                    state, clear, iid, resource);
+    if (SUCCEEDED(result) && resource)
+        console_resource(*resource);
     if (FAILED(result) && heap && desc) {
         std::fprintf(stderr,
                      "[Runtime] CreateCommittedResource heap %d/%d/%d flags 0x%x dimension %d "
@@ -1037,6 +1077,34 @@ void trace_handle(const char *method, Handle handle) {
         std::fflush(stderr);
     }
 }
+// XS_D3D_TRACE: a GPU address the title gives, and whether it is CPU memory of the process
+void trace_address(const char *method, std::uint64_t address) {
+    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static std::atomic<int> calls{0};
+    if (!tracing || calls++ >= 24)
+        return;
+    MEMORY_BASIC_INFORMATION info{};
+    const bool cpu = VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+                     info.State == MEM_COMMIT;
+    std::fprintf(stderr, "[Runtime] Direct3D 12 %s(%llx)%s\n", method,
+                 static_cast<unsigned long long>(address), cpu ? " in the title's memory" : "");
+    std::fflush(stderr);
+}
+void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
+                                          const D3D12_VERTEX_BUFFER_VIEW *views) {
+    if (views && count)
+        trace_address("IASetVertexBuffers", views->BufferLocation);
+    host_of(self)->IASetVertexBuffers(start, count, views);
+}
+void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIEW *view) {
+    if (view)
+        trace_address("IASetIndexBuffer", view->BufferLocation);
+    host_of(self)->IASetIndexBuffer(view);
+}
+void STDMETHODCALLTYPE set_graphics_root_cbv(void *self, UINT index, std::uint64_t address) {
+    trace_address("SetGraphicsRootConstantBufferView", address);
+    host_of(self)->SetGraphicsRootConstantBufferView(index, address);
+}
 void STDMETHODCALLTYPE set_viewports(void *self, UINT count, const D3D12_VIEWPORT *viewports) {
     static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
     if (static std::atomic<int> calls{0}; tracing && viewports && count && calls++ < 6) {
@@ -1116,6 +1184,9 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     vtable[22] = reinterpret_cast<Slot>(&set_scissors);
     vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
     vtable[27] = reinterpret_cast<Slot>(&execute_bundle);
+    vtable[42] = reinterpret_cast<Slot>(&set_graphics_root_cbv);
+    vtable[47] = reinterpret_cast<Slot>(&set_index_buffer);
+    vtable[48] = reinterpret_cast<Slot>(&set_vertex_buffers);
     vtable[50] = reinterpret_cast<Slot>(&om_set_render_targets);
     vtable[51] = reinterpret_cast<Slot>(&clear_depth_stencil);
     vtable[52] = reinterpret_cast<Slot>(&clear_render_target);
@@ -1358,6 +1429,8 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({23, reinterpret_cast<Slot>(&copy_descriptors)});
     overrides.push_back({24, reinterpret_cast<Slot>(&copy_descriptors_simple)});
     overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
+    // GetAdapterLuid returns its 8 bytes in RAX
+    overrides.push_back({43, reinterpret_cast<Slot>(&returned_in_rax<43>)});
     overrides.push_back({26, reinterpret_cast<Slot>(&custom_heap_properties)});
     overrides.push_back({27, reinterpret_cast<Slot>(&create_committed_resource)});
     overrides.push_back({44, reinterpret_cast<Slot>(&create_placed_resource_x)});
@@ -1377,6 +1450,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
 }
 } // namespace
 
+void d3d11x::console_d3d12_resource(void *resource) { console_resource(resource); }
 void d3d11x::report_d3d12_failure() {
     auto *const device = d3d12_device.load();
     if (!device)

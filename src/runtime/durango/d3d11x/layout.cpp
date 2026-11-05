@@ -681,6 +681,8 @@ HRESULT STDMETHODCALLTYPE get_buffer(void *self, UINT index, REFIID iid, void **
     const bool d3d12 = iid == __uuidof(ID3D12Resource);
     const auto result =
         static_cast<IDXGISwapChain *>(unwrap(self))->GetBuffer(d3d12 ? index : 0, iid, surface);
+    if (SUCCEEDED(result) && surface && d3d12)
+        console_d3d12_resource(*surface);
     if (SUCCEEDED(result) && surface &&
         (iid == __uuidof(ID3D11Texture2D) || iid == __uuidof(ID3D11Resource)))
         *surface = wrap(*surface, Kind::texture2d);

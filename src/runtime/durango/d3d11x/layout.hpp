@@ -47,6 +47,8 @@ struct Layout {
 const Layout &layout(Kind kind);
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
+// a Direct3D 12 resource handed to the title: the console's methods where they differ
+void console_d3d12_resource(void *resource);
 // why the host's Direct3D 12 device stopped, and what its debug layer said, to the log
 void report_d3d12_failure();
 // a Direct3D 12 texture's first subresource, copied to the CPU through the title's direct
