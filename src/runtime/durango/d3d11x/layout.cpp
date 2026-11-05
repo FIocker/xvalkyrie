@@ -617,13 +617,18 @@ void probe(IDXGISwapChain *swap_chain) {
         UINT pitch = 0, width = 0, height = 0;
         DXGI_FORMAT format{};
         if (read_back_d3d12(resource, data, pitch, width, height, format))
-            report_picture(data.data(), pitch, width, height, format, "back buffer");
+            report_picture(
+                data.data(), pitch, width, height, format,
+                ("back buffer (" + std::to_string(draws_into_target(resource)) + " draws)")
+                    .c_str());
         int index = 0;
         for (auto *const target : bound_render_targets())
             if (read_back_d3d12(target, data, pitch, width, height, format,
                                 D3D12_RESOURCE_STATE_RENDER_TARGET))
                 report_picture(data.data(), pitch, width, height, format,
-                               ("render target " + std::to_string(index++)).c_str());
+                               ("render target " + std::to_string(index++) + " (" +
+                                std::to_string(draws_into_target(target)) + " draws)")
+                                   .c_str());
         report_d3d12_failure();
         resource->Release();
     }
