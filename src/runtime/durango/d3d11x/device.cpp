@@ -772,6 +772,17 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     if (first == host_mark)
         return;
     ++decoded[type & 3];
+    if (static std::atomic<std::uint32_t> shown{0};
+        std::getenv("XS_D3D_TRACE") && first != 0 && !(shown.fetch_or(1u << type) & (1u << type))) {
+        std::uint32_t more[4]{};
+        if (heap.stride >= 32)
+            std::memcpy(more, reinterpret_cast<const void *>(at + 16), sizeof more);
+        std::fprintf(stderr, "[Runtime] title %s descriptor: %08x %08x %08x %08x | %08x %08x %08x %08x"
+                     "\n",
+                     type == 0 ? "SRV" : type == 1 ? "UAV" : type == 2 ? "CBV" : "sampler",
+                     words[0], words[1], words[2], words[3], more[0], more[1], more[2], more[3]);
+        std::fflush(stderr);
+    }
     // a descriptor the title cleared is a null one, whose reads give 0: the host's slot may
     // hold anything until it is made so
     if (first == 0 && words[2] == 0 && words[3] == 0) {
