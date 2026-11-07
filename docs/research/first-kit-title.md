@@ -100,6 +100,9 @@ planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
   treated apart from any other. The video's jobs take their mask from the
   player's settings. Whether the workers here match those masks is the next
   thing to look at.
+- The title pins its workers one per processor, with masks 0x1 to 0x20 and
+  0x80 (`XS_THREAD_TRACE=1` shows them). Reporting six or eight processors
+  to it instead of the host's sixteen changed nothing.
 - It is not the audio processor: its messages are answered. In this kit
   a completed command's id is 12 bytes into the message, right after the
   type, the dropped count and the time, and the title reads it there.
@@ -117,5 +120,5 @@ command lists.
 `XS_D3D_SEQ=<frame>` prints every forwarded Direct3D call of one frame in
 order, with the range of the bytes an `UpdateSubresource` uploads, which is
 how the video's planes were found. `XS_ACP_TRACE=1` prints the first audio
-processor commands, and `XS_THREAD_DUMP=<frame>` the stack of every thread at
-that frame.
+processor commands, `XS_THREAD_DUMP=<frame>` the stack of every thread at
+that frame, and `XS_THREAD_TRACE=1` the affinity masks the title asks for.

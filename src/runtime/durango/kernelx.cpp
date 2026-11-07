@@ -3,11 +3,13 @@
 #include "runtime/durango/runtime.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <intrin.h>
 #include <shlwapi.h>
 #include <string>
 #include <string_view>
@@ -313,6 +315,36 @@ void WINAPI query_processor_scheduling_statistics(SchedulingStatistics *statisti
         *statistics = {value(kernel) - value(idle) + value(user), value(idle), statistics->global};
 }
 BOOL WINAPI set_threadpool_affinity_mask(PTP_POOL, DWORD_PTR) { return TRUE; }
+// XS_THREAD_TRACE: where the title puts its threads
+DWORD_PTR WINAPI set_thread_affinity_mask(HANDLE thread, DWORD_PTR mask) {
+    const auto previous = SetThreadAffinityMask(thread, mask);
+    if (std::getenv("XS_THREAD_TRACE")) {
+        std::fprintf(stderr, "[Runtime] SetThreadAffinityMask(%lu, 0x%llx) -> 0x%llx from %s\n",
+                     GetThreadId(thread), static_cast<unsigned long long>(mask),
+                     static_cast<unsigned long long>(previous),
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    return previous;
+}
+DWORD WINAPI get_current_processor_number() {
+    const auto number = GetCurrentProcessorNumber();
+    if (static std::atomic<int> shown{0}; std::getenv("XS_THREAD_TRACE") && shown++ < 12) {
+        std::fprintf(stderr, "[Runtime] GetCurrentProcessorNumber -> %lu from %s\n", number,
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    return number;
+}
+void WINAPI get_system_info(SYSTEM_INFO *info) {
+    GetSystemInfo(info);
+    if (std::getenv("XS_THREAD_TRACE")) {
+        std::fprintf(stderr, "[Runtime] GetSystemInfo: %lu processors, from %s\n",
+                     info->dwNumberOfProcessors,
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+}
 // TITLEMEMORYSTATUS: the memory of a title, from what the host has
 struct TitleMemory {
     DWORD length, reserved;
@@ -365,6 +397,11 @@ void install_kernelx(Registry &registry) {
                  reinterpret_cast<void *>(&get_file_attributes_w));
     registry.add("kernelx.dll", "FindFirstFileExW",
                  reinterpret_cast<void *>(&find_first_file_ex_w));
+    registry.add("kernelx.dll", "SetThreadAffinityMask",
+                 reinterpret_cast<void *>(&set_thread_affinity_mask));
+    registry.add("kernelx.dll", "GetCurrentProcessorNumber",
+                 reinterpret_cast<void *>(&get_current_processor_number));
+    registry.add("kernelx.dll", "GetSystemInfo", reinterpret_cast<void *>(&get_system_info));
     registry.add("kernelx.dll", "CreateFileA", reinterpret_cast<void *>(&create_file_a));
     registry.add("kernelx.dll", "GetFileAttributesExA",
                  reinterpret_cast<void *>(&get_file_attributes_ex_a));
