@@ -1806,6 +1806,23 @@ void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT coun
     for (UINT i = 0; i < count; ++i)
         host[i] = host_list(lists[i]);
     self->ExecuteCommandLists(count, host.data());
+    // XS_D3D_SYNC: the GPU done with this work before the title goes on, to tell its waits
+    // from ours
+    if (std::getenv("XS_D3D_SYNC")) {
+        static ID3D12Fence *fence = nullptr;
+        static UINT64 value = 0;
+        if (!fence) {
+            ID3D12Device *device = nullptr;
+            self->GetDevice(IID_PPV_ARGS(&device));
+            device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+            device->Release();
+        }
+        self->Signal(fence, ++value);
+        auto *const event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        fence->SetEventOnCompletion(value, event);
+        WaitForSingleObject(event, 5000);
+        CloseHandle(event);
+    }
 }
 // CreateCommandList (12), the desktop's way: a proxy as well
 HRESULT STDMETHODCALLTYPE create_command_list_desktop(ID3D12Device *self, UINT node,
