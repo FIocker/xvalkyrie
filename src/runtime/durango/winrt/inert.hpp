@@ -31,6 +31,7 @@ enum class Inert : std::uint8_t {
     string,         // HRESULT get(HSTRING *result): the text in `result`
     title_string,   // same, the title_info() named `result`
     shared,         // HRESULT get(T **result): the one object of type `result` there is
+    shared2,        // HRESULT get(key, T **result): likewise, whatever the key
     shared_list,    // HRESULT get(IVectorView<T> **): a view with that one object
     empty_list,     // HRESULT get(IVectorView<T> **): an empty view
     empty_list2,    // HRESULT find(argument, IVectorView<T> **): nothing found

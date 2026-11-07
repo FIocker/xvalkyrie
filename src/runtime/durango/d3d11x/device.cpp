@@ -370,7 +370,18 @@ bool title_called_slot(const void *address, std::size_t index) {
     if (offset == 0 && code[-2] == 0xff && (code[-1] & 0xf8) == 0x10)
         return true;
     // with an 8-bit displacement: FF 50+r d8
-    return offset < 0x80 && code[-1] == offset && code[-3] == 0xff && (code[-2] & 0xf8) == 0x50;
+    if (offset < 0x80 && code[-1] == offset && code[-3] == 0xff && (code[-2] & 0xf8) == 0x50)
+        return true;
+    // Another slot's call is the host's runtime going on from one method to the next. A call
+    // of a function of the title's own is the title's: the function ends in a jump through
+    // the slot (the out-of-line side of the device's inline methods does).
+    if ((code[-6] == 0xff && (code[-5] & 0xf8) == 0x90) || (code[-7] == 0xff && code[-6] == 0x94) ||
+        (code[-3] == 0xff && (code[-2] & 0xf8) == 0x50) ||
+        (code[-2] == 0xff && (code[-1] & 0xf8) == 0x10))
+        return false;
+    std::int32_t relative;
+    std::memcpy(&relative, code - 4, 4);
+    return code[-5] == 0xe8 && detail::in_title(code + relative);
 }
 template <Family Kind, std::size_t Index>
 std::uint64_t STDMETHODCALLTYPE by_caller(void *first, std::uint64_t a, std::uint64_t b,
@@ -500,7 +511,19 @@ struct ShadowHeap {
     ID3D12Device *device;
     bool shader_visible;
     std::uint64_t gpu; // the host's GPU handle of the start, for a shader-visible heap
+    UINT host_stride;
 };
+// The console's descriptor sizes, which titles also have compiled in: the device's inline
+// methods copy descriptors of these sizes themselves
+UINT console_stride(D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    return type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV ? 32
+           : type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV       ? 112
+           : type == D3D12_DESCRIPTOR_HEAP_TYPE_DSV       ? 128
+                                                          : 16;
+}
+UINT STDMETHODCALLTYPE descriptor_increment(ID3D12Device *, D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    return console_stride(type);
+}
 std::mutex shadow_mutex;
 std::map<std::uintptr_t, ShadowHeap> shadow_heaps;         // by base
 std::map<void *, std::uintptr_t> shadow_of;                // heap -> base
@@ -525,14 +548,55 @@ const ShadowHeap *shadow_heap(std::uintptr_t address) {
 D3D12_CPU_DESCRIPTOR_HANDLE host_handle(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     const std::lock_guard lock(shadow_mutex);
     if (const auto *heap = shadow_heap(handle.ptr))
-        return {heap->host.ptr + (handle.ptr - heap->base) / heap->stride * heap->stride};
+        return {heap->host.ptr + (handle.ptr - heap->base) / heap->stride * heap->host_stride};
     return handle;
+}
+D3D12_CPU_DESCRIPTOR_HANDLE host_slot(const ShadowHeap &heap, std::uintptr_t at) {
+    return {heap.host.ptr + (at - heap.base) / heap.stride * heap.host_stride};
+}
+// The mark of a host descriptor, and the host's handle of the slot that holds it: a title
+// that copies descriptors itself (the device's inline CopyDescriptorsSimple) carries both
+// along, which tells where the host's descriptor of the copy is to come from.
+void set_mark(const ShadowHeap &heap, std::uintptr_t at) {
+    at = heap.base + (at - heap.base) / heap.stride * heap.stride;
+    const std::uint64_t words[2]{host_mark, host_slot(heap, at).ptr};
+    std::memcpy(reinterpret_cast<void *>(at), words, sizeof words);
 }
 void mark_host(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     const std::lock_guard lock(shadow_mutex);
-    if (shadow_heap(handle.ptr))
-        std::memcpy(reinterpret_cast<void *>(handle.ptr), &host_mark, sizeof host_mark);
+    if (const auto *heap = shadow_heap(handle.ptr))
+        set_mark(*heap, handle.ptr);
 }
+// A marked descriptor that names another slot is a copy the title made itself: the host's
+// descriptor follows it
+void resolve(const ShadowHeap &heap, std::uintptr_t at) {
+    at = heap.base + (at - heap.base) / heap.stride * heap.stride;
+    std::uint64_t words[2];
+    std::memcpy(words, reinterpret_cast<const void *>(at), sizeof words);
+    const auto own = host_slot(heap, at);
+    if (words[0] != host_mark || words[1] == own.ptr || words[1] == 0)
+        return;
+    using Copy = void(STDMETHODCALLTYPE *)(void *, UINT, D3D12_CPU_DESCRIPTOR_HANDLE,
+                                           D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_DESCRIPTOR_HEAP_TYPE);
+    original<Copy>(heap.device, 24)(heap.device, 1, own, D3D12_CPU_DESCRIPTOR_HANDLE{words[1]},
+                                    heap.type);
+    set_mark(heap, at);
+}
+// the host's handle for a console one whose descriptor is about to be read
+D3D12_CPU_DESCRIPTOR_HANDLE host_view(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    ShadowHeap heap;
+    {
+        const std::lock_guard lock(shadow_mutex);
+        const auto *found = shadow_heap(handle.ptr);
+        if (!found)
+            return handle;
+        heap = *found;
+    }
+    resolve(heap, handle.ptr);
+    return host_slot(heap, handle.ptr);
+}
+// a constant buffer view of nothing, as the device's inline CreateConstantBufferView writes it
+bool null_buffer(const std::uint32_t *words) { return words[2] == 1 && words[3] == 0x0002403c; }
 // A descriptor the title wrote: made on the host from what the hardware descriptor says.
 // Buffers (V#: 48-bit address, stride in bits 48-61, record count in the third dword) become
 // constant buffer views.
@@ -548,7 +612,9 @@ void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     std::memcpy(words, reinterpret_cast<const void *>(handle.ptr), sizeof words);
     std::uint64_t first;
     std::memcpy(&first, words, sizeof first);
-    if (first == host_mark || first == 0)
+    if (first == host_mark)
+        resolve(*heap, handle.ptr);
+    if (first == host_mark || first == 0 || null_buffer(words))
         return;
     // what kinds of descriptors titles write, by the type in the last dword (buffers 0, images
     // 8 and up), once each
@@ -569,7 +635,7 @@ void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
 }
 void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HEAP_DESC &desc,
                      D3D12_CPU_DESCRIPTOR_HANDLE host, std::uint64_t gpu) {
-    const UINT stride = device->GetDescriptorHandleIncrementSize(desc.Type);
+    const UINT stride = console_stride(desc.Type);
     auto *const memory = low_memory(std::size_t{desc.NumDescriptors} * stride);
     if (!memory) {
         std::fprintf(stderr, "[Runtime] no memory below 4 GiB for a descriptor heap\n");
@@ -584,7 +650,8 @@ void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HE
                           desc.Type,
                           device,
                           (desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) != 0,
-                          gpu};
+                          gpu,
+                          device->GetDescriptorHandleIncrementSize(desc.Type)};
     shadow_of[heap] = base;
 }
 // Before the GPU runs: what the title wrote straight into a shader-visible heap since last
@@ -639,7 +706,14 @@ std::uint64_t STDMETHODCALLTYPE cpu_heap_start(void *self) {
                ? found->second
                : static_cast<HeapProxy *>(self)->host->GetCPUDescriptorHandleForHeapStart().ptr;
 }
+// the console's GPU handles are its CPU ones: the shadow's start as well
 std::uint64_t STDMETHODCALLTYPE gpu_heap_start(void *self) {
+    {
+        const std::lock_guard lock(shadow_mutex);
+        const auto found = shadow_of.find(self);
+        if (found != shadow_of.end() && shadow_heaps[found->second].shader_visible)
+            return found->second;
+    }
     return static_cast<HeapProxy *>(self)->host->GetGPUDescriptorHandleForHeapStart().ptr;
 }
 template <std::size_t Index>
@@ -769,8 +843,10 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     std::memcpy(words, reinterpret_cast<const void *>(at), sizeof words);
     std::uint64_t first;
     std::memcpy(&first, words, sizeof first);
-    if (first == host_mark)
+    if (first == host_mark) {
+        resolve(heap, at);
         return;
+    }
     ++decoded[type & 3];
     if (static std::atomic<std::uint32_t> shown{0};
         std::getenv("XS_D3D_TRACE") && first != 0 && !(shown.fetch_or(1u << type) & (1u << type))) {
@@ -785,8 +861,8 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     }
     // a descriptor the title cleared is a null one, whose reads give 0: the host's slot may
     // hold anything until it is made so
-    if (first == 0 && words[2] == 0 && words[3] == 0) {
-        const D3D12_CPU_DESCRIPTOR_HANDLE host{heap.host.ptr + (at - heap.base)};
+    if ((first == 0 && words[2] == 0 && words[3] == 0) || null_buffer(words)) {
+        const auto host = host_slot(heap, at);
         auto *const device = heap.device;
         if (type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
             const D3D12_CONSTANT_BUFFER_VIEW_DESC view{};
@@ -811,13 +887,13 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
         } else {
             return;
         }
-        std::memcpy(reinterpret_cast<void *>(at), &host_mark, sizeof host_mark);
+        set_mark(heap, at);
         return;
     }
     const std::uint64_t address = first & 0xffff'ffff'ffffull;
     const UINT stride = (words[1] >> 16) & 0x3fff;
     const std::uint64_t bytes = std::uint64_t{words[2]} * (stride ? stride : 1);
-    const D3D12_CPU_DESCRIPTOR_HANDLE host{heap.host.ptr + (at - heap.base)};
+    const auto host = host_slot(heap, at);
     auto *const device = heap.device;
     if (type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
         const D3D12_CONSTANT_BUFFER_VIEW_DESC view{
@@ -858,7 +934,7 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     } else {
         return;
     }
-    std::memcpy(reinterpret_cast<void *>(at), &host_mark, sizeof host_mark);
+    set_mark(heap, at);
 }
 // A table bound at a GPU handle: what the title wrote in it, by the root signature's ranges
 void decode_table(const void *signature, UINT parameter, std::uint64_t gpu) {
@@ -873,18 +949,12 @@ void decode_table(const void *signature, UINT parameter, std::uint64_t gpu) {
     ShadowHeap heap{};
     {
         const std::lock_guard lock(shadow_mutex);
-        bool found = false;
-        for (const auto &[base, candidate] : shadow_heaps)
-            if (candidate.shader_visible && gpu >= candidate.gpu &&
-                gpu < candidate.gpu + (candidate.end - candidate.base)) {
-                heap = candidate;
-                found = true;
-                break;
-            }
-        if (!found)
+        const auto *found = shadow_heap(gpu);
+        if (!found || !found->shader_visible)
             return;
+        heap = *found;
     }
-    const auto table = heap.base + (gpu - heap.gpu);
+    const std::uintptr_t table = gpu;
     for (const auto &range : ranges)
         for (UINT i = 0; i < range.count; ++i) {
             const auto at = table + std::uintptr_t{range.offset + i} * heap.stride;
@@ -939,14 +1009,16 @@ void STDMETHODCALLTYPE create_sampler(ID3D12Device *self, const D3D12_SAMPLER_DE
 // A copied descriptor: the host's goes along with the host's copy; one the title wrote goes
 // along as the title wrote it, read where it is bound
 void carry(Handle destination, Handle source, UINT stride) {
+    host_view(source);
     const std::lock_guard lock(shadow_mutex);
-    if (!shadow_heap(destination.ptr))
+    const auto *const heap = shadow_heap(destination.ptr);
+    if (!heap)
         return;
     std::uint64_t first = host_mark;
     if (shadow_heap(source.ptr))
         std::memcpy(&first, reinterpret_cast<const void *>(source.ptr), sizeof first);
     if (first == host_mark || first == 0)
-        std::memcpy(reinterpret_cast<void *>(destination.ptr), &host_mark, sizeof host_mark);
+        set_mark(*heap, destination.ptr);
     else
         std::memcpy(reinterpret_cast<void *>(destination.ptr),
                     reinterpret_cast<const void *>(source.ptr), stride);
@@ -957,7 +1029,7 @@ void STDMETHODCALLTYPE copy_descriptors(ID3D12Device *self, UINT destination_ran
                                         const UINT *source_sizes, D3D12_DESCRIPTOR_HEAP_TYPE type) {
     std::vector<Handle> host_destinations(destinations, destinations + destination_ranges);
     std::vector<Handle> host_sources(sources, sources + source_ranges);
-    const UINT stride = self->GetDescriptorHandleIncrementSize(type);
+    const UINT stride = console_stride(type);
     // the descriptors one by one, in the order both lists of ranges give them
     UINT source_range = 0, source_at = 0;
     for (UINT range = 0; range < destination_ranges; ++range) {
@@ -980,7 +1052,7 @@ void STDMETHODCALLTYPE copy_descriptors(ID3D12Device *self, UINT destination_ran
 }
 void STDMETHODCALLTYPE copy_descriptors_simple(ID3D12Device *self, UINT count, Handle destination,
                                                Handle source, D3D12_DESCRIPTOR_HEAP_TYPE type) {
-    const UINT stride = self->GetDescriptorHandleIncrementSize(type);
+    const UINT stride = console_stride(type);
     for (UINT i = 0; i < count; ++i)
         carry({destination.ptr + std::size_t{i} * stride}, {source.ptr + std::size_t{i} * stride},
               stride);
@@ -1487,6 +1559,13 @@ void STDMETHODCALLTYPE set_descriptor_heaps(void *self, UINT count,
         host[i] = host_heap(heaps[i]);
     host_of(self)->SetDescriptorHeaps(std::min(count, 2u), host);
 }
+// the host's GPU handle for a console one, which is the descriptor's address in the shadow
+D3D12_GPU_DESCRIPTOR_HANDLE host_gpu(D3D12_GPU_DESCRIPTOR_HANDLE handle) {
+    const std::lock_guard lock(shadow_mutex);
+    if (const auto *heap = shadow_heap(handle.ptr); heap && heap->shader_visible)
+        return {heap->gpu + (handle.ptr - heap->base) / heap->stride * heap->host_stride};
+    return handle;
+}
 // The root signatures and descriptor tables: the title's own descriptors in a table are read
 // as the table says, once bound
 void STDMETHODCALLTYPE set_compute_root_signature(void *self, ID3D12RootSignature *signature) {
@@ -1500,12 +1579,12 @@ void STDMETHODCALLTYPE set_graphics_root_signature(void *self, ID3D12RootSignatu
 void STDMETHODCALLTYPE set_compute_root_table(void *self, UINT parameter,
                                               D3D12_GPU_DESCRIPTOR_HANDLE table) {
     decode_table(static_cast<ListProxy *>(self)->compute_root, parameter, table.ptr);
-    host_of(self)->SetComputeRootDescriptorTable(parameter, table);
+    host_of(self)->SetComputeRootDescriptorTable(parameter, host_gpu(table));
 }
 void STDMETHODCALLTYPE set_graphics_root_table(void *self, UINT parameter,
                                                D3D12_GPU_DESCRIPTOR_HANDLE table) {
     decode_table(static_cast<ListProxy *>(self)->graphics_root, parameter, table.ptr);
-    host_of(self)->SetGraphicsRootDescriptorTable(parameter, table);
+    host_of(self)->SetGraphicsRootDescriptorTable(parameter, host_gpu(table));
 }
 // XS_D3D_PROBE: draws per render target
 std::mutex draw_mutex;
@@ -1580,7 +1659,11 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
         trace_handle("OMSetRenderTargets", targets[0]);
     std::vector<Handle> host(targets ? (single ? 1 : count) : 0);
     for (std::size_t i = 0; i < host.size(); ++i)
-        host[i] = host_handle(targets[i]);
+        host[i] = host_view(targets[i]);
+    // one handle for a run of descriptors: the rest follow it in the heap
+    const auto stride = console_stride(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    for (UINT i = 1; targets && single && i < count; ++i)
+        host_view({targets[0].ptr + std::size_t{i} * stride});
     if (!host.empty()) {
         const std::lock_guard lock(target_mutex);
         if (const auto found = target_of.find(host[0].ptr); found != target_of.end()) {
@@ -1598,30 +1681,30 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
     }
     Handle host_depth{};
     if (depth)
-        host_depth = host_handle(*depth);
+        host_depth = host_view(*depth);
     host_of(self)->OMSetRenderTargets(count, targets ? host.data() : nullptr, single,
                                       depth ? &host_depth : nullptr);
 }
 void STDMETHODCALLTYPE clear_depth_stencil(void *self, Handle view, D3D12_CLEAR_FLAGS flags,
                                            FLOAT depth, UINT8 stencil, UINT count,
                                            const D3D12_RECT *rects) {
-    host_of(self)->ClearDepthStencilView(host_handle(view), flags, depth, stencil, count, rects);
+    host_of(self)->ClearDepthStencilView(host_view(view), flags, depth, stencil, count, rects);
 }
 void STDMETHODCALLTYPE clear_render_target(void *self, Handle view, const FLOAT *color, UINT count,
                                            const D3D12_RECT *rects) {
-    host_of(self)->ClearRenderTargetView(host_handle(view), color, count, rects);
+    host_of(self)->ClearRenderTargetView(host_view(view), color, count, rects);
 }
 void STDMETHODCALLTYPE clear_uav_uint(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                       ID3D12Resource *resource, const UINT *values, UINT count,
                                       const D3D12_RECT *rects) {
-    host_of(self)->ClearUnorderedAccessViewUint(gpu, host_handle(cpu), resource, values, count,
-                                                rects);
+    host_of(self)->ClearUnorderedAccessViewUint(host_gpu(gpu), host_view(cpu), resource, values,
+                                                count, rects);
 }
 void STDMETHODCALLTYPE clear_uav_float(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                        ID3D12Resource *resource, const FLOAT *values, UINT count,
                                        const D3D12_RECT *rects) {
-    host_of(self)->ClearUnorderedAccessViewFloat(gpu, host_handle(cpu), resource, values, count,
-                                                 rects);
+    host_of(self)->ClearUnorderedAccessViewFloat(host_gpu(gpu), host_view(cpu), resource, values,
+                                                 count, rects);
 }
 void STDMETHODCALLTYPE ignored_list_method(void *) {}
 template <std::size_t... Index>
@@ -1908,6 +1991,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({0, reinterpret_cast<Slot>(&device_query)});
     overrides.push_back({13, reinterpret_cast<Slot>(&check_feature_support)});
     overrides.push_back({14, reinterpret_cast<Slot>(&create_descriptor_heap)});
+    overrides.push_back({15, reinterpret_cast<Slot>(&descriptor_increment)});
     overrides.push_back({16, reinterpret_cast<Slot>(&create_root_signature)});
     overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
     overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});

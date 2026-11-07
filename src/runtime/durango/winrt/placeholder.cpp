@@ -225,6 +225,9 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::shared:
             *static_cast<void **>(first) = shared_placeholder(known->result);
             break;
+        case Inert::shared2:
+            *static_cast<void **>(second) = shared_placeholder(known->result);
+            break;
         case Inert::shared_list:
             *static_cast<void **>(first) =
                 make_vector_view({static_cast<IInspectable *>(shared_placeholder(known->result))});
@@ -318,6 +321,8 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
     *object = nullptr;
     if (iid == marshal)
         return E_NOINTERFACE;
+    if (long result; gamepad_interface(name, iid, object, result))
+        return result;
     // A facet is only its class and interface: titles that ask every frame get the same one.
     static std::mutex mutex;
     static std::map<std::pair<std::wstring, std::string>, Placeholder *> facets;

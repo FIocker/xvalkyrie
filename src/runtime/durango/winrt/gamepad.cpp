@@ -250,6 +250,23 @@ void *controller_list() {
     gamepad.QueryInterface(controller, reinterpret_cast<void **>(&facet));
     return make_vector_view({facet});
 }
+bool gamepad_interface(std::wstring_view name, const GUID &iid, void **object, long &result) {
+    constexpr GUID reading{
+        0x082e402c, 0x07df, 0x45e1, {0xa5, 0xab, 0xa3, 0x12, 0x7a, 0xf1, 0x97, 0xb5}};
+    // Unreal's input skips the controllers that answer for this one
+    constexpr GUID other{
+        0xc87ec7f7, 0xd0b8, 0x43ac, {0x8a, 0x2f, 0xe1, 0x98, 0x31, 0x79, 0x40, 0x2c}};
+    if (name != class_name || (iid != reading && iid != other))
+        return false;
+    *object = nullptr;
+    result = E_NOINTERFACE;
+    if (iid == reading) {
+        gamepad.AddRef();
+        *object = static_cast<IGamepad *>(&gamepad);
+        result = S_OK;
+    }
+    return true;
+}
 IInspectable *input_class(std::wstring_view name) {
     return name == class_name ? static_cast<IGamepadStatics *>(&statics) : nullptr;
 }

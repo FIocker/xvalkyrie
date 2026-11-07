@@ -648,6 +648,8 @@ constexpr Row rows[] = {
      guid("9776ff56-9bfd-4581-ad45-b645bba526d6"),
      7,
      {Inert::string, L"Windows.Xbox.Input.Gamepad"}},
+    // IUserStatics::GetUserById(id, User **): the one user there is
+    {user, user_statics, 14, {Inert::shared2, user}},
 };
 } // namespace
 
