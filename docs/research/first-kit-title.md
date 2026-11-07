@@ -107,16 +107,25 @@ planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
   rest depend on the row jobs of the frame before them, through job handles
   kept in the previous context. The frames whose last job never ran are the
   ones to follow: which dependency of theirs stays open.
-- Followed further with `XS_BREAK_LIMIT`: in two runs the decoder queued 24
-  and 32 frames and the last job ran exactly 8 times, for the first eight
-  frames queued, in order. So frames do get decoded; what stops is the ninth.
-  Eight decoded frames that nobody takes would explain it: the player shows
-  none of them (the planes it uploads stay black), as if its clock never
-  started. What that clock is has not been found. Pinning the process to
-  six processors changes nothing.
-- Running the XMA contexts of the audio processor (consuming their input and
-  giving silence) changed nothing: the title only enables and disables
-  context 0 during the video.
+- Followed further with `XS_BREAK_LIMIT`: the decoder queues frames and the
+  last job runs for the first eight, in order. Then it stops because the
+  eight decoded frames are never taken: the player's queue of ready frames
+  is full.
+- The player presents a frame when its number is below the one its clock
+  gives (`image+0xd830fb`), and that test never passes. The clock
+  (`image+0xd83720`, through the timer object's source) is the position of
+  the video's audio voice: it asks the voice how much it has played. The
+  voice plays XMA, which the console decodes in its audio processor, and
+  nothing decodes it here, so the position stays at zero and the video
+  waits on its first frame for ever.
+- So the fix is the audio processor's XMA contexts: consume the input the
+  title gives and hand back output (silence would do for the picture) at
+  the rate of the stream. The title keeps a pending copy of each context
+  and applies the fields itself when the update command completes
+  (`image+0x119e240`), so the hardware context in the array the runtime
+  allocated is where to read them from, not the command's data.
+- A first attempt at running the XMA contexts read the fields from the
+  update command's data, which is empty in this kit, and changed nothing.
 - The title pins its workers one per processor, with masks 0x1 to 0x20 and
   0x80 (`XS_THREAD_TRACE=1` shows them). Reporting six or eight processors
   to it instead of the host's sixteen changed nothing.
