@@ -532,7 +532,7 @@ LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 // XS_BREAK=<rva>[,<rva>...]: the registers each time the title gets to one of these addresses
-// of its image (hexadecimal), up to 40 times each. A breakpoint is put there; the handler
+// of its image (hexadecimal), up to 40 times each or XS_BREAK_LIMIT. A breakpoint is put there; the handler
 // puts the instruction back, steps over it and sets the breakpoint again.
 struct Breakpoint {
     std::uint8_t *address;
@@ -540,6 +540,7 @@ struct Breakpoint {
     std::atomic<int> hits{0};
 };
 std::deque<Breakpoint> breakpoints;
+int break_limit = 40;
 thread_local Breakpoint *stepping = nullptr;
 void poke(std::uint8_t *address, std::uint8_t value) {
     DWORD previous;
@@ -552,7 +553,7 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
     auto &context = *info->ContextRecord;
     const auto code = info->ExceptionRecord->ExceptionCode;
     if (code == EXCEPTION_SINGLE_STEP && stepping) {
-        if (stepping->hits < 40)
+        if (stepping->hits < break_limit)
             poke(stepping->address, 0xcc);
         stepping = nullptr;
         return EXCEPTION_CONTINUE_EXECUTION;
@@ -562,7 +563,7 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
     for (auto &point : breakpoints) {
         if (point.address != info->ExceptionRecord->ExceptionAddress)
             continue;
-        if (point.hits++ < 40) {
+        if (point.hits++ < break_limit) {
             std::uint64_t at_rdx[4]{}, at_r8[5]{};
             const auto read = [](std::uint64_t address, void *into, std::size_t size) {
                 MEMORY_BASIC_INFORMATION memory{};
@@ -594,6 +595,8 @@ void set_breakpoints(std::uint8_t *base) {
     const char *text = std::getenv("XS_BREAK");
     if (!text)
         return;
+    if (const char *limit = std::getenv("XS_BREAK_LIMIT"))
+        break_limit = std::atoi(limit);
     AddVectoredExceptionHandler(1, &at_breakpoint);
     for (char *end = nullptr; *text; text = *end ? end + 1 : end) {
         const auto rva = std::strtoull(text, &end, 16);

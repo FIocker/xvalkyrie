@@ -107,6 +107,11 @@ planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
   rest depend on the row jobs of the frame before them, through job handles
   kept in the previous context. The frames whose last job never ran are the
   ones to follow: which dependency of theirs stays open.
+- Followed further with `XS_BREAK_LIMIT=400`: the last job runs for the first
+  eight frames. Then the decoder releases the previous frame's context from
+  its key frame path (`image+0xf79a7e`), and from that frame on contexts are
+  taken and frames queued, but no last job runs again. The frame after a
+  second key frame is where the chain breaks.
 - Running the XMA contexts of the audio processor (consuming their input and
   giving silence) changed nothing: the title only enables and disables
   context 0 during the video.
