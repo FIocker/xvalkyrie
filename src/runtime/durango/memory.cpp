@@ -380,7 +380,9 @@ void install_memory(Registry &registry) {
         {"XMemReleaseAuxiliaryTitleMemory", erase(xmem_release_auxiliary_title_memory)}};
     for (const auto &[name, function] : kernelx)
         registry.add("kernelx.dll", name, function);
-    registry.add("d3d11_x.dll", "D3DAllocateGraphicsMemory", erase(d3d_allocate_graphics_memory));
-    registry.add("d3d11_x.dll", "D3DFreeGraphicsMemory", erase(d3d_free_graphics_memory));
+    for (const auto *library : {"d3d11_x.dll", "d3d12_x.dll"}) {
+        registry.add(library, "D3DAllocateGraphicsMemory", erase(d3d_allocate_graphics_memory));
+        registry.add(library, "D3DFreeGraphicsMemory", erase(d3d_free_graphics_memory));
+    }
 }
 } // namespace xs::runtime::durango

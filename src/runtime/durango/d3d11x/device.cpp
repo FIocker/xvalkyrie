@@ -274,6 +274,18 @@ HRESULT WINAPI serialize_versioned_root_signature(const void *desc, void **blob,
     static const auto serialize = host_d3d12<Serialize>("D3D12SerializeVersionedRootSignature");
     return serialize ? serialize(desc, blob, errors) : E_NOTIMPL;
 }
+HRESULT WINAPI root_signature_deserializer(const void *blob, SIZE_T size, REFIID iid,
+                                           void **reader) {
+    using Create = HRESULT(WINAPI *)(const void *, SIZE_T, REFIID, void **);
+    static const auto create = host_d3d12<Create>("D3D12CreateRootSignatureDeserializer");
+    return create ? create(blob, size, iid, reader) : E_NOTIMPL;
+}
+HRESULT WINAPI versioned_root_signature_deserializer(const void *blob, SIZE_T size, REFIID iid,
+                                                     void **reader) {
+    using Create = HRESULT(WINAPI *)(const void *, SIZE_T, REFIID, void **);
+    static const auto create = host_d3d12<Create>("D3D12CreateVersionedRootSignatureDeserializer");
+    return create ? create(blob, size, iid, reader) : E_NOTIMPL;
+}
 HRESULT WINAPI create_device_12(void *adapter, UINT level, REFIID iid, void **device) {
     if (device)
         *device = nullptr;
@@ -1259,11 +1271,11 @@ ID3D12CommandQueue *queue_host(void *self) { return static_cast<QueueProxy *>(se
 template <std::size_t Index>
 std::uint64_t STDMETHODCALLTYPE queue_method(void *self, std::uint64_t a, std::uint64_t b,
                                              std::uint64_t c, std::uint64_t d, std::uint64_t e,
-                                             std::uint64_t f) {
+                                             std::uint64_t f, std::uint64_t g, std::uint64_t h,
+                                             std::uint64_t i, std::uint64_t j) {
     auto *const host = queue_host(self);
-    return reinterpret_cast<std::uint64_t(STDMETHODCALLTYPE *)(
-        void *, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
-        std::uint64_t)>((*reinterpret_cast<Slot **>(host))[Index])(host, a, b, c, d, e, f);
+    return reinterpret_cast<Raw>((*reinterpret_cast<Slot **>(host))[Index])(host, a, b, c, d, e, f,
+                                                                            g, h, i, j);
 }
 HRESULT STDMETHODCALLTYPE queue_query(void *self, REFIID iid, void **object) {
     if (!object)
@@ -1443,7 +1455,7 @@ List *host_of(void *self) { return static_cast<ListProxy *>(self)->host; }
 // Float 4 slots later; from SetMarker (56) on they agree again. Unreal's call sites show it:
 // Close, Reset, CopyBufferRegion and ResourceBarrier in place, SetDescriptorHeaps at 32, its
 // timestamps' EndQuery and ResolveQueryData at 29 and 30.
-constexpr std::size_t host_list_slots = 60, list_slots = 96, unmapped = ~std::size_t{0};
+constexpr std::size_t host_list_slots = 60, list_slots = 104, unmapped = ~std::size_t{0};
 std::array<std::size_t, list_slots> list_map = [] {
     std::array<std::size_t, list_slots> map{};
     for (std::size_t slot = 0; slot < list_slots; ++slot)
@@ -1454,6 +1466,9 @@ std::array<std::size_t, list_slots> list_map = [] {
                                              : unmapped;
     // CopyTextureRegion with one more argument, which the host's has not
     map[83] = 16;
+    // DispatchX and CopyResourceX likewise: Dispatch and CopyResource, and flags
+    map[78] = 14;
+    map[84] = 17;
     return map;
 }();
 template <std::size_t Index>
@@ -1737,6 +1752,10 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     // bounds test no host pipeline here enables
     vtable[67] = reinterpret_cast<Slot>(&ignored_list_method);
     vtable[68] = reinterpret_cast<Slot>(&ignored_list_method);
+    // what tunes the console's GPU and changes no picture: occlusion query and hierarchical
+    // stencil controls, NopX, KickoffX, shader limits, compression state and prefetches
+    for (const std::size_t hint : {64, 65, 66, 73, 79, 82, 93, 95, 96, 97, 98, 99})
+        vtable[hint] = reinterpret_cast<Slot>(&ignored_list_method);
     return vtable;
 }
 std::array<Slot, list_slots> list_vtable = list_vtable_of(std::make_index_sequence<list_slots>{});
@@ -1934,6 +1953,54 @@ HRESULT STDMETHODCALLTYPE unknown_device_method(void *, void *first, void *secon
     std::fflush(stderr);
     return E_NOTIMPL;
 }
+// CreatePlacedResource (29) and CreateReservedResource (30): the console's states and flags
+D3D12_RESOURCE_DESC host_resource_desc(const D3D12_RESOURCE_DESC &desc) {
+    auto host = desc;
+    host.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host.Flags & 0xff);
+    if (host.Layout >= 0x100)
+        host.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    return host;
+}
+HRESULT STDMETHODCALLTYPE create_placed_resource(ID3D12Device *self, ID3D12Heap *heap,
+                                                 UINT64 offset, const D3D12_RESOURCE_DESC *desc,
+                                                 D3D12_RESOURCE_STATES state,
+                                                 const D3D12_CLEAR_VALUE *clear, REFIID iid,
+                                                 void **resource) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(
+        void *, ID3D12Heap *, UINT64, const D3D12_RESOURCE_DESC *, D3D12_RESOURCE_STATES,
+        const D3D12_CLEAR_VALUE *, REFIID, void **);
+    D3D12_RESOURCE_DESC host{};
+    if (desc)
+        host = host_resource_desc(*desc);
+    const auto result = original<Create>(self, 29)(self, heap, offset, desc ? &host : nullptr,
+                                                   host_state(state), clear, iid, resource);
+    if (SUCCEEDED(result) && resource && *resource)
+        track_buffer(static_cast<ID3D12Resource *>(*resource));
+    return result;
+}
+HRESULT STDMETHODCALLTYPE create_reserved_resource(ID3D12Device *self,
+                                                   const D3D12_RESOURCE_DESC *desc,
+                                                   D3D12_RESOURCE_STATES state,
+                                                   const D3D12_CLEAR_VALUE *clear, REFIID iid,
+                                                   void **resource) {
+    using Create =
+        HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_RESOURCE_DESC *, D3D12_RESOURCE_STATES,
+                                     const D3D12_CLEAR_VALUE *, REFIID, void **);
+    D3D12_RESOURCE_DESC host{};
+    if (desc)
+        host = host_resource_desc(*desc);
+    return original<Create>(self, 30)(self, desc ? &host : nullptr, host_state(state), clear, iid,
+                                      resource);
+}
+// slot 60: CreateGraphicsPipelineStateX, the pipeline and the console's extensions of it
+HRESULT STDMETHODCALLTYPE create_graphics_pipeline_x(ID3D12Device *self,
+                                                     const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
+                                                     UINT, const void *, REFIID iid, void **state) {
+    return create_graphics_pipeline(self, desc, iid, state);
+}
+// what only the console's driver and debugger have a use for: driver hints, hang and debug
+// callbacks, debug flags, memory priority, UnregisterPagePoolX
+HRESULT STDMETHODCALLTYPE ignored_device_method(void *) { return S_OK; }
 constexpr std::size_t host_device_slots = 44, device_slots = 96;
 template <std::size_t... Index>
 std::vector<std::pair<std::size_t, Slot>> unknown_device_methods(std::index_sequence<Index...>) {
@@ -2015,6 +2082,11 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
     overrides.push_back({12, reinterpret_cast<Slot>(&create_command_list_desktop)});
+    overrides.push_back({29, reinterpret_cast<Slot>(&create_placed_resource)});
+    overrides.push_back({30, reinterpret_cast<Slot>(&create_reserved_resource)});
+    overrides.push_back({60, reinterpret_cast<Slot>(&create_graphics_pipeline_x)});
+    for (const std::size_t ignored : {49, 50, 51, 52, 53, 54, 58, 69, 72, 75})
+        overrides.push_back({ignored, reinterpret_cast<Slot>(&ignored_device_method)});
     // all of the host's vtable, which its runtime calls past the desktop's first 44 too
     console_vtable<Family::device>(host, device_slots, device_slots, overrides);
     const auto queried = host->QueryInterface(iid, device);
@@ -2176,6 +2248,12 @@ void install_d3d11x(Registry &registry) {
         {"DXGIXSetVLineNotification", reinterpret_cast<void *>(&ignored)},
         {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&ignored)},
         {"D3D12XboxSetProcessDebugFlags", reinterpret_cast<void *>(&ignored)},
+        {"D3D12XboxGetProcessDebugFlags", reinterpret_cast<void *>(&ignored)},
+        {"D3DFlushEntireCpuCache", reinterpret_cast<void *>(&ignored)},
+        {"D3D12CreateRootSignatureDeserializer",
+         reinterpret_cast<void *>(&root_signature_deserializer)},
+        {"D3D12CreateVersionedRootSignatureDeserializer",
+         reinterpret_cast<void *>(&versioned_root_signature_deserializer)},
         {"D3D12SerializeRootSignature", reinterpret_cast<void *>(&serialize_root_signature)},
         {"D3D12SerializeVersionedRootSignature",
          reinterpret_cast<void *>(&serialize_versioned_root_signature)},
