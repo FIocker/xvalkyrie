@@ -153,7 +153,8 @@ LaunchResult launch_file(const std::filesystem::path &path) {
         const loader::MappedImage image(bytes, report, options);
         const auto &map = image.report();
         const auto plan = runtime::bind_plan(bytes, runtime::console_registry(*result.target),
-                                             std::filesystem::absolute(path).parent_path());
+                                             std::filesystem::absolute(path).parent_path(),
+                                             runtime::console_system_directory(path));
         const auto missing = plan.at("missing").get<std::size_t>();
         result.detail =
             "Imports " + modules + ", which belong to an " + console + " build. Mapped " +
@@ -163,7 +164,9 @@ LaunchResult launch_file(const std::filesystem::path &path) {
             std::to_string(profile.at("modules").size()) + " modules, " +
             std::to_string(plan.at("own").get<std::size_t>()) + " bind to XScarlet, " +
             std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs, " +
-            std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs and " +
+            std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs, " +
+            std::to_string(plan.at("system").get<std::size_t>()) +
+            " to the console system modules it came with and " +
             std::to_string(missing) + " have no implementation";
         if (!missing && plan.at("imports").size()) {
             result.status = LaunchStatus::runnable;

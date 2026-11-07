@@ -136,7 +136,8 @@ int wmain(int argc, wchar_t **argv) {
             const auto bytes = read_title(argv[2]);
             std::cout << xs::runtime::bind_plan(
                              bytes, xs::runtime::title_registry(bytes),
-                             std::filesystem::absolute(xs::title_executable(argv[2])).parent_path())
+                             std::filesystem::absolute(xs::title_executable(argv[2])).parent_path(),
+                             xs::runtime::console_system_directory(xs::title_executable(argv[2])))
                              .dump(2)
                       << '\n';
             return 0;

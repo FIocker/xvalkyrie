@@ -123,13 +123,9 @@ std::filesystem::path detail::title_dll(const std::filesystem::path &directory,
     }
 }
 
-bool detail::title_provides(const Registry &registry, const std::filesystem::path &directory,
-                            std::string_view module, std::string_view symbol) {
-    if (directory.empty() || registry.find(module, symbol) || !registry.forwarded(module).empty())
-        return false;
-    const auto path = title_dll(directory, module);
-    if (path.empty())
-        return false;
+namespace {
+// whether the DLL at `path` exports the symbol itself
+bool exports(const std::filesystem::path &path, std::string_view symbol) {
     try {
         const auto report =
             pe::inspect(host::read_snapshot(path, 256 * 1024 * 1024), pe::Detail::light);
@@ -151,13 +147,30 @@ bool detail::title_provides(const Registry &registry, const std::filesystem::pat
     }
     return false;
 }
+} // namespace
+
+bool detail::title_provides(const Registry &registry, const std::filesystem::path &directory,
+                            std::string_view module, std::string_view symbol) {
+    if (directory.empty() || registry.find(module, symbol) || !registry.forwarded(module).empty())
+        return false;
+    const auto path = title_dll(directory, module);
+    return !path.empty() && exports(path, symbol);
+}
 
 nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
-                         const std::filesystem::path &directory) {
+                         const std::filesystem::path &directory,
+                         const std::filesystem::path &system_directory) {
     using json = nlohmann::json;
     const auto contents = pe::inspect(file, pe::Detail::light).at("directory_contents");
     auto imports = json::array(), opaque = json::array(), delayed = json::array();
-    std::size_t own = 0, host = 0, title = 0, missing = 0;
+    std::size_t own = 0, host = 0, title = 0, system = 0, missing = 0;
+    // a module of the console's system the title shipped with, which execute() loads first
+    const auto from_system = [&](const std::string &module, std::string_view symbol) {
+        std::error_code error;
+        const auto path = system_directory / module;
+        return !system_directory.empty() && console_system_module(module) &&
+               std::filesystem::is_regular_file(path, error) && exports(path, symbol);
+    };
     if (contents.contains("imports")) {
         for (const auto &entry : contents.at("imports")) {
             const auto &module = entry.at("module").get_ref<const std::string &>();
@@ -168,13 +181,14 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             for (const auto &item : entry.at("symbols")) {
                 const auto symbol = loader::import_label(item);
                 const std::string_view origin =
-                    detail::title_provides(registry, directory, module, symbol)
-                        ? "title"
-                        : detail::resolve(registry, module, symbol).origin;
-                ++(origin == "own"     ? own
-                   : origin == "host"  ? host
-                   : origin == "title" ? title
-                                       : missing);
+                    from_system(module, symbol)                                   ? "system"
+                    : detail::title_provides(registry, directory, module, symbol) ? "title"
+                    : detail::resolve(registry, module, symbol).origin;
+                ++(origin == "own"      ? own
+                   : origin == "host"   ? host
+                   : origin == "title"  ? title
+                   : origin == "system" ? system
+                                        : missing);
                 imports.push_back({{"module", module}, {"symbol", symbol}, {"origin", origin}});
             }
         }
@@ -186,6 +200,7 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             {"own", own},
             {"host", host},
             {"title", title},
+            {"system", system},
             {"missing", missing},
             {"modules_without_symbols", std::move(opaque)},
             {"delay_load_modules", std::move(delayed)}};

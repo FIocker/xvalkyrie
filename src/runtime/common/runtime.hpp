@@ -32,11 +32,13 @@ class Registry {
 };
 
 // only true on Windows x64
-// Where each import would end up (own / host / title / missing). Does not run anything.
-// "title" is a DLL in `directory`, the folder of the executable, that exports the symbol;
-// without a directory there are no such DLLs.
+// Where each import would end up (own / host / title / system / missing). Does not run
+// anything. "title" is a DLL in `directory`, the folder of the executable, that exports the
+// symbol; without a directory there are no such DLLs. "system" is a console system module
+// in `system_directory` (see console_system_directory), which execute() loads first.
 nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &registry,
-                         const std::filesystem::path &directory = {});
+                         const std::filesystem::path &directory = {},
+                         const std::filesystem::path &system_directory = {});
 // Options > Console
 struct ConsoleSettings {
     std::wstring gamertag = L"Player";
