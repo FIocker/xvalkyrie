@@ -60,20 +60,26 @@ ULONG STDMETHODCALLTYPE release(Forwarder *self) {
     }
     return left;
 }
+HRESULT STDMETHODCALLTYPE accepted(Forwarder *) { return S_OK; }
 } // namespace
 
 Forwarder *make_forwarder(IUnknown *host, std::size_t slots, ForwarderQuery query_interface,
-                          std::span<const SlotOverride> overrides) {
-    if (!host || slots < 3 || slots > slot_limit)
+                          std::span<const SlotOverride> overrides, std::size_t inserted) {
+    if (!host || slots < 3 || slots >= slot_limit)
         throw std::invalid_argument("Bad COM forwarder");
-    auto methods = std::make_unique<void *[]>(slots);
+    const auto place = [&](std::size_t slot) {
+        return inserted && slot >= inserted ? slot + 1 : slot;
+    };
+    auto methods = std::make_unique<void *[]>(slots + 1);
     for (std::size_t slot = 3; slot < slots; ++slot)
-        methods[slot] = const_cast<std::uint8_t *>(thunks() + slot * thunk_size);
+        methods[place(slot)] = const_cast<std::uint8_t *>(thunks() + slot * thunk_size);
     methods[0] = reinterpret_cast<void *>(&query);
     methods[1] = reinterpret_cast<void *>(&forwarder_add_ref);
     methods[2] = reinterpret_cast<void *>(&release);
+    if (inserted)
+        methods[inserted] = reinterpret_cast<void *>(&accepted);
     for (const auto &entry : overrides)
-        methods[entry.slot] = entry.function;
+        methods[place(entry.slot)] = entry.function;
     auto *const self = new Forwarder{methods.get(), 1, host, query_interface, std::move(methods)};
     const std::lock_guard lock(mutex);
     live.insert(self);

@@ -1,6 +1,7 @@
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/placement.hpp"
 #include "runtime/durango/runtime.hpp"
@@ -330,6 +331,14 @@ HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER
                                                   void *address, ID3D11Buffer **buffer) {
     if (!desc)
         return E_INVALIDARG;
+    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 4) {
+        std::fprintf(stderr,
+                     "[Runtime] placement buffer of %u bytes, usage %u bind 0x%x misc 0x%x at %p, "
+                     "from %s\n",
+                     desc->ByteWidth, desc->Usage, desc->BindFlags, desc->MiscFlags, address,
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
     auto host = *desc;
     host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
     if (host.Usage == D3D11_USAGE_IMMUTABLE)
@@ -1190,6 +1199,38 @@ Layout context() {
     result.object[67 + 123] = custom(&set_shader_resource<&Context::CSSetShaderResources>);
     return result;
 }
+// The layouts of the first development kits (SDK versions below 2.0). Device
+// children have one console method after ID3D11DeviceChild's, not two, so their own methods
+// are one slot earlier; the context's table inside the object starts one pointer earlier;
+// IDXGIObject has one more method, at 5, and the swap chain's own are one slot later.
+Layout early_layout(const Layout &later, Kind kind) {
+    auto result = later;
+    if (kind == Kind::device)
+        return result;
+    if (kind == Kind::swap_chain) {
+        for (std::size_t slot = 29; slot > 5; --slot)
+            result.vtable[slot] = result.vtable[slot - 1];
+        result.vtable[5] = Method{Method::ignore};
+        return result;
+    }
+    for (std::size_t slot = 8; slot + 1 < result.vtable.size(); ++slot)
+        result.vtable[slot] = result.vtable[slot + 1];
+    if (kind != Kind::context)
+        return result;
+    // the console's own methods (later slot 141 on) are three pointers earlier: two of them
+    // are not there yet. IASetPlacementIndexBuffer and the command buffer's two methods are
+    // where titles call them that way.
+    constexpr std::size_t console = 141 + 124;
+    for (std::size_t index = 3; index + 3 < result.object.size(); ++index)
+        result.object[index] = later.object[index + (index + 3 >= console ? 3 : 1)];
+    // XXSetShaderResources takes the desktop's arguments there (start, count, views)
+    const auto methods = context_methods();
+    result.object[8 + 123] = methods[8];
+    for (std::size_t host : {25, 31, 59, 63, 67})
+        result.object[host + 122] = methods[host];
+    return result;
+}
+std::atomic<bool> early_dxgi{false};
 } // namespace
 
 const Layout &layout(Kind kind) {
@@ -1211,8 +1252,15 @@ const Layout &layout(Kind kind) {
         child("device child", 6),
         dma(),
     };
-    return layouts[static_cast<std::size_t>(kind)];
+    static const auto early = [] {
+        std::array<Layout, std::size(layouts)> result;
+        for (std::size_t kind = 0; kind < result.size(); ++kind)
+            result[kind] = early_layout(layouts[kind], static_cast<Kind>(kind));
+        return result;
+    }();
+    return (early_dxgi ? early.data() : layouts)[static_cast<std::size_t>(kind)];
 }
+void first_development_kits(bool yes) { early_dxgi = yes; }
 
 // Console-only interface IDs, as the system's d3d11_x.dll exports them. Titles use the
 // "performance" ones as the device and the context themselves.

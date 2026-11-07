@@ -129,7 +129,7 @@ struct HalVtable {
     HRESULT(STDMETHODCALLTYPE *submit)(Hal *, std::uint32_t, std::uint64_t, std::uint32_t, void *,
                                        std::uint32_t);
     bool(STDMETHODCALLTYPE *pop)(Hal *, Message *);
-    HRESULT(STDMETHODCALLTYPE *unknown)(Hal *);
+    std::uint32_t(STDMETHODCALLTYPE *message_count)(Hal *);
     void(STDMETHODCALLTYPE *release)(Hal *);
 };
 struct Hal {
@@ -187,13 +187,14 @@ bool STDMETHODCALLTYPE pop(Hal *self, Message *message) {
     self->messages.pop_front();
     return true;
 }
-HRESULT STDMETHODCALLTYPE unknown(Hal *) {
-    std::fprintf(stderr, "[Runtime] unimplemented audio processor method 4\n");
-    std::fflush(stderr);
-    return E_NOTIMPL;
+// GetNumMessages: what PopMessage has to give, the audio frame that is due among them
+std::uint32_t STDMETHODCALLTYPE message_count(Hal *self) {
+    const std::lock_guard lock(self->mutex);
+    const bool frame_due = self->connected && std::chrono::steady_clock::now() >= self->next_frame;
+    return static_cast<std::uint32_t>(self->messages.size()) + frame_due;
 }
 void STDMETHODCALLTYPE release(Hal *self) { delete self; }
-constexpr HalVtable hal_vtable{&connect, &disconnect, &submit, &pop, &unknown, &release};
+constexpr HalVtable hal_vtable{&connect, &disconnect, &submit, &pop, &message_count, &release};
 
 HRESULT WINAPI acp_hal_create(Hal **hal) {
     if (!hal)

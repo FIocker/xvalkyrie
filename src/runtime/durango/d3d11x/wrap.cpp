@@ -58,8 +58,18 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
     auto *const info = header(self);
     const auto where = in_object ? "offset" : "slot";
     const auto position = in_object ? index * 8 : index;
-    if (method.action == Method::ignore)
+    if (method.action == Method::ignore) {
+        if (trace() && first_call(*info->layout, in_object, index)) {
+            std::fprintf(stderr,
+                         "[Runtime] Direct3D %s %s %zu ignored, from image+0x%llx, arguments %llx "
+                         "%llx %llx %llx\n",
+                         info->layout->name, where, position,
+                         static_cast<unsigned long long>(detail::guest_offset(caller)),
+                         arguments[0], arguments[1], arguments[2], arguments[3]);
+            std::fflush(stderr);
+        }
         return 0;
+    }
     if (method.action != Method::forward) {
         if (first_call(*info->layout, in_object, index)) {
             std::fprintf(stderr,
@@ -162,6 +172,15 @@ HRESULT STDMETHODCALLTYPE query(void *self, REFIID iid, void **object) {
     if (same || iid == __uuidof(IUnknown) ||
         (iid == __uuidof(ID3D11DeviceChild) && info->kind != Kind::device &&
          info->kind != Kind::swap_chain)) {
+        ++info->references;
+        *object = self;
+        return S_OK;
+    }
+    // ID3DUserDefinedAnnotation on the console is the context itself, with the PIX methods of
+    // its function table
+    constexpr GUID annotation{
+        0xb2daad8b, 0x03d4, 0x4dbf, {0x95, 0xeb, 0x32, 0xab, 0x4b, 0x63, 0xd0, 0xab}};
+    if (info->kind == Kind::context && iid == annotation) {
         ++info->references;
         *object = self;
         return S_OK;

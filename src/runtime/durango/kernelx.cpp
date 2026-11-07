@@ -115,7 +115,26 @@ std::wstring console_path(const wchar_t *name) {
         std::filesystem::create_directories(folder, error);
         return (folder / path.substr(3)).wstring();
     }
+    // from the root of the current drive, which is the package's on the console
+    if (path.size() > 1 && (path[0] == L'\\' || path[0] == L'/') && path[1] != L'\\' &&
+        path[1] != L'/')
+        return (package_directory(std::filesystem::current_path(error)) / path.substr(1)).wstring();
     return std::wstring(path);
+}
+// the same for the ANSI functions, whose results stay in the title's code page
+std::string console_path(const char *name) {
+    if (!name)
+        return {};
+    const auto size = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(std::max(size, 1)), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, name, -1, wide.data(), size);
+    const auto path = console_path(wide.c_str());
+    const auto bytes =
+        WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string narrow(static_cast<std::size_t>(std::max(bytes, 1)), '\0');
+    WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1, narrow.data(), bytes, nullptr, nullptr);
+    narrow.resize(std::strlen(narrow.c_str()));
+    return narrow;
 }
 
 // XS_FILE_TRACE: every file the title looks for and does not find, to see what content it
@@ -161,6 +180,43 @@ HANDLE WINAPI find_first_file_ex_w(const wchar_t *name, FINDEX_INFO_LEVELS level
     const auto find =
         FindFirstFileExW(console_path(name).c_str(), level, data, search, filter, flags);
     note_missing("FindFirstFileExW", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+void note_missing(const char *call, const char *name, bool failed) {
+    const auto error = GetLastError();
+    const std::wstring wide(name ? name : "", name ? name + std::strlen(name) : "");
+    SetLastError(error);
+    note_missing(call, wide.c_str(), failed);
+}
+HANDLE WINAPI create_file_a(const char *name, DWORD access, DWORD share,
+                            SECURITY_ATTRIBUTES *security, DWORD creation, DWORD flags,
+                            HANDLE model) {
+    const auto file =
+        CreateFileA(console_path(name).c_str(), access, share, security, creation, flags, model);
+    note_missing("CreateFileA", name, file == INVALID_HANDLE_VALUE);
+    return file;
+}
+BOOL WINAPI get_file_attributes_ex_a(const char *name, GET_FILEEX_INFO_LEVELS level,
+                                     void *information) {
+    const auto found = GetFileAttributesExA(console_path(name).c_str(), level, information);
+    note_missing("GetFileAttributesExA", name, !found);
+    return found;
+}
+DWORD WINAPI get_file_attributes_a(const char *name) {
+    const auto attributes = GetFileAttributesA(console_path(name).c_str());
+    note_missing("GetFileAttributesA", name, attributes == INVALID_FILE_ATTRIBUTES);
+    return attributes;
+}
+HANDLE WINAPI find_first_file_ex_a(const char *name, FINDEX_INFO_LEVELS level, void *data,
+                                   FINDEX_SEARCH_OPS search, void *filter, DWORD flags) {
+    const auto find =
+        FindFirstFileExA(console_path(name).c_str(), level, data, search, filter, flags);
+    note_missing("FindFirstFileExA", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+HANDLE WINAPI find_first_file_a(const char *name, WIN32_FIND_DATAA *data) {
+    const auto find = FindFirstFileA(console_path(name).c_str(), data);
+    note_missing("FindFirstFileA", name, find == INVALID_HANDLE_VALUE);
     return find;
 }
 BOOL WINAPI create_directory_w(const wchar_t *name, SECURITY_ATTRIBUTES *security) {
@@ -309,6 +365,14 @@ void install_kernelx(Registry &registry) {
                  reinterpret_cast<void *>(&get_file_attributes_w));
     registry.add("kernelx.dll", "FindFirstFileExW",
                  reinterpret_cast<void *>(&find_first_file_ex_w));
+    registry.add("kernelx.dll", "CreateFileA", reinterpret_cast<void *>(&create_file_a));
+    registry.add("kernelx.dll", "GetFileAttributesExA",
+                 reinterpret_cast<void *>(&get_file_attributes_ex_a));
+    registry.add("kernelx.dll", "GetFileAttributesA",
+                 reinterpret_cast<void *>(&get_file_attributes_a));
+    registry.add("kernelx.dll", "FindFirstFileExA",
+                 reinterpret_cast<void *>(&find_first_file_ex_a));
+    registry.add("kernelx.dll", "FindFirstFileA", reinterpret_cast<void *>(&find_first_file_a));
     registry.add("kernelx.dll", "CreateDirectoryW", reinterpret_cast<void *>(&create_directory_w));
     registry.add("kernelx.dll", "RemoveDirectoryW", reinterpret_cast<void *>(&remove_directory_w));
     registry.add("kernelx.dll", "DeleteFileW", reinterpret_cast<void *>(&delete_file_w));

@@ -45,6 +45,10 @@ HRESULT keep(Forwarder *self, void **object) {
     return S_OK;
 }
 void *slot(auto *function) { return reinterpret_cast<void *>(function); }
+// Titles built with the first development kits (SDK versions 1.x, where later ones are 2.x)
+// have one more method in IDXGIObject, before GetPrivateData: every DXGI method after it is
+// one slot later than on the desktop. 0 for the others.
+std::size_t dxgi_inserted = 0;
 
 // IDXGIFactory2::CreateSwapChainForCoreWindow
 // The title's first direct queue: a console Direct3D 12 swap chain is made for the device,
@@ -120,7 +124,7 @@ void *factory_forwarder(IDXGIFactory2 *factory) {
     if (latest_factory)
         factory->Release();
     return make_forwarder(latest_factory ? latest : factory, latest_factory ? 32 : 25,
-                          &factory_query, {{16, slot(&create_swap_chain)}});
+                          &factory_query, {{16, slot(&create_swap_chain)}}, dxgi_inserted);
 }
 
 // IDXGIObject::GetParent of the adapter
@@ -160,7 +164,8 @@ HRESULT wrap_adapter(IDXGIAdapter *host, IDXGIAdapter **adapter) {
     if (FAILED(result))
         return result;
     *adapter = reinterpret_cast<IDXGIAdapter *>(make_forwarder(
-        latest, latest_adapter ? 19 : 12, &adapter_query, {{6, slot(&adapter_parent)}}));
+        latest, latest_adapter ? 19 : 12, &adapter_query, {{6, slot(&adapter_parent)}},
+        dxgi_inserted));
     return S_OK;
 }
 // IDXGIDevice::GetAdapter
@@ -182,13 +187,15 @@ HRESULT dxgi_device_query(Forwarder *self, REFIID iid, void **object) {
 }
 
 HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flags,
-                             const D3D_FEATURE_LEVEL *levels, UINT level_count, UINT,
+                             const D3D_FEATURE_LEVEL *levels, UINT level_count, UINT sdk,
                              ID3D11Device **device, D3D_FEATURE_LEVEL *level,
                              ID3D11DeviceContext **context) {
     if (device)
         *device = nullptr;
     if (context)
         *context = nullptr;
+    dxgi_inserted = sdk < 0x20000 ? 5 : 0;
+    d3d11x::first_development_kits(dxgi_inserted != 0);
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
         std::fprintf(stderr,
@@ -211,8 +218,8 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
                                      level_count, &latest, level, context, debug_layer);
     if (debug_layer)
         d3d11x::watch_debug_messages(latest);
-    std::fprintf(stderr, "[Runtime] Direct3D 11 device on %s (flags 0x%x): 0x%08lx\n",
-                 vulkan ? "Vulkan" : "the host", flags, static_cast<unsigned long>(result));
+    std::fprintf(stderr, "[Runtime] Direct3D 11 device on %s (flags 0x%x, sdk 0x%x): 0x%08lx\n",
+                 vulkan ? "Vulkan" : "the host", flags, sdk, static_cast<unsigned long>(result));
     std::fflush(stderr);
     if (FAILED(result)) {
         if (context && *context) {
@@ -233,9 +240,11 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
 
 // The parameters are the
 // console's ring and tessellation buffer sizes, which mean nothing to the host.
-HRESULT WINAPI create_device_x(const void *, ID3D11Device **device, ID3D11DeviceContext **context) {
+// They start with the SDK version of the kit the title was built with.
+HRESULT WINAPI create_device_x(const UINT *parameters, ID3D11Device **device,
+                               ID3D11DeviceContext **context) {
     return create_device(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
-                         D3D11_SDK_VERSION, device, nullptr, context);
+                         parameters ? parameters[0] : D3D11_SDK_VERSION, device, nullptr, context);
 }
 HRESULT WINAPI present_array(UINT interval, UINT, UINT, UINT count, void **swap_chains,
                              const void *) {
@@ -2226,7 +2235,8 @@ HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
     if (FAILED(result))
         return result;
     *object = make_forwarder(host, 14, &dxgi_device_query,
-                             {{6, slot(&device_parent)}, {7, slot(&device_adapter)}});
+                             {{6, slot(&device_parent)}, {7, slot(&device_adapter)}},
+                             dxgi_inserted);
     return S_OK;
 }
 

@@ -66,6 +66,9 @@ constexpr auto party_statics3 = guid("15946429-17a1-4fdf-9d67-766ed0f4b868");
 constexpr auto party_statics4 = guid("4b907f32-9165-4193-9cce-1d5ccddd060e");
 constexpr auto party_chat_statics = guid("cc1bcf39-99f3-42a2-afb6-cdc07b29755f");
 
+constexpr wchar_t transfer_manager[] = L"Windows.Xbox.Management.Deployment.PackageTransferManager";
+constexpr wchar_t kinect[] = L"Windows.Kinect.KinectSensor";
+constexpr wchar_t speech_recognizer[] = L"Windows.Xbox.Speech.Recognition.SpeechRecognizer";
 constexpr wchar_t association_template[] =
     L"Windows.Xbox.Networking.SecureDeviceAssociationTemplate";
 constexpr wchar_t association[] = L"Windows.Xbox.Networking.SecureDeviceAssociation";
@@ -110,6 +113,7 @@ constexpr Row rows[] = {
     {user, user_statics, 26, {Inert::event_add}},
 
     // public interface INetworkInformationStatics
+    {network, network_statics, 7, {Inert::zero64}}, // GetInternetConnectionProfile: none
     {network, network_statics, 12, {Inert::event_add}}, // NetworkStatusChanged
 
     // IAchievementNotifierStatics: GetTitleIdFilteredSource, GetUnfilteredSource. The
@@ -262,10 +266,44 @@ constexpr Row rows[] = {
     {display_info, direct, 9, {Inert::console_string, L"gamertag"}},
     {display_info, direct, 10, {Inert::zero32}},
     {display_info, direct, 11, {Inert::console32, L"age_group"}},
-    {L"Windows.Kinect.KinectSensor",
-     guid("c421d46b-5084-45d6-bdf0-57151f81d0d9"),
+    // IKinectSensorStatics::GetDefault: a sensor that is never available, as with none plugged
+    // in. IKinectSensor::Open succeeds all the same.
+    {kinect, guid("c421d46b-5084-45d6-bdf0-57151f81d0d9"), 6, {Inert::shared, kinect}},
+    // a console interface of CoreApplication with one flag: its setter
+    {L"Windows.ApplicationModel.Core.CoreApplication",
+     guid("42a6a529-3cc6-4867-b5b7-6d1faf5325f9"),
+     7,
+     {Inert::accept}},
+    {kinect, direct, 8, {Inert::accept}},
+    {kinect, direct, 11, {Inert::zero8}}, // IsAvailable
+    {kinect, direct, 14, {Inert::object, L"Windows.Kinect.BodyFrameSource"}},
+    {L"Windows.Kinect.BodyFrameSource",
+     direct,
+     10,
+     {Inert::object, L"Windows.Kinect.BodyFrameReader"}},
+    {L"Windows.Kinect.BodyFrameReader", direct, 8, {Inert::zero64}}, // no frame
+    {L"Windows.Kinect.BodyFrameReader", direct, 6, {Inert::event_add}},
+    {L"Windows.Xbox.Input.BodyController",
+     guid("99ff8b9b-c70e-496a-a23b-ec4b7996b8ff"),
+     7,
+     {Inert::event_add}},
+    {L"Windows.Xbox.Input.BodyController",
+     guid("99ff8b9b-c70e-496a-a23b-ec4b7996b8ff"),
+     9,
+     {Inert::event_add}},
+    // SmartGlass: no companion devices, and none to come
+    {L"Windows.Xbox.SmartGlass.SmartGlassDeviceWatcher",
+     guid("0e9b9ff2-8b3e-4e4e-ad80-6df4ee94737b"),
      6,
-     {Inert::zero64}},
+     {Inert::event_add}},
+    {L"Windows.Xbox.SmartGlass.SmartGlassDeviceWatcher",
+     guid("0e9b9ff2-8b3e-4e4e-ad80-6df4ee94737b"),
+     8,
+     {Inert::event_add}},
+    {L"Windows.Xbox.SmartGlass.SmartGlassDevice",
+     guid("913ef096-097b-4672-be90-f3a75ab5ca11"),
+     7,
+     {Inert::list_operation}},
     {L"Windows.Xbox.System.User", direct, 7, {Inert::audio_devices}},
     // IAudioDeviceInfo of the headset: the host's communications output, shared, with no
     // microphone to unmute
@@ -648,6 +686,51 @@ constexpr Row rows[] = {
      guid("9776ff56-9bfd-4581-ad45-b645bba526d6"),
      7,
      {Inert::string, L"Windows.Xbox.Input.Gamepad"}},
+    // IPackageTransferManagerStatics::Current
+    {transfer_manager, guid("d6cf4cae-9eb1-4cbe-b426-7e75d429f846"), 6,
+     {Inert::shared, transfer_manager}},
+    {transfer_manager, direct, 8, {Inert::event_add}},
+    // ISpeechRecognizerFactory::Create(language, SpeechRecognizer **)
+    {L"Windows.Xbox.Speech.Recognition.SpeechRecognizerFactory",
+     guid("9d99295c-ecd0-44e5-9f3d-6130acff3a18"),
+     6,
+     {Inert::lookup, speech_recognizer}},
+    // public IGestureRecognizer: GestureSettings set
+    {L"Windows.UI.Input.GestureRecognizer",
+     guid("b47a37bf-3d6b-4f88-83e8-6dcb4012ffb0"),
+     7,
+     {Inert::accept}},
+    {L"Windows.UI.Input.GestureRecognizer",
+     guid("b47a37bf-3d6b-4f88-83e8-6dcb4012ffb0"),
+     56,
+     {Inert::event_add}},
+    {L"Windows.UI.Input.GestureRecognizer",
+     guid("b47a37bf-3d6b-4f88-83e8-6dcb4012ffb0"),
+     58,
+     {Inert::event_add}},
+    {L"Windows.UI.Input.GestureRecognizer",
+     guid("b47a37bf-3d6b-4f88-83e8-6dcb4012ffb0"),
+     62,
+     {Inert::event_add}},
+    // IBodyControllerStatics::BodyControllers: no sensor, nobody seen
+    {L"Windows.Xbox.Input.BodyController",
+     guid("99ff8b9b-c70e-496a-a23b-ec4b7996b8ff"),
+     6,
+     {Inert::empty_list}},
+    {speech_recognizer, direct, 14, {Inert::accept}}, // (bool)
+    {speech_recognizer, direct, 17, {Inert::event_add}},
+    {speech_recognizer, direct, 21, {Inert::event_add}},
+    {speech_recognizer, direct, 23, {Inert::event_add}},
+    {speech_recognizer, direct, 25, {Inert::event_add}},
+    {speech_recognizer, direct, 27, {Inert::event_add}},
+    {speech_recognizer, direct, 29, {Inert::event_add}},
+    {speech_recognizer, direct, 31, {Inert::event_add}},
+    {transport, game_transport_controls, 26, {Inert::accept}}, // button pressed, removed
+    // ISecureDeviceAssociationTemplateStatics::Templates: none
+    {association_template,
+     guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"),
+     7,
+     {Inert::empty_list}},
     // IUserStatics::GetUserById(id, User **): the one user there is
     {user, user_statics, 14, {Inert::shared2, user}},
 };
