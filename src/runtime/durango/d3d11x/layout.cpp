@@ -1261,6 +1261,7 @@ const Layout &layout(Kind kind) {
     return (early_dxgi ? early.data() : layouts)[static_cast<std::size_t>(kind)];
 }
 void first_development_kits(bool yes) { early_dxgi = yes; }
+bool first_development_kits() { return early_dxgi; }
 
 // Console-only interface IDs, as the system's d3d11_x.dll exports them. Titles use the
 // "performance" ones as the device and the context themselves.

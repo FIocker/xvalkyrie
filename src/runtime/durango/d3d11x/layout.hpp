@@ -48,6 +48,7 @@ const Layout &layout(Kind kind);
 // Whether the title was built with the first development kits, whose DXGI interfaces have
 // one more method than later ones: swap chains made from then on have their layout
 void first_development_kits(bool yes);
+bool first_development_kits();
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
 // a Direct3D 12 resource handed to the title: the console's methods where they differ

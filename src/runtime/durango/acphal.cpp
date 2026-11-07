@@ -1,4 +1,5 @@
 #include "runtime/common/runtime.hpp"
+#include "runtime/durango/d3d11x/layout.hpp"
 #include "runtime/durango/runtime.hpp"
 
 #include <algorithm>
@@ -6,8 +7,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <intrin.h>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -155,8 +158,8 @@ HRESULT STDMETHODCALLTYPE disconnect(Hal *self) {
     self->messages.push_back({disconnected, 0, 0, 0});
     return S_OK;
 }
-HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id, std::uint32_t,
-                                 void *, std::uint32_t) {
+HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id,
+                                 std::uint32_t frame_index, void *data, std::uint32_t) {
     const std::lock_guard lock(self->mutex);
     if (!self->connected)
         return E_UNEXPECTED;
@@ -165,13 +168,30 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
         std::fprintf(stderr, "[Runtime] audio processor command 0x%x\n", type);
         std::fflush(stderr);
     }
-    if (id) // 0: nobody waits for it
-        self->messages.push_back({command_done, 0, 0, id});
+    if (static std::atomic<int> shown{0}; std::getenv("XS_ACP_TRACE") && shown++ < 40) {
+        const auto *words = static_cast<const std::uint32_t *>(data);
+        std::fprintf(stderr,
+                     "[Runtime] audio command %u id %llx frame %u data %x %x %x %x from %s\n",
+                     type, static_cast<unsigned long long>(id), frame_index, words ? words[0] : 0,
+                     words ? words[1] : 0, words ? words[2] : 0, words ? words[3] : 0,
+                     detail::guest_location(_ReturnAddress()).c_str());
+    }
+    if (id) { // 0: nobody waits for it
+        // the first development kits have the command's id right after its type, with no
+        // time before them
+        Message done{command_done, 0, 0, id};
+        if (d3d11x::first_development_kits())
+            done.value = std::uint64_t{static_cast<std::uint32_t>(id)} << 32 | type;
+        self->messages.push_back(done);
+    }
     return S_OK;
 }
 bool STDMETHODCALLTYPE pop(Hal *self, Message *message) {
     if (!message)
         return false;
+    if (static std::atomic<int> shown{0}; std::getenv("XS_ACP_TRACE") && shown++ < 1)
+        std::fprintf(stderr, "[Runtime] PopMessage from %s\n",
+                     detail::guest_location(_ReturnAddress()).c_str());
     const std::lock_guard lock(self->mutex);
     if (self->messages.empty() && self->connected) {
         const auto now = std::chrono::steady_clock::now();

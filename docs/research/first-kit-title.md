@@ -86,10 +86,23 @@ The title starts, creates its device and swap chain, compiles its shaders,
 loads textures, starts audio, reads the gamepad and draws: after its opening
 video it shows its loading screen as it should.
 
-The opening video is black. The title uploads three planes per frame with
-`UpdateSubresource`, and they hold 0x10 for luma and 0x80 for chroma, which
-is black: the decoder gives nothing, most likely because it follows the
-audio processor, whose voices never run here. A button skips it.
+The opening video is black, and a button skips it. The title uploads three
+planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
+0x80 for chroma: no frame was ever decoded. What is known:
+
+- The decoder is VP8, built into the title, and splits each frame into jobs
+  for the engine's job system. A last job, which depends on the others,
+  hands the frame to the player and gives the frame's context back.
+- The decode thread waits for a free frame context (`XS_THREAD_DUMP` shows
+  it), so that last job of the first frames never ran. The job system's
+  workers sit idle meanwhile.
+- A job carries a processor mask, and 0x3f, the six cores a title has, is
+  treated apart from any other. The video's jobs take their mask from the
+  player's settings. Whether the workers here match those masks is the next
+  thing to look at.
+- It is not the audio processor: its messages are answered. In this kit
+  a completed command's id is 12 bytes into the message, right after the
+  type, the dropped count and the time, and the title reads it there.
 
 The launcher counted the imports that the console's own `xg_x.dll` serves as
 missing, and refused to start the title that `exec` ran. The system modules
@@ -102,4 +115,7 @@ per item of a list), and 0xa10 and 0xa18 around the loop that executes
 command lists.
 
 `XS_D3D_SEQ=<frame>` prints every forwarded Direct3D call of one frame in
-order, which is how the video's planes were found.
+order, with the range of the bytes an `UpdateSubresource` uploads, which is
+how the video's planes were found. `XS_ACP_TRACE=1` prints the first audio
+processor commands, and `XS_THREAD_DUMP=<frame>` the stack of every thread at
+that frame.

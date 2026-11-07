@@ -73,6 +73,13 @@ void dump_threads() {
 } // namespace
 
 void frame_watchdog() {
+    // XS_THREAD_DUMP=<frame>: the same stacks once, at that frame, of a title that goes on
+    // presenting while something in it waits
+    static const char *const dump_at = std::getenv("XS_THREAD_DUMP");
+    if (static std::atomic<int> frames{0}; dump_at && ++frames == std::atoi(dump_at)) {
+        std::fprintf(stderr, "[Runtime] the threads at frame %s:\n", dump_at);
+        dump_threads();
+    }
     static const bool enabled = std::getenv("XS_WATCHDOG") != nullptr;
     if (!enabled)
         return;

@@ -3,6 +3,7 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -103,6 +104,14 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
             VirtualQuery(reinterpret_cast<void *>(pointer), &memory, sizeof memory) &&
             memory.State == MEM_COMMIT)
             first = *reinterpret_cast<void **>(pointer);
+        if (method.host == 48 && first && memory.RegionSize >= 0x10000) {
+            const auto *bytes = reinterpret_cast<const std::uint8_t *>(pointer);
+            unsigned low = 255, high = 0;
+            for (std::size_t i = 0; i < 0x10000; ++i)
+                low = std::min<unsigned>(low, bytes[i]), high = std::max<unsigned>(high, bytes[i]);
+            std::fprintf(stderr, "[Seq] source bytes between %u and %u, pitch %llu\n", low, high,
+                         arguments[4]);
+        }
         std::fprintf(stderr, "[Seq] %lu %p %s %s %zu host %u: %llx %llx %llx %llx [%p%s]\n",
                      GetCurrentThreadId(), self, info->layout->name, where, position, method.host,
                      arguments[0], arguments[1], arguments[2], arguments[3], first,
