@@ -86,52 +86,8 @@ The title starts, creates its device and swap chain, compiles its shaders,
 loads textures, starts audio, reads the gamepad and draws: after its opening
 video it shows its loading screen as it should.
 
-The opening video is black, and a button skips it. The title uploads three
-planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
-0x80 for chroma: no frame was ever decoded. What is known:
-
-- The decoder is VP6 (its jobs are named `vp6_Deco...` and `vp6_mbRo...`,
-  the stream's magic is `VP60`), built into the title, and splits each frame into jobs
-  for the engine's job system. A last job, which depends on the others,
-  hands the frame to the player and gives the frame's context back.
-- The decode thread waits for a free frame context (`XS_THREAD_DUMP` shows
-  it), so that last job of the first frames never ran. The job system's
-  workers sit idle meanwhile.
-- A job carries a processor mask, and 0x3f, the six cores a title has, is
-  treated apart from any other. The video's jobs take their mask from the
-  player's settings. Whether the workers here match those masks is the next
-  thing to look at.
-- With breakpoints on the decoder (`XS_BREAK`), in a minute the decode thread
-  took a frame context 25 times and queued the jobs of each frame, and the
-  last job of a frame ran 8 times. The first frame is a key frame and the
-  rest depend on the row jobs of the frame before them, through job handles
-  kept in the previous context. The frames whose last job never ran are the
-  ones to follow: which dependency of theirs stays open.
-- Followed further with `XS_BREAK_LIMIT`: the decoder queues frames and the
-  last job runs for the first eight, in order. Then it stops because the
-  eight decoded frames are never taken: the player's queue of ready frames
-  is full.
-- The player presents a frame when its number is below the one its clock
-  gives (`image+0xd830fb`), and that test never passes. The clock
-  (`image+0xd83720`, through the timer object's source) is the position of
-  the video's audio voice: it asks the voice how much it has played. The
-  voice plays XMA, which the console decodes in its audio processor, and
-  nothing decodes it here, so the position stays at zero and the video
-  waits on its first frame for ever.
-- So the fix is the audio processor's XMA contexts: consume the input the
-  title gives and hand back output (silence would do for the picture) at
-  the rate of the stream. The title keeps a pending copy of each context
-  and applies the fields itself when the update command completes
-  (`image+0x119e240`), so the hardware context in the array the runtime
-  allocated is where to read them from, not the command's data.
-- A first attempt at running the XMA contexts read the fields from the
-  update command's data, which is empty in this kit, and changed nothing.
-- The title pins its workers one per processor, with masks 0x1 to 0x20 and
-  0x80 (`XS_THREAD_TRACE=1` shows them). Reporting six or eight processors
-  to it instead of the host's sixteen changed nothing.
-- It is not the audio processor: its messages are answered. In this kit
-  a completed command's id is 12 bytes into the message, right after the
-  type, the dropped count and the time, and the title reads it there.
+The opening video is black, and a button skips it. What is known about it
+is in `opening-video.md`.
 
 The launcher counted the imports that the console's own `xg_x.dll` serves as
 missing, and refused to start the title that `exec` ran. The system modules
