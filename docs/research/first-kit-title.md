@@ -83,12 +83,23 @@ every frame.
 ## State
 
 The title starts, creates its device and swap chain, compiles its shaders,
-loads textures, starts audio, reads the gamepad and presents frames without
-a fault. The frames are black. The host's debug layer says draws run with no
-render target bound, which is where to look next: the title records on
-deferred contexts and plays the lists back on the immediate one.
+loads textures, starts audio, reads the gamepad and draws: after its opening
+video it shows its loading screen as it should.
+
+The opening video is black. The title uploads three planes per frame with
+`UpdateSubresource`, and they hold 0x10 for luma and 0x80 for chroma, which
+is black: the decoder gives nothing, most likely because it follows the
+audio processor, whose voices never run here. A button skips it.
+
+The launcher counted the imports that the console's own `xg_x.dll` serves as
+missing, and refused to start the title that `exec` ran. The system modules
+a title came with (`EmbeddedXvd\Windows\System32`, next to the package) are
+now part of the plan it shows.
 
 Four console methods of the context are called and ignored without knowing
 what they are: at 0x850 (0, pointer to constant data), 0x888 (an object, once
 per item of a list), and 0xa10 and 0xa18 around the loop that executes
 command lists.
+
+`XS_D3D_SEQ=<frame>` prints every forwarded Direct3D call of one frame in
+order, which is how the video's planes were found.

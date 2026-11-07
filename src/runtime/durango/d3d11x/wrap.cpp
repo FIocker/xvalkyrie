@@ -1,4 +1,5 @@
 #include "runtime/durango/d3d11x/wrap.hpp"
+#include "backends/graphics/backend.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
@@ -90,6 +91,22 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
                      static_cast<unsigned long long>(detail::guest_offset(caller)), arguments[0],
                      arguments[1], arguments[2], arguments[3]);
         std::fflush(stderr);
+    }
+    // XS_D3D_SEQ=<frame>: every forwarded call of that frame in order, with the first object
+    // of the array it passes
+    if (static const char *const at = std::getenv("XS_D3D_SEQ");
+        at && graphics::frames_presented() == static_cast<std::uint64_t>(std::atoi(at))) {
+        MEMORY_BASIC_INFORMATION memory{};
+        void *first = nullptr;
+        const auto pointer = arguments[method.host == 33 ? 1 : method.host == 48 ? 3 : 2];
+        if (pointer > 0x10000 &&
+            VirtualQuery(reinterpret_cast<void *>(pointer), &memory, sizeof memory) &&
+            memory.State == MEM_COMMIT)
+            first = *reinterpret_cast<void **>(pointer);
+        std::fprintf(stderr, "[Seq] %lu %p %s %s %zu host %u: %llx %llx %llx %llx [%p%s]\n",
+                     GetCurrentThreadId(), self, info->layout->name, where, position, method.host,
+                     arguments[0], arguments[1], arguments[2], arguments[3], first,
+                     first && unwrap(first) != first ? " ours" : "");
     }
     if (method.draws && info->layout->apply_state)
         info->layout->apply_state(self);
