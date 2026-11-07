@@ -531,6 +531,80 @@ LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+// XS_BREAK=<rva>[,<rva>...]: the registers each time the title gets to one of these addresses
+// of its image (hexadecimal), up to 40 times each. A breakpoint is put there; the handler
+// puts the instruction back, steps over it and sets the breakpoint again.
+struct Breakpoint {
+    std::uint8_t *address;
+    std::uint8_t original;
+    std::atomic<int> hits{0};
+};
+std::deque<Breakpoint> breakpoints;
+thread_local Breakpoint *stepping = nullptr;
+void poke(std::uint8_t *address, std::uint8_t value) {
+    DWORD previous;
+    VirtualProtect(address, 1, PAGE_EXECUTE_READWRITE, &previous);
+    *address = value;
+    VirtualProtect(address, 1, previous, &previous);
+    FlushInstructionCache(GetCurrentProcess(), address, 1);
+}
+LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
+    auto &context = *info->ContextRecord;
+    const auto code = info->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_SINGLE_STEP && stepping) {
+        if (stepping->hits < 40)
+            poke(stepping->address, 0xcc);
+        stepping = nullptr;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (code != EXCEPTION_BREAKPOINT)
+        return EXCEPTION_CONTINUE_SEARCH;
+    for (auto &point : breakpoints) {
+        if (point.address != info->ExceptionRecord->ExceptionAddress)
+            continue;
+        if (point.hits++ < 40) {
+            std::uint64_t at_rdx[4]{}, at_r8[5]{};
+            const auto read = [](std::uint64_t address, void *into, std::size_t size) {
+                MEMORY_BASIC_INFORMATION memory{};
+                if (VirtualQuery(reinterpret_cast<void *>(address), &memory, sizeof memory) &&
+                    memory.State == MEM_COMMIT && !(memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+                    std::memcpy(into, reinterpret_cast<void *>(address), size);
+            };
+            read(context.Rdx, at_rdx, sizeof at_rdx);
+            read(context.R8, at_r8, sizeof at_r8);
+            std::fprintf(stderr,
+                         "[Break] image+0x%llx thread %lu rcx %llx rdx %llx r8 %llx r9 %llx "
+                         "[rdx] %llx %llx %llx %llx [r8] %llx %llx %llx %llx %llx from %s\n",
+                         static_cast<unsigned long long>(
+                             reinterpret_cast<std::uint64_t>(point.address) - guest->base),
+                         GetCurrentThreadId(), context.Rcx, context.Rdx, context.R8, context.R9,
+                         at_rdx[0], at_rdx[1], at_rdx[2], at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
+                         at_r8[3], at_r8[4],
+                         detail::guest_location(*reinterpret_cast<void **>(context.Rsp)).c_str());
+            std::fflush(stderr);
+        }
+        poke(point.address, point.original);
+        stepping = &point;
+        context.EFlags |= 0x100;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+void set_breakpoints(std::uint8_t *base) {
+    const char *text = std::getenv("XS_BREAK");
+    if (!text)
+        return;
+    AddVectoredExceptionHandler(1, &at_breakpoint);
+    for (char *end = nullptr; *text; text = *end ? end + 1 : end) {
+        const auto rva = std::strtoull(text, &end, 16);
+        if (end == text)
+            break;
+        auto &point = breakpoints.emplace_back();
+        point.address = base + rva;
+        point.original = *point.address;
+        poke(point.address, 0xcc);
+    }
+}
 #endif
 DWORD WINAPI guest_thread(void *start) {
 #ifdef _MSC_VER
@@ -819,6 +893,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     SetUnhandledExceptionFilter(&unhandled);
     if (std::getenv("XS_FIRST_CHANCE"))
         AddVectoredExceptionHandler(0, &first_chance);
+    set_breakpoints(reinterpret_cast<std::uint8_t *>(state.base));
 #endif
     std::fflush(nullptr);
     const auto thread = CreateThread(nullptr, 0, guest_thread, &start, 0, nullptr);

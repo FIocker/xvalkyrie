@@ -90,7 +90,8 @@ The opening video is black, and a button skips it. The title uploads three
 planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
 0x80 for chroma: no frame was ever decoded. What is known:
 
-- The decoder is VP8, built into the title, and splits each frame into jobs
+- The decoder is VP6 (its jobs are named `vp6_Deco...` and `vp6_mbRo...`,
+  the stream's magic is `VP60`), built into the title, and splits each frame into jobs
   for the engine's job system. A last job, which depends on the others,
   hands the frame to the player and gives the frame's context back.
 - The decode thread waits for a free frame context (`XS_THREAD_DUMP` shows
@@ -100,6 +101,15 @@ planes per frame with `UpdateSubresource`, and they hold 0x10 for luma and
   treated apart from any other. The video's jobs take their mask from the
   player's settings. Whether the workers here match those masks is the next
   thing to look at.
+- With breakpoints on the decoder (`XS_BREAK`), in a minute the decode thread
+  took a frame context 25 times and queued the jobs of each frame, and the
+  last job of a frame ran 8 times. The first frame is a key frame and the
+  rest depend on the row jobs of the frame before them, through job handles
+  kept in the previous context. The frames whose last job never ran are the
+  ones to follow: which dependency of theirs stays open.
+- Running the XMA contexts of the audio processor (consuming their input and
+  giving silence) changed nothing: the title only enables and disables
+  context 0 during the video.
 - The title pins its workers one per processor, with masks 0x1 to 0x20 and
   0x80 (`XS_THREAD_TRACE=1` shows them). Reporting six or eight processors
   to it instead of the host's sixteen changed nothing.
@@ -121,4 +131,6 @@ command lists.
 order, with the range of the bytes an `UpdateSubresource` uploads, which is
 how the video's planes were found. `XS_ACP_TRACE=1` prints the first audio
 processor commands, `XS_THREAD_DUMP=<frame>` the stack of every thread at
-that frame, and `XS_THREAD_TRACE=1` the affinity masks the title asks for.
+that frame, `XS_THREAD_TRACE=1` the affinity masks the title asks for, and
+`XS_BREAK=<rva>,<rva>` the registers each time the title reaches an address
+of its image.
