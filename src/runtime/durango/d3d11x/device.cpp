@@ -1693,6 +1693,9 @@ struct Uploader {
 };
 std::mutex uploader_mutex;
 void upload_placements_d3d12(ID3D12CommandQueue *queue) {
+    // shader resource states are a direct queue's: the uploads wait for one
+    if (queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT)
+        return;
     auto uploads = d3d11x::take_d3d12_uploads();
     if (uploads.empty())
         return;
