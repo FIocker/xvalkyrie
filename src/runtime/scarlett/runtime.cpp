@@ -1,7 +1,26 @@
 #include "runtime/scarlett/runtime.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/d3d12x.hpp"
+#include "runtime/modules/gameinput.hpp"
+#include "runtime/modules/gameruntime.hpp"
+#include "runtime/modules/kernel.hpp"
+#include "runtime/modules/memory.hpp"
+#include "runtime/modules/system.hpp"
+#include "runtime/modules/window.hpp"
+#include "runtime/modules/xg.hpp"
 
 namespace xs::runtime::scarlett {
-// Nothing is implemented yet, see ROADMAP.md.
-void install(Registry &) {}
+// A Series title is a GDK title: a Win32 program on API sets, the Gaming Runtime, and the
+// console's Direct3D 12. All of it is shared with Xbox One GDK titles.
+void install(Registry &registry) {
+    modules::install_kernel(registry, Target::scarlett);
+    modules::install_window(registry);
+    modules::install_gameruntime(registry);
+    modules::install_gameinput(registry);
+    modules::install_xmem(registry);
+    modules::install_xaudio2(registry);
+    modules::install_shader_compiler(registry, "dxcompiler_xs.dll");
+    modules::install_xg(registry, "xg_xs.dll");
+    modules::d3d12x::install(registry, "d3d12_xs.dll", Target::scarlett);
+}
 } // namespace xs::runtime::scarlett

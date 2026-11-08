@@ -1,6 +1,6 @@
 #include "runtime/durango/winrt/storage.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/durango/storage.hpp"
+#include "runtime/modules/storage.hpp"
 #include "runtime/durango/winrt/async.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
 #include "runtime/durango/winrt/title_info.hpp"
@@ -27,6 +27,7 @@
 
 namespace xs::runtime::durango::winrt {
 namespace {
+using modules::SaveSpace;
 constexpr std::size_t method_count = 32;
 constexpr wchar_t space_class[] = L"Windows.Xbox.Storage.ConnectedStorageSpace";
 constexpr wchar_t container_class[] = L"Windows.Xbox.Storage.ConnectedStorageContainer";

@@ -1,6 +1,7 @@
 #include "launcher/launch.hpp"
 #include "analysis/modules.hpp"
 #include "formats/appx/manifest.hpp"
+#include "formats/gdk/game_config.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "host/files.hpp"
@@ -30,22 +31,62 @@ std::string names(const nlohmann::json &profile, std::string_view prefix) {
     }
     return text;
 }
-constexpr char manifest_name[] = "AppxManifest.xml";
+constexpr char manifest_name[] = "AppxManifest.xml", config_name[] = "MicrosoftGame.config";
+bool named(const std::filesystem::path &path, std::string_view name) {
+    const auto text = path.filename().string();
+    return std::equal(text.begin(), text.end(), name.begin(), name.end(), [](char a, char b) {
+        return std::tolower(static_cast<unsigned char>(a)) ==
+               std::tolower(static_cast<unsigned char>(b));
+    });
+}
+// An ERA title has an AppxManifest.xml. A GDK title has a MicrosoftGame.config, and often
+// an AppxManifest.xml made from it as well: the config says more, so it wins.
 std::filesystem::path find_manifest(const std::filesystem::path &path) {
     if (!std::filesystem::is_directory(path))
-        return path.filename() == manifest_name ? path : std::filesystem::path{};
-    for (const auto &candidate : {path / manifest_name, path / "Mount" / manifest_name})
-        if (std::filesystem::is_regular_file(candidate))
-            return candidate;
-    throw std::runtime_error("No AppxManifest.xml in this directory or its Mount subdirectory");
+        return named(path, manifest_name) || named(path, config_name) ? path
+                                                                       : std::filesystem::path{};
+    for (const auto &folder : {path, path / "Mount"})
+        for (const auto *name : {config_name, manifest_name})
+            if (std::filesystem::is_regular_file(folder / name))
+                return folder / name;
+    throw std::runtime_error("No MicrosoftGame.config or AppxManifest.xml in this directory or "
+                             "its Mount subdirectory");
 }
-// Empty unless `path` leads to a package manifest.
-nlohmann::json read_manifest(const std::filesystem::path &path, std::filesystem::path &directory) {
+// a MicrosoftGame.config as the fields of a package manifest
+nlohmann::json config_manifest(const nlohmann::json &config) {
+    // the Series executable of a package that has one for each console
+    const auto &executables = config.at("executables");
+    const auto *chosen = &executables.at(0);
+    for (const auto &executable : executables)
+        if (executable.at("declared_device_family") == "Scarlett") {
+            chosen = &executable;
+            break;
+        }
+    return {{"name", config.at("name")},
+            {"display_name", config.at("display_name")},
+            {"version", config.at("version")},
+            {"logo",
+             config.at("large_logo").is_string() ? config.at("large_logo") : config.at("logo")},
+            {"splash", config.at("splash_screen")},
+            {"applications", {{{"executable", chosen->at("name")}}}}};
+}
+} // namespace
+
+nlohmann::json title_manifest(const std::filesystem::path &path,
+                              std::filesystem::path &directory) {
     const auto manifest = find_manifest(path);
     if (manifest.empty())
         return nullptr;
     directory = manifest.parent_path();
+    if (named(manifest, config_name))
+        return config_manifest(
+            gdk::inspect_config(host::read_snapshot(manifest, gdk::config_limit)));
     return appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+}
+
+namespace {
+nlohmann::json read_manifest(const std::filesystem::path &path, std::filesystem::path &directory) {
+    return title_manifest(path, directory);
 }
 std::filesystem::path executable_of(const nlohmann::json &manifest,
                                     const std::filesystem::path &directory) {
@@ -77,7 +118,8 @@ std::filesystem::path title_save_directory(const std::filesystem::path &path) {
     // an executable is the same title as the package it is in
     if (manifest.is_null()) {
         const auto package = runtime::package_directory(path.parent_path());
-        if (std::filesystem::is_regular_file(package / manifest_name))
+        if (std::filesystem::is_regular_file(package / manifest_name) ||
+            std::filesystem::is_regular_file(package / config_name))
             manifest = read_manifest(package, directory);
     }
     const auto stem = path.stem().u8string();
@@ -183,7 +225,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
         }
         result.detail += std::string(listed ? (missing > listed ? ", ...)" : ")") : "") +
                          ", so the entry point was not called. The " + console +
-                         " runtime is not implemented. No guest code ran.";
+                         " runtime does not have them yet. No guest code ran.";
     } catch (const std::exception &e) {
         result.detail = e.what();
     }

@@ -36,6 +36,17 @@ void *Registry::find(std::string_view module, std::string_view symbol) const {
     return entry == entries_.end() ? nullptr : entry->second;
 }
 
+void Registry::add_api(std::string_view symbol, void *function) {
+    if (symbol.empty() || !function)
+        throw std::invalid_argument("Registry API entries need a symbol and a function");
+    if (!apis_.emplace(std::string(symbol), function).second)
+        throw std::invalid_argument("Duplicate registry API entry");
+}
+void *Registry::find_api(std::string_view symbol) const {
+    const auto entry = apis_.find(symbol);
+    return entry == apis_.end() ? nullptr : entry->second;
+}
+
 bool Registry::has(std::string_view module) const {
     const auto name = lower(module);
     const auto entry = entries_.lower_bound({name, std::string()});
@@ -60,6 +71,8 @@ detail::Binding detail::resolve(const Registry &registry, std::string_view modul
     const auto forwarded = registry.forwarded(module);
     if (forwarded.empty() && !host_policy_allows(module, symbol))
         return {nullptr, "missing"};
+    if (auto *const function = registry.find_api(symbol))
+        return {function, "own"};
     if (auto *const function = runtime_override(symbol))
         return {function, "own"};
     if (auto *const function = host_export(forwarded.empty() ? module : forwarded, symbol))
@@ -82,7 +95,8 @@ std::filesystem::path package_directory(const std::filesystem::path &directory) 
     std::error_code error;
     auto folder = directory;
     for (int depth = 0; depth < 8 && !folder.empty(); ++depth) {
-        if (std::filesystem::is_regular_file(folder / "AppxManifest.xml", error))
+        if (std::filesystem::is_regular_file(folder / "AppxManifest.xml", error) ||
+            std::filesystem::is_regular_file(folder / "MicrosoftGame.config", error))
             return folder;
         if (folder == folder.parent_path())
             break;
@@ -105,7 +119,7 @@ std::filesystem::path console_system_directory(const std::filesystem::path &exec
 
 bool console_system_module(std::string_view module) {
     const auto name = lower(module);
-    return name == "xg_x.dll" || name == "xg.dll";
+    return name == "xg_x.dll" || name == "xg.dll" || name == "xg_xs.dll";
 }
 
 std::filesystem::path detail::title_dll(const std::filesystem::path &directory,

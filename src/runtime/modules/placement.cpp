@@ -1,4 +1,4 @@
-#include "runtime/durango/d3d11x/placement.hpp"
+#include "runtime/modules/placement.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/xg.hpp"
 #include <algorithm>
@@ -13,7 +13,7 @@
 #include <vector>
 #include <windows.h>
 
-namespace xs::runtime::durango::d3d11x {
+namespace xs::runtime::modules {
 namespace {
 struct Placement {
     ID3D11Resource *resource; // one reference of ours, or null for a Direct3D 12 one
@@ -91,13 +91,13 @@ LONG CALLBACK written(EXCEPTION_POINTERS *exception) {
 }
 
 UINT row_bytes(UINT width, DXGI_FORMAT format) {
-    const auto size = modules::format_size(static_cast<std::uint32_t>(format));
+    const auto size = format_size(static_cast<std::uint32_t>(format));
     width = std::max(width, 1u);
     return size.blocks ? (width + 3) / 4 * size.bytes : width * size.bytes;
 }
 UINT rows(UINT height, DXGI_FORMAT format) {
     height = std::max(height, 1u);
-    return modules::format_size(static_cast<std::uint32_t>(format)).blocks ? (height + 3) / 4
+    return format_size(static_cast<std::uint32_t>(format)).blocks ? (height + 3) / 4
                                                                            : height;
 }
 // the subresources of a 2D texture in XG's linear layout: per array slice, mips in order
@@ -328,9 +328,9 @@ void upload_placements(ID3D11DeviceContext *context) {
     }
     dirty = std::move(kept);
 }
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xs::runtime::modules
 
-namespace xs::runtime::durango::d3d11x {
+namespace xs::runtime::modules {
 namespace {
 // XGComputeOptimalTileMode(dimension, format, width, height, array size, samples, bind flags,
 // misc flags), by its code in the console's xg_x.dll: the tiling the console gives a texture
@@ -485,4 +485,4 @@ std::vector<PlacementUpload> take_d3d12_uploads() {
     dirty = std::move(kept);
     return uploads;
 }
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xs::runtime::modules

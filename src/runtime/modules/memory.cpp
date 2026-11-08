@@ -1,5 +1,5 @@
 #include "runtime/common/runtime.hpp"
-#include "runtime/durango/runtime.hpp"
+#include "runtime/modules/memory.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -8,11 +8,12 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <vector>
 #include <windows.h>
 
 // Physical pages: a 16 GiB section mapped in 64 KiB views over placeholders.
-namespace xs::runtime::durango {
+namespace xs::runtime::modules {
 namespace {
 constexpr DWORD mem_large_pages = 0x20000000;
 constexpr DWORD mem_4mb_pages = 0x80000000;
@@ -352,37 +353,97 @@ HRESULT WINAPI d3d_free_graphics_memory(void *address) {
     return VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
 }
 
+// xmem.dll, the GDK's names for the same memory. XMemVirtualAlloc is VirtualAlloc with
+// attributes the host has no use for; the physical page functions take no process.
+void *WINAPI xmem_virtual_alloc(void *address, SIZE_T size, DWORD type, ULONGLONG, DWORD protect) {
+    return virtual_alloc(address, size, type, protect);
+}
+BOOL WINAPI xmem_allocate_physical_pages(ULONGLONG flags, ULONG_PTR *count, ULONG_PTR *pages) {
+    const auto sizes = static_cast<DWORD>(flags) & page_sizes;
+    return allocate_title_physical_pages(nullptr, sizes ? sizes : mem_large_pages, count, pages);
+}
+BOOL WINAPI xmem_free_physical_pages(ULONG_PTR count, ULONG_PTR *pages) {
+    return free_title_physical_pages(nullptr, count, pages);
+}
+BOOL WINAPI xmem_map_physical_pages(void *address, ULONG_PTR count, ULONG_PTR *pages) {
+    return map_title_physical_pages(address, count, mem_large_pages, PAGE_READWRITE, pages) !=
+           nullptr;
+}
+// XMEM_WORKING_SET_STATISTICS: what a title may use, from what the host has
+struct WorkingSet {
+    SIZE_T game_limit, game_used, tools_limit, tools_used;
+    UINT32 stack_used, kernel_pool_used;
+    SIZE_T gpu_limit, gpu_used, tools_gpu_limit, tools_gpu_used;
+};
+BOOL WINAPI xmem_working_set_statistics(DWORD, WorkingSet *statistics) {
+    if (!statistics) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    MEMORYSTATUSEX host{sizeof host};
+    GlobalMemoryStatusEx(&host);
+    const SIZE_T limit = std::min<ULONGLONG>(13ull << 30, host.ullTotalPhys);
+    const SIZE_T used = limit - std::min<ULONGLONG>(limit, host.ullAvailPhys);
+    *statistics = {limit, used, 0, 0, 0, 0, limit, used, 0, 0};
+    return TRUE;
+}
+BOOL WINAPI no() { return FALSE; }
+ULONGLONG WINAPI xmem_make_tag(UINT32 tag) { return ULONGLONG{tag} << 32; }
+
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
+const ApiFunction functions[] = {
+    {"VirtualAlloc", erase(virtual_alloc)},
+    {"VirtualAllocEx", erase(virtual_alloc_ex)},
+    {"VirtualFree", erase(virtual_free)},
+    {"VirtualFreeEx", erase(virtual_free_ex)},
+    {"VirtualProtect", erase(virtual_protect)},
+    {"AllocateTitlePhysicalPages", erase(allocate_title_physical_pages)},
+    {"FreeTitlePhysicalPages", erase(free_title_physical_pages)},
+    {"MapTitlePhysicalPages", erase(map_title_physical_pages)},
+    {"ToolingMemoryStatus", erase(tooling_memory_status)},
+    {"XMemAllocDefault", erase(xmem_alloc_default)},
+    {"XMemFreeDefault", erase(xmem_free_default)},
+    {"XMemAlloc", erase(xmem_alloc)},
+    {"XMemFree", erase(xmem_free)},
+    {"XMemSetAllocationHooks", erase(xmem_set_allocation_hooks)},
+    {"XMemCheckDefaultHeaps", erase(xmem_check_default_heaps)},
+    {"XMemSetAllocationHysteresis", erase(not_implemented)},
+    {"XMemGetAllocationHysteresis", erase(xmem_get_allocation_hysteresis)},
+    {"XMemPreallocateFreeSpace", erase(not_implemented)},
+    {"XMemGetAllocationStatistics", erase(not_implemented)},
+    {"XMemGetAuxiliaryTitleMemory", erase(xmem_get_auxiliary_title_memory)},
+    {"XMemReleaseAuxiliaryTitleMemory", erase(xmem_release_auxiliary_title_memory)}};
 } // namespace
 
-void install_memory(Registry &registry) {
-    const std::pair<const char *, void *> kernelx[] = {
-        {"VirtualAlloc", erase(virtual_alloc)},
-        {"VirtualAllocEx", erase(virtual_alloc_ex)},
-        {"VirtualFree", erase(virtual_free)},
-        {"VirtualFreeEx", erase(virtual_free_ex)},
-        {"VirtualProtect", erase(virtual_protect)},
-        {"AllocateTitlePhysicalPages", erase(allocate_title_physical_pages)},
-        {"FreeTitlePhysicalPages", erase(free_title_physical_pages)},
-        {"MapTitlePhysicalPages", erase(map_title_physical_pages)},
-        {"ToolingMemoryStatus", erase(tooling_memory_status)},
-        {"XMemAllocDefault", erase(xmem_alloc_default)},
-        {"XMemFreeDefault", erase(xmem_free_default)},
-        {"XMemAlloc", erase(xmem_alloc)},
-        {"XMemFree", erase(xmem_free)},
-        {"XMemSetAllocationHooks", erase(xmem_set_allocation_hooks)},
-        {"XMemCheckDefaultHeaps", erase(xmem_check_default_heaps)},
-        {"XMemSetAllocationHysteresis", erase(not_implemented)},
-        {"XMemGetAllocationHysteresis", erase(xmem_get_allocation_hysteresis)},
-        {"XMemPreallocateFreeSpace", erase(not_implemented)},
-        {"XMemGetAllocationStatistics", erase(not_implemented)},
-        {"XMemGetAuxiliaryTitleMemory", erase(xmem_get_auxiliary_title_memory)},
-        {"XMemReleaseAuxiliaryTitleMemory", erase(xmem_release_auxiliary_title_memory)}};
-    for (const auto &[name, function] : kernelx)
-        registry.add("kernelx.dll", name, function);
-    for (const auto *library : {"d3d11_x.dll", "d3d12_x.dll"}) {
-        registry.add(library, "D3DAllocateGraphicsMemory", erase(d3d_allocate_graphics_memory));
-        registry.add(library, "D3DFreeGraphicsMemory", erase(d3d_free_graphics_memory));
-    }
+std::span<const ApiFunction> memory_functions() { return functions; }
+HRESULT WINAPI allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 address, UINT flags,
+                                        void **result) {
+    return d3d_allocate_graphics_memory(size, alignment, address, flags, result);
 }
-} // namespace xs::runtime::durango
+HRESULT WINAPI free_graphics_memory(void *address) { return d3d_free_graphics_memory(address); }
+
+void install_xmem(Registry &registry) {
+    for (const auto &[name, function] : functions)
+        if (std::string_view(name).starts_with("XMem") &&
+            !std::string_view(name).ends_with("AuxiliaryTitleMemory") &&
+            std::string_view(name) != "XMemCheckDefaultHeaps")
+            registry.add("xmem.dll", name, function);
+    const std::pair<const char *, void *> more[] = {
+        {"XMemVirtualAlloc", erase(xmem_virtual_alloc)},
+        {"XMemAllocatePhysicalPages", erase(xmem_allocate_physical_pages)},
+        {"XMemFreePhysicalPages", erase(xmem_free_physical_pages)},
+        {"XMemMapPhysicalPages", erase(xmem_map_physical_pages)},
+        {"XMemGetWorkingSetStatistics", erase(xmem_working_set_statistics)},
+        {"XMemGetWin32HeapStatistics", erase(not_implemented)},
+        {"XMemIsToolsMemAvailable", erase(no)},
+        {"XMemMakeTag", erase(xmem_make_tag)}};
+    for (const auto &[name, function] : more)
+        registry.add("xmem.dll", name, function);
+    // a GDK title asks the API sets for memory in the console's page sizes
+    for (const auto *name : {"VirtualAlloc", "VirtualAllocEx", "VirtualFree", "VirtualFreeEx",
+                             "VirtualProtect"})
+        for (const auto &[known, function] : functions)
+            if (std::string_view(known) == name)
+                registry.add_api(name, function);
+}
+} // namespace xs::runtime::modules

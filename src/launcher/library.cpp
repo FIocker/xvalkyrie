@@ -1,6 +1,5 @@
 #include "launcher/library.hpp"
 #include "analysis/modules.hpp"
-#include "formats/appx/manifest.hpp"
 #include "formats/pe/inspect.hpp"
 #include "formats/xvd/identify.hpp"
 #include "host/files.hpp"
@@ -45,16 +44,29 @@ std::filesystem::path logo_asset(const std::filesystem::path &directory, const s
     }
     return {};
 }
+// the file that describes the title in `directory`, empty if it has none
+std::filesystem::path manifest_file(const std::filesystem::path &directory) {
+    std::error_code error;
+    for (const auto &folder : {directory, directory / "Mount"})
+        for (const auto *name : {"MicrosoftGame.config", "AppxManifest.xml"})
+            if (std::filesystem::is_regular_file(folder / name, error))
+                return folder / name;
+    return {};
+}
+bool manifest_name(const std::filesystem::path &path) {
+    auto name = path.filename().string();
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return name == "appxmanifest.xml" || name == "microsoftgame.config";
+}
 std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
     try {
         if (std::filesystem::is_directory(path)) {
-            auto manifest = path / "AppxManifest.xml";
-            if (!std::filesystem::is_regular_file(manifest))
-                manifest = path / "Mount" / "AppxManifest.xml";
-            if (!std::filesystem::is_regular_file(manifest))
+            const auto manifest = manifest_file(path);
+            if (manifest.empty())
                 return {};
-            const auto info =
-                appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+            std::filesystem::path folder;
+            const auto info = title_manifest(path, folder);
             const auto file = title_executable(path);
             if (!std::filesystem::is_regular_file(file) || std::filesystem::is_symlink(file))
                 return {};
@@ -105,7 +117,7 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
 }
 
 // ---- the cache: what a scan found, and the size and time of the files it was read from
-constexpr int cache_format = 1;
+constexpr int cache_format = 2;
 using Stamp = std::array<std::int64_t, 4>; // manifest or package size and time, executable's
 void stamp_file(const std::filesystem::path &path, std::int64_t *into) {
     std::error_code error;
@@ -122,10 +134,7 @@ Stamp stamp(const LibraryTitle &title) {
         return result;
     }
     std::error_code error;
-    auto manifest = title.path / "AppxManifest.xml";
-    if (!std::filesystem::is_regular_file(manifest, error))
-        manifest = title.path / "Mount" / "AppxManifest.xml";
-    stamp_file(manifest, result.data());
+    stamp_file(manifest_file(title.path), result.data());
     stamp_file(title.executable, result.data() + 2);
     return result;
 }
@@ -223,13 +232,11 @@ std::optional<LibraryTitle> discover_title(const std::filesystem::path &path) {
 std::filesystem::path title_splash(const std::filesystem::path &path) {
     try {
         const auto directory = std::filesystem::is_directory(path) ? path : path.parent_path();
-        auto manifest = directory / "AppxManifest.xml";
-        if (!std::filesystem::is_regular_file(manifest))
-            manifest = directory / "Mount" / "AppxManifest.xml";
-        if (!std::filesystem::is_regular_file(manifest))
+        const auto manifest = manifest_file(directory);
+        if (manifest.empty())
             return {};
-        const auto info =
-            appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+        std::filesystem::path folder;
+        const auto info = title_manifest(directory, folder);
         return info.at("splash").is_string()
                    ? logo_asset(manifest.parent_path(), info.at("splash").get<std::string>())
                    : std::filesystem::path{};
@@ -282,17 +289,15 @@ std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::pa
                 continue;
             }
             const auto path = it->path();
-            const auto candidate = it->is_directory(error) ||
-                                   path.filename() == "AppxManifest.xml" ||
-                                   path.filename() == "Mount";
+            const auto candidate =
+                it->is_directory(error) || manifest_name(path) || path.filename() == "Mount";
             if (error) {
                 error.clear();
                 continue;
             }
             // A title directory is a unit; do not index its Mount tree a second time.
-            const auto title_path = path.filename() == "AppxManifest.xml" ? path.parent_path()
-                                    : path.filename() == "Mount"          ? path.parent_path()
-                                                                          : path;
+            const auto title_path =
+                manifest_name(path) || path.filename() == "Mount" ? path.parent_path() : path;
             if (const auto title = inspect(title_path)) {
                 const auto canonical = std::filesystem::weakly_canonical(title_path, error);
                 if (!error && seen.insert(canonical).second)

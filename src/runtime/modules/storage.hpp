@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace xs::runtime::durango {
+namespace xs::runtime::modules {
 // One connected storage space (the machine's, or the user's) kept in host files:
 // `directory`/<container>/<blob>, every name escaped so that any text the title picks is a
 // valid Windows file name. Names are UTF-8. Nothing is kept in memory: every call
@@ -48,4 +48,4 @@ class SaveSpace {
 // The text in a file name of a SaveSpace, and back. Exposed for the tests.
 std::string escape_save_name(const std::string &name);
 std::optional<std::string> unescape_save_name(const std::string &file);
-} // namespace xs::runtime::durango
+} // namespace xs::runtime::modules

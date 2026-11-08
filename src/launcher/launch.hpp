@@ -1,6 +1,7 @@
 #pragma once
 #include "core/target.hpp"
 #include <filesystem>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <string>
 
@@ -20,8 +21,14 @@ struct LaunchResult {
     std::string detail;
     std::optional<Target> target = {}; // console the imports point to, if any
 };
-// `path` is an executable, an unpacked title directory or its AppxManifest.xml.
+// `path` is an executable, an unpacked title directory, or the MicrosoftGame.config or
+// AppxManifest.xml of one.
 LaunchResult launch_title(const std::filesystem::path &path);
+// What the title `path` stands for says about itself (name, display_name, version, logo,
+// splash, applications), from its MicrosoftGame.config or its AppxManifest.xml, looked up in
+// the directory and in its Mount subdirectory. `directory` is set to where it was found.
+// Null if `path` is a file that is neither.
+nlohmann::json title_manifest(const std::filesystem::path &path, std::filesystem::path &directory);
 // The executable `path` stands for: the first application of the manifest for a title
 // directory (looked up in it and in its Mount subdirectory), `path` itself otherwise.
 std::filesystem::path title_executable(const std::filesystem::path &path);

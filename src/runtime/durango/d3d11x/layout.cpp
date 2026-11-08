@@ -3,7 +3,8 @@
 #include "backends/surface/surface.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
-#include "runtime/durango/d3d11x/placement.hpp"
+#include "runtime/modules/d3d12x.hpp"
+#include "runtime/modules/placement.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include <atomic>
@@ -26,6 +27,9 @@
 // Where each method is. Host slots are the desktop vtable indices of d3d11_1.h; the
 // console positions come from how titles call them.
 namespace xs::runtime::durango::d3d11x {
+namespace d3d12x = modules::d3d12x;
+using modules::placement_data, modules::readable_memory, modules::track_placement,
+    modules::upload_placements;
 void *unwrap(void *object);
 namespace {
 constexpr Fix in(std::uint8_t argument) { return {Fix::in, argument}; }
@@ -508,68 +512,6 @@ void presented() {
         }
     }
 }
-// XS_D3D_PROBE: the average colour of a picture, to tell a title that draws nothing from a
-// picture that does not reach the window, and the picture itself as a 32-bit BMP in the
-// temporary folder
-void report_picture(const std::uint8_t *data, UINT pitch, UINT width, UINT height,
-                    DXGI_FORMAT format, const char *what) {
-    const bool rgba = format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-                      format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                      format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
-    const bool ten_bits =
-        format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R10G10B10A2_TYPELESS;
-    // one pixel as blue, green, red, alpha
-    const auto pixel = [&](UINT x, UINT y, std::uint8_t *out) {
-        const auto *in = data + std::size_t{y} * pitch + std::size_t{x} * 4;
-        if (ten_bits) {
-            std::uint32_t value;
-            std::memcpy(&value, in, 4);
-            out[2] = static_cast<std::uint8_t>((value & 0x3ff) >> 2);
-            out[1] = static_cast<std::uint8_t>(((value >> 10) & 0x3ff) >> 2);
-            out[0] = static_cast<std::uint8_t>(((value >> 20) & 0x3ff) >> 2);
-            out[3] = static_cast<std::uint8_t>((value >> 30) * 85);
-        } else {
-            std::memcpy(out, in, 4);
-            if (rgba)
-                std::swap(out[0], out[2]);
-        }
-    };
-    double sum[4]{};
-    std::uint8_t bgra[4];
-    for (UINT y = 0; y < height; y += 8)
-        for (UINT x = 0; x < width; x += 8) {
-            pixel(x, y, bgra);
-            sum[0] += bgra[2], sum[1] += bgra[1], sum[2] += bgra[0], sum[3] += bgra[3];
-        }
-    if (const auto *folder = std::getenv("TEMP"); folder && format != DXGI_FORMAT_D32_FLOAT)
-        if (auto *file =
-                std::fopen((std::string(folder) + "\\xs_" + what + ".bmp").c_str(), "wb")) {
-            const std::uint32_t pixels = width * height * 4;
-            std::uint8_t header[54]{'B', 'M'};
-            const std::uint32_t size = 54 + pixels, offset = 54, info = 40,
-                                planes_bits = 1 | (32 << 16);
-            const std::int32_t signed_width = width,
-                               signed_height = -static_cast<std::int32_t>(height);
-            std::memcpy(header + 2, &size, 4);
-            std::memcpy(header + 10, &offset, 4);
-            std::memcpy(header + 14, &info, 4);
-            std::memcpy(header + 18, &signed_width, 4);
-            std::memcpy(header + 22, &signed_height, 4);
-            std::memcpy(header + 26, &planes_bits, 4);
-            std::fwrite(header, 1, sizeof header, file);
-            std::vector<std::uint8_t> row(std::size_t{width} * 4);
-            for (UINT y = 0; y < height; ++y) {
-                for (UINT x = 0; x < width; ++x)
-                    pixel(x, y, row.data() + std::size_t{x} * 4);
-                std::fwrite(row.data(), 1, row.size(), file);
-            }
-            std::fclose(file);
-        }
-    const double count = (width / 8.0) * (height / 8.0);
-    std::fprintf(stderr, "[Runtime] %s %ux%u format %u average %.1f %.1f %.1f %.1f\n", what, width,
-                 height, static_cast<unsigned>(format), sum[0] / count, sum[1] / count,
-                 sum[2] / count, sum[3] / count);
-}
 void average(ID3D11Texture2D *texture, const char *what) {
     ID3D11Device *device = nullptr;
     ID3D11DeviceContext *context = nullptr;
@@ -587,7 +529,7 @@ void average(ID3D11Texture2D *texture, const char *what) {
     if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging))) {
         context->CopySubresourceRegion(staging, 0, 0, 0, 0, texture, 0, nullptr);
         if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
-            report_picture(static_cast<const std::uint8_t *>(mapped.pData), mapped.RowPitch,
+            d3d12x::report_picture(static_cast<const std::uint8_t *>(mapped.pData), mapped.RowPitch,
                            desc.Width, desc.Height, desc.Format, what);
             context->Unmap(staging, 0);
         }
@@ -625,20 +567,20 @@ void probe(IDXGISwapChain *swap_chain) {
         std::vector<std::uint8_t> data;
         UINT pitch = 0, width = 0, height = 0;
         DXGI_FORMAT format{};
-        if (read_back_d3d12(resource, data, pitch, width, height, format))
-            report_picture(
+        if (d3d12x::read_back(resource, data, pitch, width, height, format))
+            d3d12x::report_picture(
                 data.data(), pitch, width, height, format,
-                ("back buffer (" + std::to_string(draws_into_target(resource)) + " draws)")
+                ("back buffer (" + std::to_string(d3d12x::draws_into_target(resource)) + " draws)")
                     .c_str());
         int index = 0;
-        for (auto *const target : bound_render_targets())
-            if (read_back_d3d12(target, data, pitch, width, height, format,
+        for (auto *const target : d3d12x::bound_render_targets())
+            if (d3d12x::read_back(target, data, pitch, width, height, format,
                                 D3D12_RESOURCE_STATE_RENDER_TARGET))
-                report_picture(data.data(), pitch, width, height, format,
+                d3d12x::report_picture(data.data(), pitch, width, height, format,
                                ("render target " + std::to_string(index++) + " (" +
-                                std::to_string(draws_into_target(target)) + " draws)")
+                                std::to_string(d3d12x::draws_into_target(target)) + " draws)")
                                    .c_str());
-        report_d3d12_failure();
+        d3d12x::report_failure();
         resource->Release();
     }
     third->Release();
@@ -655,7 +597,7 @@ HRESULT console_present_result(HRESULT result, UINT interval) {
         if (!reported.exchange(true)) {
             std::fprintf(stderr, "[Runtime] Present failed on the host: 0x%08lx\n",
                          static_cast<unsigned long>(result));
-            report_d3d12_failure();
+            d3d12x::report_failure();
         }
         return result;
     }
@@ -696,7 +638,7 @@ HRESULT STDMETHODCALLTYPE get_buffer(void *self, UINT index, REFIID iid, void **
     const auto result =
         static_cast<IDXGISwapChain *>(unwrap(self))->GetBuffer(d3d12 ? index : 0, iid, surface);
     if (SUCCEEDED(result) && surface && d3d12)
-        console_d3d12_resource(*surface);
+        d3d12x::console_d3d12_resource(*surface);
     if (SUCCEEDED(result) && surface &&
         (iid == __uuidof(ID3D11Texture2D) || iid == __uuidof(ID3D11Resource)))
         *surface = wrap(*surface, Kind::texture2d);

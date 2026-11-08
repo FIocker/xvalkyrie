@@ -1,6 +1,7 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "runtime/durango/runtime.hpp"
+#include "runtime/modules/memory.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -37,7 +38,7 @@ std::uint32_t apu_address(std::uintptr_t address, std::uint32_t size) {
     return apu;
 }
 void *apu_memory(std::size_t size, std::uint64_t alignment) {
-    auto *const address = allocate_aligned(size, alignment, nullptr);
+    auto *const address = modules::allocate_aligned(size, alignment, nullptr);
     if (address) {
         const std::lock_guard lock(apu_mutex);
         apu_address(reinterpret_cast<std::uintptr_t>(address), static_cast<std::uint32_t>(size));

@@ -2,7 +2,6 @@
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include <array>
 #include <cstdint>
-#include <d3d12.h>
 #include <vector>
 
 namespace xs::runtime::durango::d3d11x {
@@ -51,19 +50,4 @@ void first_development_kits(bool yes);
 bool first_development_kits();
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
-// a Direct3D 12 resource handed to the title: the console's methods where they differ
-void console_d3d12_resource(void *resource);
-// why the host's Direct3D 12 device stopped, and what its debug layer said, to the log
-void report_d3d12_failure();
-// a Direct3D 12 texture's first subresource, copied to the CPU through the title's direct
-// queue (XS_D3D_PROBE)
-bool read_back_d3d12(ID3D12Resource *resource, std::vector<std::uint8_t> &data, unsigned &pitch,
-                     unsigned &width, unsigned &height, DXGI_FORMAT &format,
-                     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT);
-// the render target the title bound last, for XS_D3D_PROBE
-ID3D12Resource *last_render_target();
-// the first render target of each size and format the title bound
-std::vector<ID3D12Resource *> bound_render_targets();
-// how many draws went into a render target so far
-std::uint64_t draws_into_target(ID3D12Resource *target);
 } // namespace xs::runtime::durango::d3d11x

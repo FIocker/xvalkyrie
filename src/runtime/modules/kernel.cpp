@@ -1,0 +1,368 @@
+#include "runtime/modules/kernel.hpp"
+#include "runtime/common/runtime.hpp"
+#include "runtime/modules/placement.hpp"
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <intrin.h>
+#include <shlwapi.h>
+#include <string>
+#include <string_view>
+#include <windows.h>
+
+// The Win32 functions a console answers differently from the host: libraries that are ours
+// or the title's, the console's drives, what a title writes for a debugger, and where it
+// puts its threads. ERA titles import them from kernelx.dll, GDK titles from API sets.
+namespace xs::runtime::modules {
+namespace {
+// ours and the title's first, then the host's
+HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
+    auto module = static_cast<HMODULE>(detail::guest_library(name));
+    if (!module)
+        module = LoadLibraryExW(name, file, flags);
+    const auto error = GetLastError();
+    std::fprintf(stderr, "[Runtime] LoadLibraryEx(%ls) -> %p\n", name ? name : L"(null)",
+                 static_cast<void *>(module));
+    std::fflush(stderr);
+    SetLastError(error);
+    return module;
+}
+HMODULE WINAPI load_library_w(const wchar_t *name) { return load_library(name, nullptr, 0); }
+HMODULE WINAPI load_packaged_library(const wchar_t *name, DWORD) {
+    return load_library(name, nullptr, 0);
+}
+HMODULE WINAPI load_library_ex_a(const char *name, HANDLE file, DWORD flags) {
+    if (!name)
+        return load_library(nullptr, file, flags);
+    const auto size = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(std::max(size, 1)), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, name, -1, wide.data(), size);
+    return load_library(wide.c_str(), file, flags);
+}
+HMODULE WINAPI load_library_a(const char *name) { return load_library_ex_a(name, nullptr, 0); }
+// reads into memory placement resources live in
+BOOL WINAPI read_file(HANDLE file, void *buffer, DWORD bytes, DWORD *read, OVERLAPPED *overlapped) {
+    prepare_title_write(buffer, bytes);
+    return ReadFile(file, buffer, bytes, read, overlapped);
+}
+BOOL WINAPI read_file_ex(HANDLE file, void *buffer, DWORD bytes, OVERLAPPED *overlapped,
+                         LPOVERLAPPED_COMPLETION_ROUTINE completion) {
+    prepare_title_write(buffer, bytes);
+    return ReadFileEx(file, buffer, bytes, overlapped, completion);
+}
+// Music is streamed from one file per track, so the files a title opens tell which track it
+// starts and when. Worth a line each: there are few of them.
+void note_music(const wchar_t *name, HANDLE file) {
+    if (!name || !StrStrIW(name, L".binka"))
+        return;
+    const auto error = GetLastError();
+    std::fprintf(stderr, "[Runtime] music: opens %ls%s\n", name,
+                 file == INVALID_HANDLE_VALUE ? " (failed)" : "");
+    std::fflush(stderr);
+    SetLastError(error);
+}
+// The console's drives: G:\ (and the GAME:\ device name) is the title's package, T:\ its
+// temporary storage, kept with its saves. Other paths are the host's.
+std::wstring console_path(const wchar_t *name) {
+    if (!name)
+        return {};
+    const std::wstring_view path(name);
+    const auto drive = [&](std::wstring_view prefix) {
+        return path.size() > prefix.size() &&
+               CompareStringOrdinal(path.data(), static_cast<int>(prefix.size()), prefix.data(),
+                                    static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL &&
+               (path[prefix.size()] == L'\\' || path[prefix.size()] == L'/');
+    };
+    std::error_code error;
+    if (drive(L"G:") || drive(L"GAME:")) {
+        const auto rest = path.substr(path.find(L':') + 2);
+        return (package_directory(std::filesystem::current_path(error)) / rest).wstring();
+    }
+    if (drive(L"T:")) {
+        const auto folder = save_directory() / "Temp";
+        std::filesystem::create_directories(folder, error);
+        return (folder / path.substr(3)).wstring();
+    }
+    // from the root of the current drive, which is the package's on the console
+    if (path.size() > 1 && (path[0] == L'\\' || path[0] == L'/') && path[1] != L'\\' &&
+        path[1] != L'/')
+        return (package_directory(std::filesystem::current_path(error)) / path.substr(1)).wstring();
+    return std::wstring(path);
+}
+// the same for the ANSI functions, whose results stay in the title's code page
+std::string console_path(const char *name) {
+    if (!name)
+        return {};
+    const auto size = MultiByteToWideChar(CP_ACP, 0, name, -1, nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(std::max(size, 1)), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, name, -1, wide.data(), size);
+    const auto path = console_path(wide.c_str());
+    const auto bytes =
+        WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string narrow(static_cast<std::size_t>(std::max(bytes, 1)), '\0');
+    WideCharToMultiByte(CP_ACP, 0, path.c_str(), -1, narrow.data(), bytes, nullptr, nullptr);
+    narrow.resize(std::strlen(narrow.c_str()));
+    return narrow;
+}
+
+// XS_FILE_TRACE: every file the title looks for and does not find, to see what content it
+// expects where
+void note_missing(const char *call, const wchar_t *name, bool failed) {
+    static const bool enabled = std::getenv("XS_FILE_TRACE") != nullptr;
+    if (!enabled || !failed)
+        return;
+    const auto error = GetLastError();
+    std::fprintf(stderr, "[Runtime] %s(%ls): error %lu\n", call, name ? name : L"(null)", error);
+    std::fflush(stderr);
+    SetLastError(error);
+}
+HANDLE WINAPI create_file_w(const wchar_t *name, DWORD access, DWORD share,
+                            SECURITY_ATTRIBUTES *security, DWORD creation, DWORD flags,
+                            HANDLE model) {
+    const auto file =
+        CreateFileW(console_path(name).c_str(), access, share, security, creation, flags, model);
+    note_music(name, file);
+    note_missing("CreateFileW", name, file == INVALID_HANDLE_VALUE);
+    return file;
+}
+HANDLE WINAPI create_file2(const wchar_t *name, DWORD access, DWORD share, DWORD creation,
+                           CREATEFILE2_EXTENDED_PARAMETERS *parameters) {
+    const auto file = CreateFile2(console_path(name).c_str(), access, share, creation, parameters);
+    note_music(name, file);
+    note_missing("CreateFile2", name, file == INVALID_HANDLE_VALUE);
+    return file;
+}
+BOOL WINAPI get_file_attributes_ex_w(const wchar_t *name, GET_FILEEX_INFO_LEVELS level,
+                                     void *information) {
+    const auto found = GetFileAttributesExW(console_path(name).c_str(), level, information);
+    note_missing("GetFileAttributesExW", name, !found);
+    return found;
+}
+DWORD WINAPI get_file_attributes_w(const wchar_t *name) {
+    const auto attributes = GetFileAttributesW(console_path(name).c_str());
+    note_missing("GetFileAttributesW", name, attributes == INVALID_FILE_ATTRIBUTES);
+    return attributes;
+}
+HANDLE WINAPI find_first_file_ex_w(const wchar_t *name, FINDEX_INFO_LEVELS level, void *data,
+                                   FINDEX_SEARCH_OPS search, void *filter, DWORD flags) {
+    const auto find =
+        FindFirstFileExW(console_path(name).c_str(), level, data, search, filter, flags);
+    note_missing("FindFirstFileExW", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+void note_missing(const char *call, const char *name, bool failed) {
+    const auto error = GetLastError();
+    const std::wstring wide(name ? name : "", name ? name + std::strlen(name) : "");
+    SetLastError(error);
+    note_missing(call, wide.c_str(), failed);
+}
+HANDLE WINAPI create_file_a(const char *name, DWORD access, DWORD share,
+                            SECURITY_ATTRIBUTES *security, DWORD creation, DWORD flags,
+                            HANDLE model) {
+    const auto file =
+        CreateFileA(console_path(name).c_str(), access, share, security, creation, flags, model);
+    note_missing("CreateFileA", name, file == INVALID_HANDLE_VALUE);
+    return file;
+}
+BOOL WINAPI get_file_attributes_ex_a(const char *name, GET_FILEEX_INFO_LEVELS level,
+                                     void *information) {
+    const auto found = GetFileAttributesExA(console_path(name).c_str(), level, information);
+    note_missing("GetFileAttributesExA", name, !found);
+    return found;
+}
+DWORD WINAPI get_file_attributes_a(const char *name) {
+    const auto attributes = GetFileAttributesA(console_path(name).c_str());
+    note_missing("GetFileAttributesA", name, attributes == INVALID_FILE_ATTRIBUTES);
+    return attributes;
+}
+HANDLE WINAPI find_first_file_ex_a(const char *name, FINDEX_INFO_LEVELS level, void *data,
+                                   FINDEX_SEARCH_OPS search, void *filter, DWORD flags) {
+    const auto find =
+        FindFirstFileExA(console_path(name).c_str(), level, data, search, filter, flags);
+    note_missing("FindFirstFileExA", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+HANDLE WINAPI find_first_file_a(const char *name, WIN32_FIND_DATAA *data) {
+    const auto find = FindFirstFileA(console_path(name).c_str(), data);
+    note_missing("FindFirstFileA", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
+BOOL WINAPI create_directory_w(const wchar_t *name, SECURITY_ATTRIBUTES *security) {
+    return CreateDirectoryW(console_path(name).c_str(), security);
+}
+BOOL WINAPI remove_directory_w(const wchar_t *name) {
+    return RemoveDirectoryW(console_path(name).c_str());
+}
+BOOL WINAPI delete_file_w(const wchar_t *name) { return DeleteFileW(console_path(name).c_str()); }
+BOOL WINAPI move_file_ex_w(const wchar_t *from, const wchar_t *to, DWORD flags) {
+    return MoveFileExW(console_path(from).c_str(), to ? console_path(to).c_str() : nullptr, flags);
+}
+BOOL WINAPI set_file_attributes_w(const wchar_t *name, DWORD attributes) {
+    return SetFileAttributesW(console_path(name).c_str(), attributes);
+}
+// What a title writes for a debugger: its own log, which is what says why it gives up.
+// Lines go to stderr as they come, without the trailing newline titles usually add.
+void WINAPI output_debug_string_w(const wchar_t *text) {
+    if (!text)
+        return;
+    std::wstring line = text;
+    while (!line.empty() && (line.back() == L'\n' || line.back() == L'\r'))
+        line.pop_back();
+    std::fprintf(stderr, "[Title] %ls\n", line.c_str());
+    std::fflush(stderr);
+}
+void WINAPI output_debug_string_a(const char *text) {
+    if (!text)
+        return;
+    std::string line = text;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+        line.pop_back();
+    std::fprintf(stderr, "[Title] %s\n", line.c_str());
+    std::fflush(stderr);
+}
+BOOL WINAPI set_threadpool_affinity_mask(PTP_POOL, DWORD_PTR) { return TRUE; }
+// XS_THREAD_TRACE: where the title puts its threads
+DWORD_PTR WINAPI set_thread_affinity_mask(HANDLE thread, DWORD_PTR mask) {
+    auto previous = SetThreadAffinityMask(thread, mask);
+    // processors the console has and the host has not: the thread stays where it is
+    if (DWORD_PTR process = 0, system = 0;
+        !previous && GetProcessAffinityMask(GetCurrentProcess(), &process, &system))
+        previous = process;
+    if (std::getenv("XS_THREAD_TRACE")) {
+        std::fprintf(stderr, "[Runtime] SetThreadAffinityMask(%lu, 0x%llx) -> 0x%llx from %s\n",
+                     GetThreadId(thread), static_cast<unsigned long long>(mask),
+                     static_cast<unsigned long long>(previous),
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    return previous;
+}
+DWORD WINAPI get_current_processor_number() {
+    const auto number = GetCurrentProcessorNumber();
+    if (static std::atomic<int> shown{0}; std::getenv("XS_THREAD_TRACE") && shown++ < 12) {
+        std::fprintf(stderr, "[Runtime] GetCurrentProcessorNumber -> %lu from %s\n", number,
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    return number;
+}
+void WINAPI get_system_info(SYSTEM_INFO *info) {
+    GetSystemInfo(info);
+    if (std::getenv("XS_THREAD_TRACE")) {
+        std::fprintf(stderr, "[Runtime] GetSystemInfo: %lu processors, from %s\n",
+                     info->dwNumberOfProcessors,
+                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+}
+FARPROC WINAPI get_proc_address_of(HMODULE module, const char *name) {
+    auto function = reinterpret_cast<FARPROC>(detail::guest_symbol(module, name));
+    if (!function)
+        function = GetProcAddress(module, name);
+    const auto error = GetLastError();
+    const bool ordinal = reinterpret_cast<std::uintptr_t>(name) < 0x10000;
+    std::fprintf(stderr, "[Runtime] GetProcAddress(%s%s) -> %p\n", ordinal ? "#" : name,
+                 ordinal ? std::to_string(reinterpret_cast<std::uintptr_t>(name)).c_str() : "",
+                 reinterpret_cast<void *>(function));
+    std::fflush(stderr);
+    SetLastError(error);
+    return function;
+}
+// a library of ours has nothing to free, and the host knows nothing of the title's
+BOOL WINAPI free_library(HMODULE module) {
+    if (!detail::in_title(module))
+        FreeLibrary(module);
+    return TRUE;
+}
+// Which console this is. The GDK's XSystemGetDeviceType reads it from the registry, the
+// ConsoleMode value of this key: 0x50 is an Xbox One X, 0x64 an Xbox Series X. Without the
+// key the title is told it runs on a PC, which a console build has no case for.
+Target console = Target::durango;
+const HKEY console_key = reinterpret_cast<HKEY>(static_cast<std::uintptr_t>(0x58530001));
+constexpr wchar_t oem_key[] = L"Software\\Microsoft\\Windows NT\\CurrentVersion\\OEM";
+LSTATUS WINAPI reg_open_key_ex_w(HKEY root, const wchar_t *name, DWORD options, REGSAM access,
+                                 HKEY *key) {
+    if (root == HKEY_LOCAL_MACHINE && name && key && !_wcsicmp(name, oem_key)) {
+        *key = console_key;
+        return ERROR_SUCCESS;
+    }
+    return RegOpenKeyExW(root, name, options, access, key);
+}
+LSTATUS WINAPI reg_open_key_w(HKEY root, const wchar_t *name, HKEY *key) {
+    return reg_open_key_ex_w(root, name, 0, KEY_READ, key);
+}
+LSTATUS WINAPI reg_query_value_ex_w(HKEY key, const wchar_t *name, DWORD *reserved, DWORD *type,
+                                    BYTE *data, DWORD *size) {
+    if (key != console_key)
+        return RegQueryValueExW(key, name, reserved, type, data, size);
+    if (!name || _wcsicmp(name, L"ConsoleMode"))
+        return ERROR_FILE_NOT_FOUND;
+    const DWORD mode = console == Target::scarlett ? 0x64 : 0x50;
+    if (type)
+        *type = REG_DWORD;
+    const bool fits = !data || (size && *size >= sizeof mode);
+    if (data && fits)
+        std::memcpy(data, &mode, sizeof mode);
+    if (size)
+        *size = sizeof mode;
+    return fits ? ERROR_SUCCESS : ERROR_MORE_DATA;
+}
+LSTATUS WINAPI reg_close_key(HKEY key) {
+    return key == console_key ? ERROR_SUCCESS : RegCloseKey(key);
+}
+template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
+const ApiFunction functions[] = {
+    {"OutputDebugStringW", erase(output_debug_string_w)},
+    {"OutputDebugStringA", erase(output_debug_string_a)},
+    {"SetThreadpoolAffinityMask", erase(set_threadpool_affinity_mask)},
+    {"CreateFileW", erase(create_file_w)},
+    {"CreateFile2", erase(create_file2)},
+    {"GetFileAttributesExW", erase(get_file_attributes_ex_w)},
+    {"GetFileAttributesW", erase(get_file_attributes_w)},
+    {"FindFirstFileExW", erase(find_first_file_ex_w)},
+    {"SetThreadAffinityMask", erase(set_thread_affinity_mask)},
+    {"GetCurrentProcessorNumber", erase(get_current_processor_number)},
+    {"GetSystemInfo", erase(get_system_info)},
+    {"CreateFileA", erase(create_file_a)},
+    {"GetFileAttributesExA", erase(get_file_attributes_ex_a)},
+    {"GetFileAttributesA", erase(get_file_attributes_a)},
+    {"FindFirstFileExA", erase(find_first_file_ex_a)},
+    {"FindFirstFileA", erase(find_first_file_a)},
+    {"CreateDirectoryW", erase(create_directory_w)},
+    {"RemoveDirectoryW", erase(remove_directory_w)},
+    {"DeleteFileW", erase(delete_file_w)},
+    {"MoveFileExW", erase(move_file_ex_w)},
+    {"SetFileAttributesW", erase(set_file_attributes_w)},
+    {"LoadLibraryExW", erase(load_library)},
+    {"LoadLibraryW", erase(load_library_w)},
+    {"LoadLibraryExA", erase(load_library_ex_a)},
+    {"LoadLibraryA", erase(load_library_a)},
+    {"LoadPackagedLibrary", erase(load_packaged_library)},
+    {"GetProcAddress", erase(get_proc_address_of)},
+    {"FreeLibrary", erase(free_library)},
+    {"ReadFile", erase(read_file)},
+    {"ReadFileEx", erase(read_file_ex)}};
+} // namespace
+
+std::span<const ApiFunction> kernel_functions() { return functions; }
+FARPROC get_proc_address(HMODULE module, const char *name) {
+    return get_proc_address_of(module, name);
+}
+void install_kernel(Registry &registry, Target target) {
+    console = target;
+    for (const auto &[name, function] : functions)
+        registry.add_api(name, function);
+    registry.add_api("RegOpenKeyExW", erase(reg_open_key_ex_w));
+    registry.add_api("RegOpenKeyW", erase(reg_open_key_w));
+    registry.add_api("RegQueryValueExW", erase(reg_query_value_ex_w));
+    registry.add_api("RegCloseKey", erase(reg_close_key));
+    // system DLLs the libraries a GDK title ships with (its HTTP client, the C++ runtime)
+    // use more of than the list of functions a title itself may import
+    for (const auto *module : {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll"})
+        registry.forward(module, module);
+}
+} // namespace xs::runtime::modules

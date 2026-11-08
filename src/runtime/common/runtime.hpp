@@ -19,6 +19,10 @@ class Registry {
   public:
     void add(std::string_view module, std::string_view symbol, void *function);
     void *find(std::string_view module, std::string_view symbol) const;
+    // A function of the host's API the console answers differently, whichever API set or
+    // system DLL the title imports it from. A module's own entry wins over it.
+    void add_api(std::string_view symbol, void *function);
+    void *find_api(std::string_view symbol) const;
     bool has(std::string_view module) const;
     // Lets every import of `module` that has no entry here go to the export of
     // `host_module` with the same name or ordinal, whatever the host policy says.
@@ -29,6 +33,7 @@ class Registry {
   private:
     std::map<std::pair<std::string, std::string>, void *> entries_;
     std::map<std::string, std::string> forwards_;
+    std::map<std::string, void *, std::less<>> apis_;
 };
 
 // only true on Windows x64

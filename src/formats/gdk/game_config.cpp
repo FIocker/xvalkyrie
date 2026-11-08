@@ -69,8 +69,25 @@ nlohmann::json inspect_config(std::span<const std::uint8_t> bytes) {
     }
     if (entries.empty())
         throw std::runtime_error("Game config has no executable entries");
+    const auto identity = root.child("Identity");
+    const auto visuals = root.child("ShellVisuals");
+    const auto text = [&](const char *name) {
+        const auto node = root.child(name);
+        return node ? json(node.text().get()) : json(nullptr);
+    };
     return {{"evidence_kind", "config_declaration"},
             {"config_version", attribute(root, "configVersion")},
+            {"name", attribute(identity, "Name")},
+            {"publisher", attribute(identity, "Publisher")},
+            {"version", attribute(identity, "Version")},
+            {"display_name", attribute(visuals, "DefaultDisplayName")},
+            {"publisher_display_name", attribute(visuals, "PublisherDisplayName")},
+            {"logo", attribute(visuals, "Square150x150Logo")},
+            {"store_logo", attribute(visuals, "StoreLogo")},
+            {"large_logo", attribute(visuals, "Square480x480Logo")},
+            {"splash_screen", attribute(visuals, "SplashScreenImage")},
+            {"title_id", text("TitleId")},
+            {"store_id", text("StoreId")},
             {"executables", std::move(entries)},
             {"console_target_verified", false}};
 }

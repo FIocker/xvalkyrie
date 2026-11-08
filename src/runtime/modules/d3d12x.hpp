@@ -1,0 +1,42 @@
+#pragma once
+#include "core/target.hpp"
+#include <cstdint>
+#include <d3d12.h>
+#include <dxgi.h>
+#include <string_view>
+#include <vector>
+
+// Direct3D 12 as both consoles have it (d3d12_x.dll on Xbox One, d3d12_xs.dll on Xbox Series
+// X|S) on the host's Direct3D 12.
+namespace xs::runtime {
+class Registry;
+namespace modules::d3d12x {
+// `module` is the name the console gives the DLL
+void install(Registry &registry, std::string_view module, Target target);
+// The console's device is also its DXGI device, whose adapter leads to a factory. A console
+// whose titles make swap chains through that factory wraps the host's adapter here.
+using AdapterWrapper = HRESULT (*)(IDXGIAdapter *host, IDXGIAdapter **adapter);
+void set_adapter_wrapper(AdapterWrapper wrapper);
+// the title's first direct queue, null before it has one
+ID3D12CommandQueue *direct_queue();
+// a Direct3D 12 resource handed to the title: the console's methods where they differ
+void console_d3d12_resource(void *resource);
+// why the host's device stopped, and what its debug layer said, to the log
+void report_failure();
+// a texture's first subresource, copied to the CPU through the title's direct queue
+// (XS_D3D_PROBE)
+bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data, unsigned &pitch,
+               unsigned &width, unsigned &height, DXGI_FORMAT &format,
+               D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT);
+// the render target the title bound last, for XS_D3D_PROBE
+ID3D12Resource *last_render_target();
+// the first render target of each size and format the title bound
+std::vector<ID3D12Resource *> bound_render_targets();
+// how many draws went into a render target so far
+std::uint64_t draws_into_target(ID3D12Resource *target);
+// XS_D3D_PROBE: the average colour of a picture to the log, and the picture itself as a
+// 32-bit BMP named after `what` in the temporary folder
+void report_picture(const std::uint8_t *data, unsigned pitch, unsigned width, unsigned height,
+                    DXGI_FORMAT format, const char *what);
+} // namespace modules::d3d12x
+} // namespace xs::runtime

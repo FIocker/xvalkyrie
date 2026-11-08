@@ -1,5 +1,11 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/gameinput.hpp"
+#include "runtime/modules/gameruntime.hpp"
+#include "runtime/modules/kernel.hpp"
+#include "runtime/modules/memory.hpp"
+#include "runtime/modules/system.hpp"
+#include "runtime/modules/window.hpp"
 #include "runtime/modules/xg.hpp"
 #include <cstdint>
 #include <initializer_list>
@@ -19,6 +25,14 @@ void install(Registry &registry) {
     // the shader compiler is the desktop one
     registry.forward("d3dcompiler_47.dll", "d3dcompiler_47.dll");
     install_kernelx(registry);
+    // what an Xbox One GDK title has in common with a Series one
+    modules::install_kernel(registry, Target::durango);
+    modules::install_window(registry);
+    modules::install_gameruntime(registry);
+    modules::install_gameinput(registry);
+    modules::install_xmem(registry);
+    modules::install_xaudio2(registry);
+    modules::install_shader_compiler(registry, "dxcompiler_x.dll");
     install_system(registry);
     install_acphal(registry);
     modules::install_xg(registry, "xg_x.dll");

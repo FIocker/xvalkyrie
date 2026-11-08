@@ -1,2 +1,2 @@
 add_library(xs_runtime_scarlett runtime.cpp)
-target_link_libraries(xs_runtime_scarlett PRIVATE xs_options xs_runtime_common)
+target_link_libraries(xs_runtime_scarlett PRIVATE xs_options xs_runtime_common xs_runtime_modules)
