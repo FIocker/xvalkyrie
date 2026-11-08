@@ -165,7 +165,7 @@ bool title_called_slot(const void *address, std::size_t index) {
     // first, with `mov reg, [reg + Index * 8]` a few instructions back. Titles built against
     // the GDK's header call this way.
     if (code[-2] == 0xff && (code[-1] & 0xf8) == 0xd0) {
-        for (const auto *at = code - 3; at > code - 64; --at) {
+        for (const auto *at = code - 3; at > code - 160; --at) {
             if (at[0] != 0x8b)
                 continue;
             const auto mode = at[1] >> 6;
@@ -1399,6 +1399,10 @@ D3D12_RESOURCE_STATES host_state(D3D12_RESOURCE_STATES state) {
     return state == static_cast<D3D12_RESOURCE_STATES>(0x8c3) ? D3D12_RESOURCE_STATE_GENERIC_READ
                                                               : state;
 }
+// The state the title left each render target in, by its last transition: the console shows
+// a resource whatever its state, the host copies it out of one it has to be told
+std::mutex state_mutex;
+std::map<ID3D12Resource *, D3D12_RESOURCE_STATES> target_states;
 void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
                                         const D3D12_RESOURCE_BARRIER *barriers) {
     std::vector<D3D12_RESOURCE_BARRIER> host(barriers, barriers + (barriers ? count : 0));
@@ -1406,6 +1410,11 @@ void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
         if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) {
             barrier.Transition.StateBefore = host_state(barrier.Transition.StateBefore);
             barrier.Transition.StateAfter = host_state(barrier.Transition.StateAfter);
+            if (barrier.Transition.StateAfter & D3D12_RESOURCE_STATE_RENDER_TARGET ||
+                barrier.Transition.StateBefore & D3D12_RESOURCE_STATE_RENDER_TARGET) {
+                const std::lock_guard lock(state_mutex);
+                target_states[barrier.Transition.pResource] = barrier.Transition.StateAfter;
+            }
         }
     host_of(self)->ResourceBarrier(count, host.data());
 }
@@ -1919,6 +1928,52 @@ std::vector<std::pair<std::size_t, Slot>> unknown_device_methods(std::index_sequ
              reinterpret_cast<Slot>(&unknown_device_method<host_device_slots + Index>)}...};
 }
 
+// ID3D12Device2::CreatePipelineState, from a stream of subobjects: the host's (47), and why
+// when it turns the pipeline down
+HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
+                                                const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
+                                                REFIID iid, void **state) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_PIPELINE_STATE_STREAM_DESC *,
+                                                REFIID, void **);
+    // The stream is subobjects one after another, each a type and its description, aligned
+    // to 8 bytes. The Series kit numbers the amplification and mesh shaders 23 and 24, where
+    // the desktop has them at 24 and 25, and has subobjects of its own from 25 on.
+    static constexpr std::size_t sizes[] = {16, 24, 24, 24, 24, 24, 24, 40, 336, 8,  48, 56, 24,
+                                            8,  8,  40, 8,  16, 8,  24, 8,  64,  32, 24, 24};
+    std::vector<std::uint8_t> stream;
+    D3D12_PIPELINE_STATE_STREAM_DESC host{};
+    if (desc && desc->pPipelineStateSubobjectStream && console == Target::scarlett) {
+        const auto *bytes = static_cast<const std::uint8_t *>(desc->pPipelineStateSubobjectStream);
+        for (std::size_t at = 0; at + 8 <= desc->SizeInBytes;) {
+            std::uint32_t type;
+            std::memcpy(&type, bytes + at, 4);
+            if (type >= std::size(sizes)) {
+                if (static std::atomic<bool> shown{false}; !shown.exchange(true))
+                    std::fprintf(stderr,
+                                 "[Runtime] CreatePipelineState: console subobject %u, which "
+                                 "ends what the host is given of the stream\n",
+                                 type);
+                break;
+            }
+            const auto size = std::min(sizes[type], desc->SizeInBytes - at);
+            stream.insert(stream.end(), bytes + at, bytes + at + size);
+            if (type == 23 || type == 24) {
+                ++type;
+                std::memcpy(stream.data() + stream.size() - size, &type, 4);
+            }
+            at += size;
+        }
+        host = {stream.size(), stream.data()};
+        desc = &host;
+    }
+    const auto result = original<Create>(self, 47)(self, desc, iid, state);
+    if (FAILED(result)) {
+        std::fprintf(stderr, "[Runtime] CreatePipelineState from a stream of %zu bytes: 0x%08lx\n",
+                     desc ? desc->SizeInBytes : 0, static_cast<unsigned long>(result));
+        report_messages();
+    }
+    return result;
+}
 // the host's method `Index` after its first 44, at whatever slot the console has it
 template <std::size_t... Index>
 std::array<Slot, sizeof...(Index)> later_device_methods(std::index_sequence<Index...>) {
@@ -2017,15 +2072,18 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     if (console == Target::durango) {
         for (std::size_t slot = 87; slot <= 92; ++slot)
             overrides.push_back({slot, later[slot - 87]});
+        overrides.push_back({90, reinterpret_cast<Slot>(&create_pipeline_state)});
     } else {
         for (std::size_t slot = 83; slot <= 103; ++slot)
             overrides.push_back({slot, later[slot - 83]});
         for (std::size_t slot = 105; slot <= 112; ++slot)
             overrides.push_back({slot, later[slot - 84]});
+        overrides.push_back({86, reinterpret_cast<Slot>(&create_pipeline_state)});
     }
     // all of the host's vtable, which its runtime calls past the desktop's first 44 too
     console_vtable<Family::device>(host, 96, device_slots, overrides);
-    const auto queried = host->QueryInterface(iid, device);
+    // through the console's QueryInterface, which knows the kits' interface IDs
+    const auto queried = device_query(host, iid, device);
     host->Release();
     return queried;
 }
@@ -2156,6 +2214,11 @@ bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
     return done;
 }
 ID3D12CommandQueue *direct_queue() { return first_direct_queue.load(); }
+D3D12_RESOURCE_STATES presented_state(ID3D12Resource *resource) {
+    const std::lock_guard lock(state_mutex);
+    const auto found = target_states.find(resource);
+    return found == target_states.end() ? D3D12_RESOURCE_STATE_PRESENT : found->second;
+}
 void set_adapter_wrapper(AdapterWrapper wrapper) { adapter_wrapper = wrapper; }
 
 namespace {

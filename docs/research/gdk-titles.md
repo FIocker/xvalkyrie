@@ -154,6 +154,17 @@ their shaders the same way was not checked: there was none to look at.
   View button (`XS_INPUT_PRESS=view@2`) ends the program, as the sample's code does on that
   button. `xscarlet bind` shows no missing import. Opening it from the window, and a real
   gamepad or the keyboard, were not tried.
+- Three more samples of the same repository, built the same way, present frames with
+  `xscarlet exec`: SimpleTexture (the picture at frame 120 is its photograph), Gamepad and
+  SimpleMeshShader (non-black averages; their pictures were not looked at). They needed
+  three things the triangle did not: the caller check has to look further back than 64
+  bytes for the load of the slot (160 now); `D3D12XboxCreateDevice` has to answer the
+  kit's `ID3D12Device8` interface ID; and `CreatePipelineState` gets a stream in which the
+  Series kit numbers the amplification and mesh shader subobjects 23 and 24 (the desktop
+  has them at 24 and 25) and adds console subobjects from 25 on, which are cut off.
+  SimplePlaySound does not start: it imports `ApuAlloc` and `ApuFree` from `AcpHal.dll`,
+  which only the Xbox One runtime has. With the host's debug layer each sample gets one
+  message about a barrier whose state before does not match; its cause was not looked for.
 - The retail Xbox One GDK title starts, initializes the Gaming Runtime, audio and the
   device, loads its packs, and stops at its first pipelines for the reason above. It never
   presents a frame.

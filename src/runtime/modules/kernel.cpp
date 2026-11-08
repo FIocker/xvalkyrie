@@ -14,6 +14,8 @@
 #include <string_view>
 #include <windows.h>
 
+#include <objbase.h> // after windows.h
+
 // The Win32 functions a console answers differently from the host: libraries that are ours
 // or the title's, the console's drives, what a title writes for a debugger, and where it
 // puts its threads. ERA titles import them from kernelx.dll, GDK titles from API sets.
@@ -314,6 +316,19 @@ LSTATUS WINAPI reg_query_value_ex_w(HKEY key, const wchar_t *name, DWORD *reserv
 LSTATUS WINAPI reg_close_key(HKEY key) {
     return key == console_key ? ERROR_SUCCESS : RegCloseKey(key);
 }
+// COM classes of the host's: which one a title asked for and did not get
+HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD context,
+                                  const GUID *iid, void **object) {
+    const auto result = CoCreateInstance(*class_id, outer, context, *iid, object);
+    if (FAILED(result)) {
+        wchar_t text[64] = L"";
+        StringFromGUID2(*class_id, text, 64);
+        std::fprintf(stderr, "[Runtime] CoCreateInstance(%ls): 0x%08lx\n", text,
+                     static_cast<unsigned long>(result));
+        std::fflush(stderr);
+    }
+    return result;
+}
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 const ApiFunction functions[] = {
     {"OutputDebugStringW", erase(output_debug_string_w)},
@@ -360,6 +375,7 @@ void install_kernel(Registry &registry, Target target) {
     registry.add_api("RegOpenKeyW", erase(reg_open_key_w));
     registry.add_api("RegQueryValueExW", erase(reg_query_value_ex_w));
     registry.add_api("RegCloseKey", erase(reg_close_key));
+    registry.add_api("CoCreateInstance", erase(co_create_instance));
     // system DLLs the libraries a GDK title ships with (its HTTP client, the C++ runtime)
     // use more of than the list of functions a title itself may import
     for (const auto *module : {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll"})
