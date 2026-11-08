@@ -84,7 +84,8 @@ Used for every title, whatever console it was built for.
 | `runtime/scarlett` | `xs_runtime_scarlett` | Xbox Series X\|S modules (`d3d12_xs.dll` and friends) |
 
 Each one has a single entry point, `install(Registry &)`, that adds its
-modules to the import registry. The Series one is empty.
+modules to the import registry. The Series one only installs shared modules under their
+Series names.
 
 The two consoles differ less than the two directories suggest. There are
 three kinds of console module:
@@ -100,19 +101,30 @@ three kinds of console module:
 
 `runtime/modules` so far:
 
-- `xg.cpp`: `xg_x.dll`, which tells titles how a texture is laid out in
-  memory. Installed for Xbox One only until the Series one has been checked
-  against a title.
+- `xg.cpp`: `xg_x.dll` and `xg_xs.dll`, which tell titles how a texture is laid out in
+  memory.
+- `kernel.cpp`: the Win32 functions a console answers differently (libraries of ours and
+  of the title's, the console's drives, debug output, thread affinity, the registry value
+  that names the console). ERA titles get them from `kernelx.dll`; for GDK titles they are
+  registered with `Registry::add_api`, which answers a function whatever API set it is
+  imported from.
+- `memory.cpp`: console memory, for `kernelx.dll` and `xmem.dll`. `VirtualAlloc` with large or 4 MiB pages
+  reserves placeholders, and the title's physical pages
+  (`AllocateTitlePhysicalPages`, `MapTitlePhysicalPages`) are 64 KiB views of
+  one 16 GiB section committed as it is used. Also XMem and its
+  hooks, `D3DAllocateGraphicsMemory` and the `Apu*` memory of `acphal.dll`.
+- `window.cpp`: a GDK title's own windows stay hidden; its frames go to the title surface.
+- `d3d12x/`: `d3d12_x.dll` and `d3d12_xs.dll` on the host's Direct3D 12 (`device.cpp`),
+  and `PresentX` with the frame events (`present.cpp`).
+- `placement.cpp`: resources on memory the title owns.
+- `gameruntime/`: `xgameruntime.dll`, the system side of the GDK's Gaming Runtime.
+- `gameinput.cpp`, `system.cpp` (`xaudio2_9.dll` by ordinal, the shader compiler),
+  `storage.cpp` (saved games in files).
 
 `runtime/durango` so far:
 
 - `kernelx.cpp`: `kernelx.dll` is forwarded to the host's `kernel32.dll`, except
   for the functions that only exist on the console.
-- `memory.cpp`: console memory. `VirtualAlloc` with large or 4 MiB pages
-  reserves placeholders, and the title's physical pages
-  (`AllocateTitlePhysicalPages`, `MapTitlePhysicalPages`) are 64 KiB views of
-  one 16 GiB section committed as it is used. Also XMem and its
-  hooks, `D3DAllocateGraphicsMemory` and the `Apu*` memory of `acphal.dll`.
 - `system.cpp`: `mmdevapi.dll`, `mfplat.dll` and `toolhelpx.dll` go to the host,
   plus the console-only functions of those and of `pixevt.dll`. Functions whose
   arguments nobody has documented only ever return an HRESULT.
@@ -144,7 +156,7 @@ three kinds of console module:
   public interface descriptions of the console's WinRT classes.
 - `winrt/storage.cpp`: connected storage (`Windows.Xbox.Storage`), the way
   ERA titles save their games. The spaces, containers and container queries
-  are ours and keep everything in files through `storage.cpp` (`SaveSpace`):
+  are ours and keep everything in files through `modules/storage.cpp` (`SaveSpace`):
   `saves/<package name>/{machine,user}/<container>/<blob>` in the per-user
   configuration folder, with every name escaped into a portable file name.
   `launcher` picks the folder and hands it over in

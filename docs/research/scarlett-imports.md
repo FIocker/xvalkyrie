@@ -39,11 +39,8 @@ the API list to decide which calls may be forwarded to Windows.
 One difference: the original tool searches its patterns anywhere in the DLL
 name and ignores case for API names. We match whole names and exact case.
 
-## What we still don't know
+## What a real build showed
 
-- Which functions titles import from `d3d12_xs.dll` and the other console
-  DLLs. Only DLL names are public.
-- Anything about the loader beyond standard PE rules.
-- Whether the allowed APIs behave exactly like their Windows versions.
-
-All of that needs a real Series build to look at.
+A Series program built from the public samples, and a retail Xbox One GDK title, are
+described in [gdk-titles.md](gdk-titles.md): the imports, how `xgameruntime.dll` is
+reached, and what `d3d12_xs.dll` has to be.

@@ -136,13 +136,21 @@ Filesystem, audio, input and the runtime services.
 - [ ] Runtime services (Gaming Runtime, users, app lifecycle)
 - [ ] More test programs, regression tracking
 
-## After that: Scarlett
+## GDK titles and Scarlett
 
-Same executable, second runtime (`runtime/scarlett`).
+Same executable, second runtime (`runtime/scarlett`). What GDK titles of both consoles
+share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/gdk-titles.md).
 
-- [ ] Get a minimal Series test program and list its imports
-- [ ] `d3d12_xs.dll` on the shared D3D12 to Vulkan translation
-- [ ] What the Series Gaming Runtime adds on top of the Xbox One one
+- [x] A Series test program (a public GDK sample built with the local kit) and its imports
+- [x] Titles described by `MicrosoftGame.config`: found, named and labelled in the library
+- [x] `xgameruntime.dll`: task queues, async blocks, one user, saved games, package and system
+- [x] `d3d12_xs.dll` on the Direct3D 12 layer `d3d12_x.dll` has, with the Series slots
+- [x] `PresentX` and the frame events on a swap chain of the title surface
+- [x] `GameInput.dll` with the emulated gamepad, `xmem.dll`, `xaudio2_9.dll` by ordinal
+- [x] The Series sample draws its picture and reads the gamepad
+- [ ] Shaders that only carry the console's GPU code (the retail GDK title looked at)
+- [ ] `xg_xs.dll` texture layouts, `dstorage_xs.dll`
+- [ ] XStore, XGameUi, keyboards and mice through GameInput
 - [ ] Check the XVD layout against a real Series package
 
 ## Other
