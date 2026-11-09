@@ -2,6 +2,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace xs::surface {
 struct TextRequest {
@@ -25,6 +26,13 @@ void hide_title_surface();
 void *title_surface_owner();
 // The part of the parent the surface covers, in pixels of its client area. Same thread.
 void set_title_area(int x, int y, int width, int height);
+// Parts of the parent's client area where the interface has something floating over the
+// title (a menu, a popup): the surface is cut out there, so that what the parent draws shows
+// through and the title stays visible around it. Same thread as set_title_parent.
+struct Rectangle {
+    int x, y, width, height;
+};
+void set_title_holes(const std::vector<Rectangle> &holes);
 // true while a title is showing frames, which starts with its first one
 bool title_window_shown();
 // The interface has something where the surface is (a menu, the settings), which a native

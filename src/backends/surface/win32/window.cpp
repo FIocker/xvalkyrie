@@ -1,5 +1,6 @@
 #include "backends/input/input.hpp"
 #include "backends/surface/surface.hpp"
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -7,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 #include <windows.h>
 
 namespace xs::surface {
@@ -74,7 +76,43 @@ void set_title_parent(void *window) {
     if (!surface.load())
         throw std::runtime_error("Cannot create the title surface");
 }
+namespace {
+int area_x = 0, area_y = 0, area_width = 0, area_height = 0;
+std::vector<Rectangle> cut;
+// the surface's region: all of it but the holes
+void apply_holes() {
+    const auto handle = surface.load();
+    if (!handle)
+        return;
+    if (cut.empty()) {
+        SetWindowRgn(handle, nullptr, TRUE);
+        return;
+    }
+    const auto region = CreateRectRgn(0, 0, area_width, area_height);
+    for (const auto &hole : cut) {
+        const auto piece = CreateRectRgn(hole.x - area_x, hole.y - area_y,
+                                         hole.x - area_x + hole.width,
+                                         hole.y - area_y + hole.height);
+        CombineRgn(region, region, piece, RGN_DIFF);
+        DeleteObject(piece);
+    }
+    SetWindowRgn(handle, region, TRUE); // the window owns the region from here on
+}
+} // namespace
+void set_title_holes(const std::vector<Rectangle> &holes) {
+    const auto same = [](const Rectangle &a, const Rectangle &b) {
+        return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
+    };
+    if (holes.size() == cut.size() && std::equal(holes.begin(), holes.end(), cut.begin(), same))
+        return;
+    cut = holes;
+    apply_holes();
+}
 void set_title_area(int x, int y, int width, int height) {
+    const bool moved = x != area_x || y != area_y || width != area_width || height != area_height;
+    area_x = x, area_y = y, area_width = width, area_height = height;
+    if (moved && !cut.empty())
+        apply_holes();
     if (const auto handle = surface.load())
         SetWindowPos(handle, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }

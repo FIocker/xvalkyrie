@@ -264,6 +264,12 @@ int wmain(int argc, wchar_t **argv) {
         hooks.area = xs::surface::set_title_area;
         hooks.showing = xs::surface::title_window_shown;
         hooks.covered = xs::surface::set_title_covered;
+        hooks.holes = [](const std::vector<std::array<int, 4>> &holes) {
+            std::vector<xs::surface::Rectangle> cut;
+            for (const auto &hole : holes)
+                cut.push_back({hole[0], hole[1], hole[2], hole[3]});
+            xs::surface::set_title_holes(cut);
+        };
         hooks.frames = xs::graphics::frames_presented;
         // A title that could not start exits 1 even though its window was closed normally.
         return xs::run_desktop(hooks, command);

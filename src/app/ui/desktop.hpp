@@ -1,8 +1,10 @@
 #pragma once
 #include "launcher/config.hpp"
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace xs {
 struct LaunchResult;
@@ -25,6 +27,10 @@ struct DesktopHooks {
     // Whether the interface has something on top of the title's rectangle (a menu, the
     // settings) that the title would hide; called when that changes. Optional.
     std::function<void(bool covered)> covered;
+    // The rectangles (x, y, width, height, in pixels of the window) of what floats over the
+    // title without covering all of it: menus and popups. The title stays visible around
+    // them. Called when they change. Optional; without it they count as covering.
+    std::function<void(const std::vector<std::array<int, 4>> &)> holes;
     // How many frames the title has presented so far; the status bar shows the rate while
     // a title is on screen. Optional.
     std::function<std::uint64_t()> frames;

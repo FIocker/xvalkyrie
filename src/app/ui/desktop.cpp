@@ -13,6 +13,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <cfloat>
@@ -25,6 +26,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_internal.h>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -199,9 +201,24 @@ class Desktop {
         settings_.draw(ui_.fonts, settings_host_,
                        {libraries_, titles_.size(), discovery_.valid(), library_notice_}, console_);
         // the title is a native window over the interface: out of the way of what is open
-        const bool covered =
-            settings_.shown() ||
-            ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        // Menus and popups are cut out of it instead, so the title shows around them.
+        std::vector<std::array<int, 4>> holes;
+        bool popup = false;
+        for (const auto *window : ImGui::GetCurrentContext()->Windows) {
+            if (!window->WasActive || window->Hidden ||
+                !(window->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
+                                   ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Modal)))
+                continue;
+            popup = true;
+            holes.push_back({static_cast<int>(window->Pos.x), static_cast<int>(window->Pos.y),
+                             static_cast<int>(std::ceil(window->Size.x)),
+                             static_cast<int>(std::ceil(window->Size.y))});
+        }
+        if (hooks_.holes && holes != holes_) {
+            holes_ = holes;
+            hooks_.holes(holes);
+        }
+        const bool covered = settings_.shown() || (popup && !hooks_.holes);
         if (covered != covered_ && hooks_.covered) {
             covered_ = covered;
             hooks_.covered(covered);
@@ -916,6 +933,7 @@ class Desktop {
     std::filesystem::path splash_; // the splash picture of what was opened, if it has one
     std::string notice_;           // frontend problem unrelated to title_
     std::shared_ptr<Guest> guest_;
+    std::vector<std::array<int, 4>> holes_;
     bool closing_ = false;
     std::future<LaunchResult> loading_;
     std::filesystem::path path_; // what loading_ is reading
