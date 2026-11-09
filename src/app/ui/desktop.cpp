@@ -189,7 +189,7 @@ class Desktop {
             pick();
         if (guest_ && hooks_.close_running &&
             ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_W, ImGuiInputFlags_RouteGlobal))
-            hooks_.close_running();
+            close_running();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, ImGuiInputFlags_RouteGlobal))
             glfwSetWindowShouldClose(window_, true);
         menu();
@@ -249,6 +249,11 @@ class Desktop {
                 titles_ = cached_library(libraries_.directories, library_cache_file());
             refresh_library();
         }
+    }
+    // the user closed the running title: straight back to the library once it is gone
+    void close_running() {
+        closing_ = true;
+        hooks_.close_running();
     }
     void close_title() {
         title_.reset();
@@ -312,6 +317,8 @@ class Desktop {
                 exit_code_ = 1;
             }
             guest_.reset();
+            if (std::exchange(closing_, false))
+                close_title();
         }
         if (!dropped_.empty() && !busy())
             open(dropped_);
@@ -328,7 +335,7 @@ class Desktop {
             if (ImGui::MenuItem("Close", nullptr, false, title_ && !busy()))
                 close_title();
             if (ImGui::MenuItem("Close Title", "Ctrl+W", false, guest_ && hooks_.close_running))
-                hooks_.close_running();
+                close_running();
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Ctrl+Q"))
                 glfwSetWindowShouldClose(window_, true);
@@ -909,6 +916,7 @@ class Desktop {
     std::filesystem::path splash_; // the splash picture of what was opened, if it has one
     std::string notice_;           // frontend problem unrelated to title_
     std::shared_ptr<Guest> guest_;
+    bool closing_ = false;
     std::future<LaunchResult> loading_;
     std::filesystem::path path_; // what loading_ is reading
     std::future<std::filesystem::path> dialog_;
