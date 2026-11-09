@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <windows.h>
 
+#include <objbase.h> // after windows.h
+
 namespace xs::runtime::modules {
 namespace {
 HMODULE host_xaudio2() {
@@ -17,6 +19,8 @@ HRESULT __cdecl xaudio2_create(void **engine, UINT32 flags, UINT32) {
     const auto create = host_xaudio2() ? reinterpret_cast<Create>(
                                              GetProcAddress(host_xaudio2(), "XAudio2Create"))
                                        : nullptr;
+    // the host's engine makes its voices through COM, which a console title never starts
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const auto result = create ? create(engine, flags & 0x8000, 1) : E_NOTIMPL;
     std::fprintf(stderr, "[Runtime] XAudio2 engine on the host: 0x%08lx\n",
                  static_cast<unsigned long>(result));

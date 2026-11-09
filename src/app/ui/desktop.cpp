@@ -187,6 +187,9 @@ class Desktop {
         poll();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_RouteGlobal))
             pick();
+        if (guest_ && hooks_.close_running &&
+            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_W, ImGuiInputFlags_RouteGlobal))
+            hooks_.close_running();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, ImGuiInputFlags_RouteGlobal))
             glfwSetWindowShouldClose(window_, true);
         menu();
@@ -324,6 +327,8 @@ class Desktop {
                 pick_folder(Dialog::folder);
             if (ImGui::MenuItem("Close", nullptr, false, title_ && !busy()))
                 close_title();
+            if (ImGui::MenuItem("Close Title", "Ctrl+W", false, guest_ && hooks_.close_running))
+                hooks_.close_running();
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Ctrl+Q"))
                 glfwSetWindowShouldClose(window_, true);

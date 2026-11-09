@@ -17,6 +17,19 @@ std::filesystem::path executable_directory() {
     path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
     return std::filesystem::path(path).parent_path();
 }
+void restart_process() {
+    std::wstring path(32768, L'\0');
+    path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
+    auto command = L"\"" + path + L"\"";
+    STARTUPINFOW startup{sizeof startup};
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+                        &startup, &process))
+        return;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    TerminateProcess(GetCurrentProcess(), 0);
+}
 namespace {
 void check_path(const std::filesystem::path &path) {
     if (path.empty() || path.native().find('\0') != std::filesystem::path::string_type::npos)

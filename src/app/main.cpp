@@ -218,6 +218,10 @@ int wmain(int argc, wchar_t **argv) {
                       << std::endl;
             return code;
         };
+        hooks.close_running = [] {
+            std::cerr << "[Launcher] closing the title: the launcher starts again" << std::endl;
+            xs::host::restart_process();
+        };
         hooks.input_changed = [] {
             xs::save_input_settings();
             const auto settings = xs::input::settings();

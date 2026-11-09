@@ -7,6 +7,9 @@
 namespace xs::host {
 // folder of the running executable
 std::filesystem::path executable_directory();
+// Starts this executable again without arguments and ends this process at once, whatever
+// its threads are doing. Returns only if the new process could not be started.
+void restart_process();
 std::vector<std::uint8_t> read_snapshot(const std::filesystem::path &path, std::size_t limit);
 
 // first `count` bytes of a file (or fewer), plus its total size

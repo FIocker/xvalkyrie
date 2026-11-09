@@ -18,6 +18,7 @@ void install(Registry &registry) {
     modules::install_gameruntime(registry);
     modules::install_gameinput(registry);
     modules::install_xmem(registry);
+    modules::install_apu_memory(registry);
     modules::install_xaudio2(registry);
     modules::install_shader_compiler(registry, "dxcompiler_xs.dll");
     modules::install_xg(registry, "xg_xs.dll");
