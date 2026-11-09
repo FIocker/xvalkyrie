@@ -78,7 +78,24 @@ void set_title_area(int x, int y, int width, int height) {
     if (const auto handle = surface.load())
         SetWindowPos(handle, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
-bool title_window_shown() { return shown; }
+void *title_surface() { return surface.load(); }
+void use_title_surface(void *window) { surface = static_cast<HWND>(window); }
+void *title_surface_owner() {
+    const auto handle = surface.load();
+    return handle ? GetAncestor(handle, GA_ROOT) : nullptr;
+}
+void hide_title_surface() {
+    shown = false;
+    if (const auto handle = surface.load())
+        ShowWindowAsync(handle, SW_HIDE);
+}
+// a title in another process shows the surface itself: seen here when it has
+bool title_window_shown() {
+    const auto handle = surface.load();
+    if (!shown && !covered && handle && IsWindowVisible(handle))
+        shown = true;
+    return shown;
+}
 void set_title_covered(bool hidden) {
     const auto handle = surface.load();
     if (covered.exchange(hidden) != hidden && handle && shown)

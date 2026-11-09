@@ -17,18 +17,30 @@ std::filesystem::path executable_directory() {
     path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
     return std::filesystem::path(path).parent_path();
 }
-void restart_process() {
+std::uint32_t run_self(const std::vector<std::wstring> &arguments, std::atomic<void *> &process) {
     std::wstring path(32768, L'\0');
     path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
     auto command = L"\"" + path + L"\"";
+    for (const auto &argument : arguments)
+        command += L" \"" + argument + L"\"";
     STARTUPINFOW startup{sizeof startup};
-    PROCESS_INFORMATION process{};
+    PROCESS_INFORMATION child{};
     if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                        &startup, &process))
-        return;
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    TerminateProcess(GetCurrentProcess(), 0);
+                        &startup, &child))
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Cannot start the title's process");
+    CloseHandle(child.hThread);
+    process = child.hProcess;
+    WaitForSingleObject(child.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(child.hProcess, &code);
+    process = nullptr;
+    CloseHandle(child.hProcess);
+    return code;
+}
+void end_process(void *process) {
+    if (process)
+        TerminateProcess(process, 0);
 }
 namespace {
 void check_path(const std::filesystem::path &path) {

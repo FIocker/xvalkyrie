@@ -14,6 +14,7 @@
 #include "launcher/launch.hpp"
 #include "loader/image.hpp"
 #include "runtime/console.hpp"
+#include <atomic>
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -45,6 +46,17 @@ xs::runtime::ConsoleSettings console_settings() {
     return {wide(saved.gamertag), wide(saved.xbox_user_id), saved.gamerscore, saved.age_group,
             saved.headset,        saved.keyboard_dialog};
 }
+// How the window starts a title: this executable again, with the surface to draw into
+constexpr std::string_view title_process_option = "--title-process";
+std::uint32_t run_title(const std::filesystem::path &path) {
+    const auto file = xs::title_executable(path);
+    const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
+    xs::runtime::ExecuteOptions options;
+    options.save_directory = xs::title_save_directory(path);
+    options.console = console_settings();
+    std::cerr << "[Launcher] saves in " << text(options.save_directory) << std::endl;
+    return xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes), options);
+}
 constexpr std::string_view usage =
     "Usage: xscarlet [TITLE]\n"
     "Targets: Xbox One (Durango), Xbox Series X|S (Scarlett)\n\n"
@@ -74,7 +86,8 @@ int wmain(int argc, wchar_t **argv) {
         // Sessions in the window, and runs of a title, leave a log next to the executable.
         const std::filesystem::path first =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
-        if (argc == 1 || first == "exec" || (argc == 2 && first.native()[0] != '-')) {
+        if (argc == 1 || first == "exec" || first == title_process_option ||
+            (argc == 2 && first.native()[0] != '-')) {
             try {
                 const auto log = xs::host::start_session_log(xs::config_directory() / "logs");
                 std::cerr << "[Launcher] XScarlet " << xs::version << ", log " << text(log)
@@ -87,6 +100,18 @@ int wmain(int argc, wchar_t **argv) {
         xs::load_graphics_settings();
         const std::filesystem::path command =
             argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+        if (argc == 4 && command == title_process_option) {
+            auto *const surface = reinterpret_cast<void *>(
+                static_cast<std::uintptr_t>(std::stoull(std::filesystem::path(argv[2]).string())));
+            xs::surface::use_title_surface(surface);
+            // the keys the launcher's window sees do not come here: read from the system,
+            // while that window is the one in front
+            auto input = xs::input::settings();
+            input.capture = xs::input::Capture::direct;
+            xs::input::configure(input);
+            xs::input::set_foreground_window(xs::surface::title_surface_owner());
+            return static_cast<int>(run_title(argv[3]));
+        }
         if (argc == 3 && command == "inspect") {
             std::cout << inspect_file(argv[2]).dump(2) << '\n';
             return 0;
@@ -204,23 +229,23 @@ int wmain(int argc, wchar_t **argv) {
                       << title.detail << std::endl;
             return title;
         };
+        // A title runs in a process of its own, drawing into the surface of this window:
+        // it can then be closed, and another opened, without this window going away.
+        static std::atomic<void *> title_process{nullptr};
         hooks.run = [](const std::filesystem::path &path) {
-            const auto file = xs::title_executable(path);
-            std::cerr << "[Launcher] starting " << text(file) << std::endl;
-            const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
-            xs::runtime::ExecuteOptions options;
-            options.save_directory = xs::title_save_directory(path);
-            options.console = console_settings();
-            std::cerr << "[Launcher] saves in " << text(options.save_directory) << std::endl;
-            const auto code =
-                xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes), options);
+            std::cerr << "[Launcher] starting " << text(xs::title_executable(path)) << std::endl;
+            const auto surface = reinterpret_cast<std::uintptr_t>(xs::surface::title_surface());
+            const auto code = xs::host::run_self(
+                {wide(std::string(title_process_option)), std::to_wstring(surface), path.wstring()},
+                title_process);
+            xs::surface::hide_title_surface();
             std::cerr << "[Launcher] the title ended with code 0x" << std::hex << code << std::dec
                       << std::endl;
             return code;
         };
         hooks.close_running = [] {
-            std::cerr << "[Launcher] closing the title: the launcher starts again" << std::endl;
-            xs::host::restart_process();
+            std::cerr << "[Launcher] closing the title" << std::endl;
+            xs::host::end_process(title_process.load());
         };
         hooks.input_changed = [] {
             xs::save_input_settings();

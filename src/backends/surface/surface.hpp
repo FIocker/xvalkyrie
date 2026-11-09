@@ -15,6 +15,14 @@ void ask_text(TextRequest request, std::function<void(std::optional<std::wstring
 // a window of their own: creates the surface for them there, hidden. Call before a title
 // starts, from the thread that runs the parent's message loop.
 void set_title_parent(void *parent);
+// The surface set_title_parent made, null before it: a native window another process can
+// be given to draw into with use_title_surface. Hidden again by hide_title_surface, when
+// that process is gone.
+void *title_surface();
+void use_title_surface(void *surface);
+void hide_title_surface();
+// the top-level window the surface is in, null without a surface
+void *title_surface_owner();
 // The part of the parent the surface covers, in pixels of its client area. Same thread.
 void set_title_area(int x, int y, int width, int height);
 // true while a title is showing frames, which starts with its first one

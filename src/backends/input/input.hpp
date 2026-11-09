@@ -89,4 +89,8 @@ Settings settings();
 void window_key(int key, bool pressed);
 void window_focus_lost();
 GamepadState poll();
+// direct capture: a window of another process that counts as in the foreground too, the
+// launcher's when the title runs in a process of its own. A native handle.
+void set_foreground_window(void *window);
+void *foreground_window();
 } // namespace xs::input

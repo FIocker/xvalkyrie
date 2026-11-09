@@ -12,9 +12,8 @@ struct DesktopHooks {
     // Runs a title that `load` reported as runnable and returns its exit code. Called on a
     // separate thread, one title at a time.
     std::function<std::uint32_t(const std::filesystem::path &)> run;
-    // Ends the running title and comes back to the library. A title runs inside this
-    // process and cannot be taken out of it, so this does not return: it is expected to
-    // start the launcher again and end the process. Optional; File > Close Title needs it.
+    // Ends the running title, after which `run` returns. Optional; File > Close Title
+    // needs it.
     std::function<void()> close_running;
     // The title draws inside the main window. `host` is called once with the native handle
     // of that window (null where there is none to give), `area` whenever the rectangle left

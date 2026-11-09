@@ -11,7 +11,9 @@ namespace {
 bool foreground() {
     DWORD process = 0;
     const auto window = GetForegroundWindow();
-    return window && GetWindowThreadProcessId(window, &process) && process == GetCurrentProcessId();
+    return window && ((GetWindowThreadProcessId(window, &process) &&
+                       process == GetCurrentProcessId()) ||
+                      window == static_cast<HWND>(foreground_window()));
 }
 float stick(SHORT value, SHORT dead_zone) {
     if (value > -dead_zone && value < dead_zone)
