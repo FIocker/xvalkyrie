@@ -177,6 +177,29 @@ their shaders the same way was not checked: there was none to look at.
   otherwise line for line what those are, so nothing points at a change, but without input
   that title is not a non-black check. It was not run again from the window with a button.
 
+## The samples in a batch
+
+66 samples of the public repository have a Series configuration. Built the same way, 40
+compile and 26 do not (why was not looked at for each; the first ones miss headers of kits
+this build script does not set up). Each of the 40 was run once with `xscarlet exec` for
+12 seconds and `XS_D3D_PROBE=120`; only the averages were read, not the pictures.
+
+- 27 present frames with a non-black average: the triangle, texture, mesh shader, Bezier,
+  compute, instancing, lighting, device and swap chain, deferred particles, collision, the
+  gamepad, vibration and wheel samples, the four sound samples that build, the exception,
+  breakpoint, lifetime and system information samples.
+- SmokeSimulation presents a nearly black picture (4.5 4.9 4.5).
+- CustomEventProvider runs and presents nothing in 12 seconds.
+- ExecuteIndirect stops at command list slot 70 (`Write64BitValueBottomOfPipeX`).
+- ComputeParticles faults inside the host; HlslCompile, PointSprites, SimpleSamplerFeedback
+  and SimpleMSAA (after its first frames) throw a C++ exception. Causes not looked for.
+- Six front panel samples import `XFrontPanelDisplay.dll`, and mDNS imports `ws2_32.dll`
+  by ordinal: neither is bound.
+
+From the window a title runs in a process of its own that draws into the window's
+surface, so that File > Close Title can end it. That path was tried once, with the
+triangle sample.
+
 ## Not done
 
 - Console shader code (see above). This is what stands between the retail GDK title and a
