@@ -171,11 +171,11 @@ their shaders the same way was not checked: there was none to look at.
 - Regression titles after the Direct3D 12 layer, placement textures, console memory and
   the Win32 overrides moved to `runtime/modules`, 1000 frames each with `XS_D3D_PROBE`:
   four present a non-black back buffer. The fifth (the Frostbite one) gives an average of
-  1.1 0.0 1.1 at frames 1000 and 3000, three runs. A log from before this work, started the
-  same way, has the same value; the one earlier log with 9.1 10.9 12.4 was a run from the
-  window in which a gamepad button reached the title. The logs are otherwise line for line
-  the same, so nothing points at a change, but with `exec` and no input that title is not
-  a non-black check.
+  1.1 0.0 1.1 at frames 1000 and 3000, three runs. Two logs from before this work, both
+  runs from the window, differ in one thing: the one with 1.1 0.0 1.1 has no input, the
+  one with 9.1 10.9 12.4 has a gamepad button reaching the title. The `exec` logs are
+  otherwise line for line what those are, so nothing points at a change, but without input
+  that title is not a non-black check. It was not run again from the window with a button.
 
 ## Not done
 
