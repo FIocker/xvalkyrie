@@ -168,7 +168,8 @@ void probe(ID3D12Resource *picture) {
     std::vector<std::uint8_t> data;
     unsigned pitch = 0, width = 0, height = 0;
     DXGI_FORMAT format{};
-    if (read_back(picture, data, pitch, width, height, format, tracked_state(picture, D3D12_RESOURCE_STATE_PRESENT)))
+    if (read_back(picture, data, pitch, width, height, format,
+                  tracked_state(picture, D3D12_RESOURCE_STATE_PRESENT)))
         report_picture(
             data.data(), pitch, width, height, format,
             ("back buffer (" + std::to_string(draws_into_target(picture)) + " draws)").c_str());
@@ -216,8 +217,9 @@ HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_para
         result = state.list->Reset(state.allocator, nullptr);
     if (SUCCEEDED(result)) {
         // whatever state the title left its picture in is where it stays
+        const auto left = tracked_state(picture, D3D12_RESOURCE_STATE_PRESENT);
         D3D12_RESOURCE_BARRIER barriers[2] = {
-            transition(picture, tracked_state(picture, D3D12_RESOURCE_STATE_PRESENT), D3D12_RESOURCE_STATE_COPY_SOURCE),
+            transition(picture, left, D3D12_RESOURCE_STATE_COPY_SOURCE),
             transition(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST)};
         state.list->ResourceBarrier(2, barriers);
         state.list->CopyResource(back, picture);
