@@ -65,6 +65,18 @@ void install_xaudio2(Registry &registry) {
             registry.add(module, name, reinterpret_cast<void *>(function));
         }
 }
+// The front panel is a development kit's: a retail console has none, and says so
+void install_front_panel(Registry &registry) {
+    static const auto unsupported = +[]() -> bool { return false; };
+    static const auto absent = +[]() -> HRESULT { return E_NOTIMPL; };
+    registry.add("xfrontpaneldisplay.dll", "XFrontPanelIsSupported",
+                 reinterpret_cast<void *>(unsupported));
+    for (const auto *name :
+         {"XFrontPanelGetButtonStates", "XFrontPanelGetLightStates", "XFrontPanelSetLightStates",
+          "XFrontPanelGetScreenDimensions", "XFrontPanelGetScreenPixelFormat",
+          "XFrontPanelSetDisplayName", "XFrontPanelPresentBuffer"})
+        registry.add("xfrontpaneldisplay.dll", name, reinterpret_cast<void *>(absent));
+}
 void install_shader_compiler(Registry &registry, std::string_view module) {
     registry.add(module, "DxcCreateInstance", reinterpret_cast<void *>(&dxc_create_instance));
 }

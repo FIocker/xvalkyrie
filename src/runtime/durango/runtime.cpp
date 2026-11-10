@@ -32,6 +32,7 @@ void install(Registry &registry) {
     modules::install_gameinput(registry);
     modules::install_xmem(registry);
     modules::install_xaudio2(registry);
+    modules::install_front_panel(registry);
     modules::install_shader_compiler(registry, "dxcompiler_x.dll");
     install_system(registry);
     install_acphal(registry);

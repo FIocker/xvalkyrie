@@ -20,6 +20,8 @@ void install(Registry &registry) {
     modules::install_xmem(registry);
     modules::install_apu_memory(registry);
     modules::install_xaudio2(registry);
+    modules::install_front_panel(registry);
+    registry.forward("ws2_32.dll", "ws2_32.dll");
     modules::install_shader_compiler(registry, "dxcompiler_xs.dll");
     modules::install_xg(registry, "xg_xs.dll");
     modules::d3d12x::install(registry, "d3d12_xs.dll", Target::scarlett);
