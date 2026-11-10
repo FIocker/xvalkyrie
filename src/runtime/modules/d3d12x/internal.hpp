@@ -4,8 +4,8 @@
 // What the console's device and queue have for showing frames, which the host does with a
 // swap chain: present.cpp.
 namespace xs::runtime::modules::d3d12x {
-// the state the title's own barriers left a resource it presents in
-D3D12_RESOURCE_STATES presented_state(ID3D12Resource *resource);
+// the state the title's own barriers left a render target in, `unknown` if it made none
+D3D12_RESOURCE_STATES tracked_state(ID3D12Resource *resource, D3D12_RESOURCE_STATES unknown);
 // ID3D12CommandQueue::PresentX on the host's queue
 HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_parameters,
                   const void *present_parameters);

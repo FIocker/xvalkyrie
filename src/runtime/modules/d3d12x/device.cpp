@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -325,6 +326,7 @@ struct ShadowHeap {
     bool shader_visible;
     std::uint64_t gpu; // the host's GPU handle of the start, for a shader-visible heap
     UINT host_stride;
+    void *owner; // the heap the title holds
 };
 // The console's descriptor sizes, which titles also have compiled in: the device's inline
 // methods copy descriptors of these sizes themselves
@@ -464,7 +466,8 @@ void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HE
                           device,
                           (desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) != 0,
                           gpu,
-                          device->GetDescriptorHandleIncrementSize(desc.Type)};
+                          device->GetDescriptorHandleIncrementSize(desc.Type),
+                          heap};
     shadow_of[heap] = base;
 }
 // Before the GPU runs: what the title wrote straight into a shader-visible heap since last
@@ -1258,6 +1261,7 @@ struct ListProxy {
     std::atomic<ULONG> references;
     ID3D12Resource *target = nullptr; // bound last, for XS_D3D_PROBE's draw counts
     const void *graphics_root = nullptr, *compute_root = nullptr;
+    ID3D12DescriptorHeap *heaps[2]{}; // the host's, as bound: views, then samplers
 };
 std::mutex proxy_mutex;
 std::set<const void *> list_proxies;
@@ -1435,10 +1439,48 @@ void trace_handle(const char *method, Handle handle) {
 // SetDescriptorHeaps: the host's heaps for the title's proxies
 void STDMETHODCALLTYPE set_descriptor_heaps(void *self, UINT count,
                                             ID3D12DescriptorHeap *const *heaps) {
+    auto *const list = static_cast<ListProxy *>(self);
     ID3D12DescriptorHeap *host[2]{};
-    for (UINT i = 0; i < count && i < 2; ++i)
+    list->heaps[0] = list->heaps[1] = nullptr;
+    for (UINT i = 0; i < count && i < 2; ++i) {
         host[i] = host_heap(heaps[i]);
+        list->heaps[host[i]->GetDesc().Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER] = host[i];
+    }
     host_of(self)->SetDescriptorHeaps(std::min(count, 2u), host);
+}
+// A console GPU handle is the descriptor's address, good whatever heaps are set, and titles
+// use tables of heaps they never set. The host reads a table from the heap that is bound,
+// so the heap a handle is in gets bound first. It replaces the one of its kind: tables of
+// two view heaps cannot be bound for one draw here.
+void bind_heap_of(void *self, std::uint64_t handle) {
+    void *owner = nullptr;
+    bool samplers = false;
+    {
+        const std::lock_guard lock(shadow_mutex);
+        const auto *heap = shadow_heap(handle);
+        if (!heap || !heap->shader_visible)
+            return;
+        owner = heap->owner;
+        samplers = heap->type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+    }
+    auto *const list = static_cast<ListProxy *>(self);
+    auto *const host = host_heap(owner);
+    if (list->heaps[samplers] == host)
+        return;
+    list->heaps[samplers] = host;
+    ID3D12DescriptorHeap *bound[2]{};
+    UINT count = 0;
+    for (auto *heap : list->heaps)
+        if (heap)
+            bound[count++] = heap;
+    host_of(self)->SetDescriptorHeaps(count, bound);
+}
+// Reset: the host's list starts again with no heaps
+HRESULT STDMETHODCALLTYPE reset_list(void *self, ID3D12CommandAllocator *allocator,
+                                     ID3D12PipelineState *state) {
+    auto *const list = static_cast<ListProxy *>(self);
+    list->heaps[0] = list->heaps[1] = nullptr;
+    return host_of(self)->Reset(allocator, state);
 }
 // the host's GPU handle for a console one, which is the descriptor's address in the shadow
 D3D12_GPU_DESCRIPTOR_HANDLE host_gpu(D3D12_GPU_DESCRIPTOR_HANDLE handle) {
@@ -1460,11 +1502,13 @@ void STDMETHODCALLTYPE set_graphics_root_signature(void *self, ID3D12RootSignatu
 void STDMETHODCALLTYPE set_compute_root_table(void *self, UINT parameter,
                                               D3D12_GPU_DESCRIPTOR_HANDLE table) {
     decode_table(static_cast<ListProxy *>(self)->compute_root, parameter, table.ptr);
+    bind_heap_of(self, table.ptr);
     host_of(self)->SetComputeRootDescriptorTable(parameter, host_gpu(table));
 }
 void STDMETHODCALLTYPE set_graphics_root_table(void *self, UINT parameter,
                                                D3D12_GPU_DESCRIPTOR_HANDLE table) {
     decode_table(static_cast<ListProxy *>(self)->graphics_root, parameter, table.ptr);
+    bind_heap_of(self, table.ptr);
     host_of(self)->SetGraphicsRootDescriptorTable(parameter, host_gpu(table));
 }
 // XS_D3D_PROBE: draws per render target
@@ -1578,12 +1622,14 @@ void STDMETHODCALLTYPE clear_render_target(void *self, Handle view, const FLOAT 
 void STDMETHODCALLTYPE clear_uav_uint(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                       ID3D12Resource *resource, const UINT *values, UINT count,
                                       const D3D12_RECT *rects) {
+    bind_heap_of(self, gpu.ptr);
     host_of(self)->ClearUnorderedAccessViewUint(host_gpu(gpu), host_view(cpu), resource, values,
                                                 count, rects);
 }
 void STDMETHODCALLTYPE clear_uav_float(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                        ID3D12Resource *resource, const FLOAT *values, UINT count,
                                        const D3D12_RECT *rects) {
+    bind_heap_of(self, gpu.ptr);
     host_of(self)->ClearUnorderedAccessViewFloat(host_gpu(gpu), host_view(cpu), resource, values,
                                                  count, rects);
 }
@@ -1595,6 +1641,7 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     vtable[1] = reinterpret_cast<Slot>(&list_add_ref);
     vtable[2] = reinterpret_cast<Slot>(&list_release);
     vtable[9] = reinterpret_cast<Slot>(&close_list);
+    vtable[10] = reinterpret_cast<Slot>(&reset_list);
     vtable[21] = reinterpret_cast<Slot>(&set_viewports);
     vtable[22] = reinterpret_cast<Slot>(&set_scissors);
     vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
@@ -1945,6 +1992,65 @@ std::vector<std::pair<std::size_t, Slot>> unknown_device_methods(std::index_sequ
              reinterpret_cast<Slot>(&unknown_device_method<host_device_slots + Index>)}...};
 }
 
+// ID3D12Device8::CreateCommittedResource2 and CreateSamplerFeedbackUnorderedAccessView (the
+// host's 69 and 71). The first Series kit numbers the two sampler feedback formats 187 and
+// 188, which the desktop has at 189 and 190.
+HRESULT STDMETHODCALLTYPE create_committed_resource_2(
+    ID3D12Device *self, const D3D12_HEAP_PROPERTIES *heap, D3D12_HEAP_FLAGS flags,
+    const D3D12_RESOURCE_DESC1 *desc, D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE *clear,
+    void *session, REFIID iid, void **resource) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(
+        void *, const D3D12_HEAP_PROPERTIES *, D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC1 *,
+        D3D12_RESOURCE_STATES, const D3D12_CLEAR_VALUE *, void *, REFIID, void **);
+    D3D12_RESOURCE_DESC1 host_desc{};
+    if (desc) {
+        host_desc = *desc;
+        host_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host_desc.Flags & 0xff);
+        if (host_desc.Layout >= 0x100)
+            host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        if (host_desc.Format == 187 || host_desc.Format == 188) {
+            host_desc.Format = static_cast<DXGI_FORMAT>(host_desc.Format + 2);
+            host_desc.Alignment = 0; // the host has no small alignment for these
+            // The console takes a mip region as large as the texture, one value for all of
+            // it. The host stops at half: its map is then 2x2 where the title expects 1x1.
+            auto &region = host_desc.SamplerFeedbackMipRegion;
+            region.Width = std::min<UINT>(region.Width, static_cast<UINT>(host_desc.Width / 2));
+            region.Height = std::min(region.Height, host_desc.Height / 2);
+            if (host_desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+                region.Depth = 0;
+            // The host wants as many mips as the texture the map is paired with later, where
+            // the console takes one: a full chain, which is what a texture worth feedback has
+            if (host_desc.MipLevels == 1)
+                host_desc.MipLevels = static_cast<UINT16>(
+                    std::bit_width(std::max<std::uint64_t>(host_desc.Width, host_desc.Height)));
+        }
+    }
+    if (state == static_cast<D3D12_RESOURCE_STATES>(0x8c3))
+        state = D3D12_RESOURCE_STATE_GENERIC_READ;
+    const auto result = original<Create>(self, 69)(self, heap, flags, desc ? &host_desc : nullptr,
+                                                   state, clear, session, iid, resource);
+    if (SUCCEEDED(result) && resource && *resource)
+        console_resource(*resource);
+    if (FAILED(result) && desc) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommittedResource2 dimension %d %llux%ux%u mips %u format "
+                     "%d flags 0x%x state 0x%x: 0x%08lx\n",
+                     desc->Dimension, desc->Width, desc->Height, desc->DepthOrArraySize,
+                     desc->MipLevels, desc->Format, desc->Flags, state,
+                     static_cast<unsigned long>(result));
+        report_messages();
+    }
+    return result;
+}
+// The console's takes a view description as well, null for the whole map
+void STDMETHODCALLTYPE create_feedback_view(ID3D12Device *self, ID3D12Resource *target,
+                                            ID3D12Resource *feedback,
+                                            const D3D12_UNORDERED_ACCESS_VIEW_DESC *,
+                                            D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    using Create = void(STDMETHODCALLTYPE *)(void *, ID3D12Resource *, ID3D12Resource *,
+                                             D3D12_CPU_DESCRIPTOR_HANDLE);
+    original<Create>(self, 71)(self, target, feedback, host_handle(handle));
+}
 // ID3D12Device2::CreatePipelineState, from a stream of subobjects: the host's (47), and why
 // when it turns the pipeline down
 HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
@@ -2096,6 +2202,8 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
         for (std::size_t slot = 105; slot <= 112; ++slot)
             overrides.push_back({slot, later[slot - 84]});
         overrides.push_back({86, reinterpret_cast<Slot>(&create_pipeline_state)});
+        overrides.push_back({109, reinterpret_cast<Slot>(&create_committed_resource_2)});
+        overrides.push_back({111, reinterpret_cast<Slot>(&create_feedback_view)});
     }
     // all of the host's vtable, which its runtime calls past the desktop's first 44 too
     console_vtable<Family::device>(host, 96, device_slots, overrides);
@@ -2165,6 +2273,11 @@ bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
     if (!queue || FAILED(resource->GetDevice(IID_PPV_ARGS(&device))))
         return false;
     const auto desc = resource->GetDesc();
+    // a multisampled texture cannot be copied to a buffer
+    if (desc.SampleDesc.Count > 1) {
+        device->Release();
+        return false;
+    }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     UINT64 bytes = 0;
     device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
@@ -2231,10 +2344,10 @@ bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
     return done;
 }
 ID3D12CommandQueue *direct_queue() { return first_direct_queue.load(); }
-D3D12_RESOURCE_STATES presented_state(ID3D12Resource *resource) {
+D3D12_RESOURCE_STATES tracked_state(ID3D12Resource *resource, D3D12_RESOURCE_STATES unknown) {
     const std::lock_guard lock(state_mutex);
     const auto found = target_states.find(resource);
-    return found == target_states.end() ? D3D12_RESOURCE_STATE_PRESENT : found->second;
+    return found == target_states.end() ? unknown : found->second;
 }
 void set_adapter_wrapper(AdapterWrapper wrapper) { adapter_wrapper = wrapper; }
 
