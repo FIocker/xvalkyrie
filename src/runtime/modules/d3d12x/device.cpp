@@ -1662,9 +1662,26 @@ void STDMETHODCALLTYPE dispatch_mesh_x(void *self, UINT groups, UINT64 flags, UI
     host->DispatchMesh(groups, 1, 1);
     host->Release();
 }
+// Write64BitValueBottomOfPipeX: the console's GPU writes a value, or its clock, to memory
+// of the title's when it gets there. Titles time their frames with it. Here the write
+// happens when the list is recorded, with the host's clock for a timestamp (flag 1).
+void STDMETHODCALLTYPE write_64_bottom_of_pipe(void *, std::uint64_t destination,
+                                               std::uint64_t value, UINT, UINT flags) {
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(reinterpret_cast<void *>(destination), &info, sizeof info) ||
+        info.State != MEM_COMMIT || !(info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        return;
+    if (flags & 1) {
+        LARGE_INTEGER counter;
+        QueryPerformanceCounter(&counter);
+        value = static_cast<std::uint64_t>(counter.QuadPart);
+    }
+    std::memcpy(reinterpret_cast<void *>(destination), &value, sizeof value);
+}
 // the slots where the two consoles' lists differ
 void configure_lists() {
     map_list_slots();
+    list_vtable[70] = reinterpret_cast<Slot>(&write_64_bottom_of_pipe);
     const auto ignore = [](std::initializer_list<std::size_t> slots) {
         for (const auto slot : slots)
             list_vtable[slot] = reinterpret_cast<Slot>(&ignored_list_method);
