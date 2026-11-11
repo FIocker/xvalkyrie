@@ -911,6 +911,19 @@ HRESULT STDMETHODCALLTYPE create_root_signature(ID3D12Device *self, UINT node, c
                                                 SIZE_T size, REFIID iid, void **signature) {
     using Create =
         HRESULT(STDMETHODCALLTYPE *)(void *, UINT, const void *, SIZE_T, REFIID, void **);
+    // A shader container says how long it is (the dword at 24). The host turns down a size
+    // that differs from it; titles get away with a wrong one on the console (a sample passes
+    // one shader with the size of another), so the container's own is what the host is given.
+    std::uint32_t contained = 0;
+    if (blob && size >= 32 && !std::memcmp(blob, "DXBC", 4)) {
+        std::memcpy(&contained, static_cast<const std::uint8_t *>(blob) + 24, 4);
+        MEMORY_BASIC_INFORMATION info{};
+        const auto *const end = static_cast<const std::uint8_t *>(blob) + contained;
+        if (contained >= 32 && contained != size && VirtualQuery(blob, &info, sizeof info) &&
+            info.State == MEM_COMMIT &&
+            end <= static_cast<const std::uint8_t *>(info.BaseAddress) + info.RegionSize)
+            size = contained;
+    }
     const auto result = original<Create>(self, 16)(self, node, blob, size, iid, signature);
     if (SUCCEEDED(result) && signature && *signature)
         read_root_signature(*signature, blob, size);
