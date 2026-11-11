@@ -148,6 +148,8 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
 - [x] `PresentX` and the frame events on a swap chain of the title surface
 - [x] `GameInput.dll` with the emulated gamepad, `xmem.dll`, `xaudio2_9.dll` by ordinal
 - [x] The Series sample draws its picture and reads the gamepad
+- [x] 36 of the 40 public samples that build for Series present frames
+- [ ] Quad and rectangle topologies, sampler feedback readback
 - [ ] Shaders that only carry the console's GPU code (the retail GDK title looked at)
 - [ ] `xg_xs.dll` texture layouts, `dstorage_xs.dll`
 - [ ] XStore, XGameUi, keyboards and mice through GameInput

@@ -162,9 +162,10 @@ their shaders the same way was not checked: there was none to look at.
   kit's `ID3D12Device8` interface ID; and `CreatePipelineState` gets a stream in which the
   Series kit numbers the amplification and mesh shader subobjects 23 and 24 (the desktop
   has them at 24 and 25) and adds console subobjects from 25 on, which are cut off.
-  SimplePlaySound does not start: it imports `ApuAlloc` and `ApuFree` from `AcpHal.dll`,
-  which only the Xbox One runtime has. With the host's debug layer each sample gets one
-  message about a barrier whose state before does not match; its cause was not looked for.
+  SimplePlaySound needed `ApuAlloc` and `ApuFree` of `AcpHal.dll` on Series as well, and
+  COM initialized on its thread: the host's XAudio2 makes its voices through COM, which a
+  console title never starts. It presents frames; whether it is heard was not checked (the
+  runs were muted).
 - The retail Xbox One GDK title starts, initializes the Gaming Runtime, audio and the
   device, loads its packs, and stops at its first pipelines for the reason above. It never
   presents a frame.
@@ -181,24 +182,66 @@ their shaders the same way was not checked: there was none to look at.
 
 66 samples of the public repository have a Series configuration. Built the same way, 40
 compile and 26 do not (why was not looked at for each; the first ones miss headers of kits
-this build script does not set up). Each of the 40 was run once with `xscarlet exec` for
-12 seconds and `XS_D3D_PROBE=120`; only the averages were read, not the pictures.
+the build script does not set up). Each of the 40 was run with `xscarlet exec` for 12
+seconds and `XS_D3D_PROBE=120`, and the average of the back buffer read. Pictures were
+looked at for SimpleTriangle, SimpleTexture, SimpleMSAA and SmokeSimulation only.
 
-- 27 present frames with a non-black average: the triangle, texture, mesh shader, Bezier,
-  compute, instancing, lighting, device and swap chain, deferred particles, collision, the
-  gamepad, vibration and wheel samples, the four sound samples that build, the exception,
-  breakpoint, lifetime and system information samples.
-- SmokeSimulation presents a nearly black picture (4.5 4.9 4.5).
-- CustomEventProvider runs and presents nothing in 12 seconds.
-- ExecuteIndirect stops at command list slot 70 (`Write64BitValueBottomOfPipeX`).
-- ComputeParticles faults inside the host; HlslCompile, PointSprites, SimpleSamplerFeedback
-  and SimpleMSAA (after its first frames) throw a C++ exception. Causes not looked for.
-- Six front panel samples import `XFrontPanelDisplay.dll`, and mDNS imports `ws2_32.dll`
-  by ordinal: neither is bound.
+36 present frames with a non-black average. What the ones that did not at first needed:
+
+- ExecuteIndirect and ComputeParticles bind descriptor tables of a heap they never gave to
+  `SetDescriptorHeaps`. A console GPU handle is the descriptor's address and is good
+  whatever heaps are set; the host reads a table from the heap that is bound, and its
+  driver faults otherwise. The heap a table's handle is in is now bound first. It replaces
+  the bound heap of its kind, so tables of two view heaps for one draw still cannot work.
+- ExecuteIndirect also times itself with `Write64BitValueBottomOfPipeX` (list slot 70),
+  which has the console's GPU write a value or its clock to the title's memory when it gets
+  there. Here the write happens when the list is recorded, with the host's clock: the
+  times are CPU times.
+- SimpleMSAA was broken by `XS_D3D_PROBE` itself, not by the layer: the probe read every
+  render target back as if it were in the render target state, and tried to copy a
+  multisampled one to a buffer, after which the host removed the device. It now uses the
+  state the title's last barrier left and skips multisampled targets. The same mistake
+  was behind the one barrier message every sample got from the host's debug layer.
+- HlslCompile and SimpleSamplerFeedback missed shader files the build script did not make
+  (three come from a tool of the sample's own, one needs `-D__XBOX_DISABLE_PRECOMPILE=1`
+  with the June 2020 compiler). Compiled by hand with the kit's `dxc`.
+- The front panel samples import `XFrontPanelDisplay.dll`: `XFrontPanelIsSupported`
+  answers false and the rest `E_NOTIMPL`. mDNS imports `ws2_32.dll` by ordinal, which is
+  forwarded to the host's.
+- SmokeSimulation's nearly black average (4.5) is its picture: smoke in a dark box.
+
+Four do not run:
+
+- PointSprites makes pipelines with the console's own topologies
+  (`D3D12XBOX_PRIMITIVE_TOPOLOGY_TYPE_QUAD` and `_RECT`), which the host turns down. Quad
+  and rectangle lists would have to be drawn as triangles.
+- SimpleSamplerFeedback gets as far as its first frame. Found on the way: the first kit
+  numbers the two feedback formats 187 and 188 (189 and 190 on the desktop); the console's
+  `CreateSamplerFeedbackUnorderedAccessViewX` (device 111) has a view description before
+  the handle; the console takes a mip region as large as the texture and one mip, where
+  the host wants at most half the texture and as many mips as the paired texture (checked
+  with a small program on the host: a map with one mip paired with a ten-mip texture
+  removes the device). The sample then reads the map with `CopyTextureRegion` straight
+  into a buffer, in a fixed point form of the console's; the host only decodes a map with
+  `ResolveSubresourceRegion`. Not done. It also clears the map through a CPU handle of a
+  shader-visible heap, which the host's debug layer calls invalid.
+- FrontPanelDemo and FrontPanelDolphin ask for the panel's screen size without asking
+  whether there is a panel, and throw on the failure. What a retail console answers there
+  is not known.
+
+The regression titles were run again after these changes, 1000 frames each: the Unreal
+one 184 117 41 twice, the two Direct3D 11 ones and the first-kit one as before (97 115
+122, 76 86 103, 69 125 162), the Frostbite one 1.1 0.0 1.1 as before. One earlier run of
+the Unreal title, on a build with the heap binding already in, gave 0.7 0.3 0.0 with
+fewer draws; the next run of the same build gave 184 117 41. It did not come back in
+three more runs and was not explained.
 
 From the window a title runs in a process of its own that draws into the window's
-surface, so that File > Close Title can end it. That path was tried once, with the
-triangle sample.
+surface, so that File > Close Title ends it and the window stays; closed that way the
+window goes straight back to the library. Menus and popups are cut out of the title's
+surface instead of hiding it. The child process was tried once from the window, with the
+triangle sample; the cut-outs, a second title after a first, and input in that mode were
+not tried.
 
 ## Not done
 
@@ -208,9 +251,10 @@ triangle sample.
   placement textures are read as linear there.
 - `CreatePlacedShaderResourceViewX` (device 46) and `GetDefaultMSAAParametersX` (59), which
   the retail title calls, and the page mapping methods of the queue.
-- Raytracing, sampler feedback and variable rate shading go to the host's methods of the
-  same name without their arguments being looked at; nothing has called them.
-  `CheckFeatureSupport` is the host's answer, unchanged.
+- Raytracing and variable rate shading go to the host's methods of the same name without
+  their arguments being looked at; nothing has called them. `CheckFeatureSupport` is the
+  host's answer, unchanged. Sampler feedback readback, and the console's quad and
+  rectangle topologies (see the samples above).
 - `DispatchMeshX` only in its plain form.
 - `dstorage_xs.dll`, `GameInput` keyboards and mice, rumble, XStore, XGameUi.
 - DXGI outputs past the desktop's methods (`GetRefreshRate` and the like).
