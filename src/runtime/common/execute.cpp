@@ -223,7 +223,34 @@ FILE *__cdecl freopen_narrow(const char *path, const char *mode, FILE *stream) {
     return stream;
 }
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
+// ResolveDelayLoadedAPI: an import a module of the title's left for its first use. The
+// host's does not know the title's modules; the import is bound the way the others are.
+void *WINAPI resolve_delay_loaded(void *module, const IMAGE_DELAYLOAD_DESCRIPTOR *descriptor,
+                                  void *, void *, IMAGE_THUNK_DATA *thunk, ULONG) {
+    if (!guest || !module || !descriptor || !thunk)
+        return nullptr;
+    const auto *const base = static_cast<const std::uint8_t *>(module);
+    const auto *const table =
+        reinterpret_cast<const IMAGE_THUNK_DATA *>(base + descriptor->ImportAddressTableRVA);
+    const auto *const names =
+        reinterpret_cast<const IMAGE_THUNK_DATA *>(base + descriptor->ImportNameTableRVA);
+    const auto &entry = names[thunk - table];
+    const std::string library = reinterpret_cast<const char *>(base + descriptor->DllNameRVA);
+    const std::string symbol =
+        IMAGE_SNAP_BY_ORDINAL(entry.u1.Ordinal)
+            ? "#" + std::to_string(IMAGE_ORDINAL(entry.u1.Ordinal))
+            : reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(base + entry.u1.AddressOfData)->Name;
+    const auto found = guest->resolve(library, symbol);
+    if (!found)
+        return nullptr;
+    DWORD old = 0;
+    VirtualProtect(thunk, sizeof *thunk, PAGE_READWRITE, &old);
+    thunk->u1.Function = *found;
+    VirtualProtect(thunk, sizeof *thunk, old, &old);
+    return reinterpret_cast<void *>(*found);
+}
 const Override overrides[] = {
+    {"ResolveDelayLoadedAPI", erase(resolve_delay_loaded)},
     {"_wfreopen", erase(wfreopen)},
     {"freopen", erase(freopen_narrow)},
     {"GetModuleHandleW", erase(get_module_handle_w)},
@@ -373,9 +400,18 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
         module.entry = layout.at("entry_va");
     if (contents.contains("exports"))
         for (const auto &symbol : contents.at("exports").at("symbols")) {
-            if (symbol.contains("forwarder"))
-                continue;
-            const auto address = module.base + symbol.at("rva").get<std::uint64_t>();
+            std::uint64_t address = module.base + symbol.at("rva").get<std::uint64_t>();
+            // "module.Name": the export is another module's, found the way an import is
+            if (symbol.contains("forwarder")) {
+                const auto &target = symbol.at("forwarder").get_ref<const std::string &>();
+                const auto dot = target.rfind('.');
+                if (dot == std::string::npos || dot + 1 == target.size())
+                    continue;
+                const auto found = resolve(target.substr(0, dot) + ".dll", target.substr(dot + 1));
+                if (!found)
+                    continue;
+                address = *found;
+            }
             module.exports["#" + std::to_string(symbol.at("ordinal").get<std::uint64_t>())] =
                 address;
             for (const auto &exported : symbol.at("names"))

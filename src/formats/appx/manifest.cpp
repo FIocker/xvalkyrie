@@ -90,7 +90,14 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
             classes[std::string(id)] = path;
         }
     }
+    auto dependencies = json::array();
+    for (auto dependency : root.child("Dependencies").children("PackageDependency")) {
+        if (dependencies.size() >= 256)
+            throw std::runtime_error("Package manifest exceeds 256 package dependencies");
+        dependencies.push_back(dependency.attribute("Name").value());
+    }
     return {{"name", attribute(identity, "Name")},
+            {"dependencies", std::move(dependencies)},
             {"version", attribute(identity, "Version")},
             {"architecture", attribute(identity, "ProcessorArchitecture")},
             {"display_name", text(root.child("Properties").child("DisplayName"))},

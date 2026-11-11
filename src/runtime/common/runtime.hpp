@@ -29,11 +29,16 @@ class Registry {
     void forward(std::string_view module, std::string_view host_module);
     // lowercase host module `module` is forwarded to, empty if it is not
     std::string_view forwarded(std::string_view module) const;
+    // Lets every import nothing here answers go to the host module it names, whatever the
+    // host policy says: for a Windows app, which is not held to the console's list of APIs.
+    void open_to_host() { open_ = true; }
+    bool open() const { return open_; }
 
   private:
     std::map<std::pair<std::string, std::string>, void *> entries_;
     std::map<std::string, std::string> forwards_;
     std::map<std::string, void *, std::less<>> apis_;
+    bool open_ = false;
 };
 
 // only true on Windows x64

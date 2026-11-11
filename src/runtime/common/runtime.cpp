@@ -1,9 +1,14 @@
 #include "runtime/common/runtime.hpp"
+#include "formats/appx/manifest.hpp"
 #include "analysis/modules.hpp"
 #include "formats/pe/inspect.hpp"
 #include "host/files.hpp"
 #include "loader/image.hpp"
 #include <algorithm>
+#include <map>
+#include <mutex>
+#include <set>
+#include <vector>
 #include <nlohmann/json.hpp>
 #include <system_error>
 
@@ -69,7 +74,7 @@ detail::Binding detail::resolve(const Registry &registry, std::string_view modul
     if (auto *const function = registry.find(module, symbol))
         return {function, "own"};
     const auto forwarded = registry.forwarded(module);
-    if (forwarded.empty() && !host_policy_allows(module, symbol))
+    if (forwarded.empty() && !registry.open() && !host_policy_allows(module, symbol))
         return {nullptr, "missing"};
     if (auto *const function = registry.find_api(symbol))
         return {function, "own"};
@@ -122,6 +127,62 @@ bool console_system_module(std::string_view module) {
     return name == "xg_x.dll" || name == "xg.dll" || name == "xg_xs.dll";
 }
 
+namespace {
+// The Name of the Identity element of the manifest in `folder`. Read as text: a framework
+// package has no application, which the manifest reader insists on.
+std::string package_name(const std::filesystem::path &folder) {
+    try {
+        const auto bytes = host::read_snapshot(folder / "AppxManifest.xml", appx::manifest_limit);
+        const std::string_view xml(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        const auto identity = xml.find("<Identity");
+        const auto end = xml.find('>', identity);
+        if (identity == std::string_view::npos || end == std::string_view::npos)
+            return {};
+        const auto element = xml.substr(identity, end - identity);
+        const auto name = element.find(" Name=\"");
+        if (name == std::string_view::npos)
+            return {};
+        const auto value = element.substr(name + 7);
+        return std::string(value.substr(0, value.find('"')));
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+// The packages the one in `root` depends on (its framework packages), where they are
+// unpacked next to it: the folders beside `root` whose manifest has a name `root`'s lists.
+// The manifest names a package as "Name.2.2"; the folder of an unpacked one is anything.
+const std::vector<std::filesystem::path> &dependency_directories(
+    const std::filesystem::path &package) {
+    std::error_code absolute_error;
+    auto root = std::filesystem::absolute(package, absolute_error).lexically_normal();
+    if (!root.has_filename()) // "folder/." normalizes to "folder/"
+        root = root.parent_path();
+    static std::mutex mutex;
+    static std::map<std::filesystem::path, std::vector<std::filesystem::path>> known;
+    const std::lock_guard lock(mutex);
+    if (const auto found = known.find(root); found != known.end())
+        return found->second;
+    auto &folders = known[root];
+    try {
+        const auto manifest = appx::inspect_manifest(
+            host::read_snapshot(root / "AppxManifest.xml", appx::manifest_limit));
+        std::set<std::string> wanted;
+        for (const auto &name : manifest.at("dependencies"))
+            wanted.insert(name.get<std::string>());
+        std::error_code error;
+        if (!wanted.empty())
+            for (const auto &entry : std::filesystem::directory_iterator(root.parent_path(), error))
+                if (entry.is_directory(error) && entry.path() != root &&
+                    std::filesystem::is_regular_file(entry.path() / "AppxManifest.xml", error) &&
+                    wanted.contains(package_name(entry.path())))
+                    folders.push_back(entry.path());
+    } catch (const std::exception &) {
+        // a title without a manifest that can be read has no packages to look in
+    }
+    return folders;
+}
+} // namespace
+
 std::filesystem::path detail::title_dll(const std::filesystem::path &directory,
                                         std::string_view module) {
     const auto name = lower(module);
@@ -133,8 +194,12 @@ std::filesystem::path detail::title_dll(const std::filesystem::path &directory,
         if (std::filesystem::is_regular_file(folder / name, error))
             return folder / name;
         if (folder == root || folder == folder.parent_path())
-            return {};
+            break;
     }
+    for (const auto &folder : dependency_directories(root))
+        if (std::filesystem::is_regular_file(folder / name, error))
+            return folder / name;
+    return {};
 }
 
 namespace {
