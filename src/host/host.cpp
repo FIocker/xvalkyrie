@@ -23,12 +23,25 @@ std::uint32_t run_self(const std::vector<std::wstring> &arguments, std::atomic<v
     auto command = L"\"" + path + L"\"";
     for (const auto &argument : arguments)
         command += L" \"" + argument + L"\"";
+    // a job that ends its processes when this one goes, however it goes
+    static const HANDLE job = [] {
+        const auto handle = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (handle)
+            SetInformationJobObject(handle, JobObjectExtendedLimitInformation, &limits,
+                                    sizeof limits);
+        return handle;
+    }();
     STARTUPINFOW startup{sizeof startup};
     PROCESS_INFORMATION child{};
-    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                        &startup, &child))
+    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
+                        nullptr, nullptr, &startup, &child))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
                                 "Cannot start the title's process");
+    if (job)
+        AssignProcessToJobObject(job, child.hProcess);
+    ResumeThread(child.hThread);
     CloseHandle(child.hThread);
     process = child.hProcess;
     WaitForSingleObject(child.hProcess, INFINITE);

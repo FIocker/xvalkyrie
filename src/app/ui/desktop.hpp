@@ -14,6 +14,9 @@ struct DesktopHooks {
     // Runs a title that `load` reported as runnable and returns its exit code. Called on a
     // separate thread, one title at a time.
     std::function<std::uint32_t(const std::filesystem::path &)> run;
+    // Called on the window thread right before `run` is, for what has to be made ready
+    // there. Optional.
+    std::function<void()> starting;
     // Ends the running title, after which `run` returns. Optional; File > Close Title
     // needs it.
     std::function<void()> close_running;

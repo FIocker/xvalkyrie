@@ -64,6 +64,19 @@ void register_class() {
 }
 } // namespace
 
+namespace {
+int area_x = 0, area_y = 0, area_width = 0, area_height = 0;
+std::vector<Rectangle> cut;
+HWND make_surface(HWND parent) {
+    const auto window =
+        CreateWindowExW(0, class_name, L"", WS_CHILD | WS_CLIPSIBLINGS, area_x, area_y,
+                        std::max(area_width, 16), std::max(area_height, 16), parent, nullptr,
+                        GetModuleHandleW(nullptr), nullptr);
+    if (!window)
+        throw std::runtime_error("Cannot create the title surface");
+    return window;
+}
+} // namespace
 void set_title_parent(void *window) {
     const auto parent = static_cast<HWND>(window);
     if (!parent || surface.load())
@@ -71,14 +84,9 @@ void set_title_parent(void *window) {
     register_class();
     // or the parent would paint over the title every time it redraws itself
     SetWindowLongPtrW(parent, GWL_STYLE, GetWindowLongPtrW(parent, GWL_STYLE) | WS_CLIPCHILDREN);
-    surface = CreateWindowExW(0, class_name, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 16, 16, parent,
-                              nullptr, GetModuleHandleW(nullptr), nullptr);
-    if (!surface.load())
-        throw std::runtime_error("Cannot create the title surface");
+    surface = make_surface(parent);
 }
 namespace {
-int area_x = 0, area_y = 0, area_width = 0, area_height = 0;
-std::vector<Rectangle> cut;
 // the surface's region: all of it but the holes
 void apply_holes() {
     const auto handle = surface.load();
@@ -115,6 +123,16 @@ void set_title_area(int x, int y, int width, int height) {
         apply_holes();
     if (const auto handle = surface.load())
         SetWindowPos(handle, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+void renew_title_surface() {
+    const auto old = surface.load();
+    if (!old)
+        return;
+    const auto parent = GetParent(old);
+    shown = false;
+    surface = make_surface(parent);
+    DestroyWindow(old);
+    apply_holes();
 }
 void *title_surface() { return surface.load(); }
 void use_title_surface(void *window) { surface = static_cast<HWND>(window); }

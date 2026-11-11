@@ -174,6 +174,8 @@ class Desktop {
         if (title_->status != LaunchStatus::runnable)
             return;
         // shared so that a guest outliving the window still has somewhere to report to
+        if (hooks_.starting)
+            hooks_.starting();
         guest_ = std::make_shared<Guest>();
         guest_->thread = std::thread([guest = guest_, run = hooks_.run, path] {
             try {

@@ -904,6 +904,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(ID3D12Device *, const D3D12_
                                                     D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC *,
                                                     D3D12_RESOURCE_STATES,
                                                     const D3D12_CLEAR_VALUE *, REFIID, void **);
+void report_messages();
 // CreateRootSignature (16): its descriptor tables are kept, to know what the descriptors the
 // title writes are
 HRESULT STDMETHODCALLTYPE create_root_signature(ID3D12Device *self, UINT node, const void *blob,
@@ -913,6 +914,11 @@ HRESULT STDMETHODCALLTYPE create_root_signature(ID3D12Device *self, UINT node, c
     const auto result = original<Create>(self, 16)(self, node, blob, size, iid, signature);
     if (SUCCEEDED(result) && signature && *signature)
         read_root_signature(*signature, blob, size);
+    if (FAILED(result)) {
+        std::fprintf(stderr, "[Runtime] CreateRootSignature from %zu bytes: 0x%08lx\n",
+                     static_cast<std::size_t>(size), static_cast<unsigned long>(result));
+        report_messages();
+    }
     return result;
 }
 // slot 44: CreatePlacedResourceX(address, desc, state, clear, iid, resource), a resource on
@@ -953,7 +959,11 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
                                 reinterpret_cast<const void *>(address));
     return result;
 }
-void report_messages();
+// The console's GPU draws rectangle lists and quad lists (topology types 19 and 32, the
+// topologies 17 and 19). Here both are triangles: see draw_instanced.
+D3D12_PRIMITIVE_TOPOLOGY_TYPE host_topology_type(D3D12_PRIMITIVE_TOPOLOGY_TYPE type) {
+    return type == 19 || type == 32 ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE : type;
+}
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -964,6 +974,7 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
     if (FAILED(result)) {
@@ -1262,6 +1273,8 @@ struct ListProxy {
     ID3D12Resource *target = nullptr; // bound last, for XS_D3D_PROBE's draw counts
     const void *graphics_root = nullptr, *compute_root = nullptr;
     ID3D12DescriptorHeap *heaps[2]{}; // the host's, as bound: views, then samplers
+    UINT topology = 0;                 // as the title set it, the console's own included
+    D3D12_INDEX_BUFFER_VIEW indices{}; // the title's, to put back after a quad draw
 };
 std::mutex proxy_mutex;
 std::set<const void *> list_proxies;
@@ -1480,6 +1493,8 @@ HRESULT STDMETHODCALLTYPE reset_list(void *self, ID3D12CommandAllocator *allocat
                                      ID3D12PipelineState *state) {
     auto *const list = static_cast<ListProxy *>(self);
     list->heaps[0] = list->heaps[1] = nullptr;
+    list->topology = 0;
+    list->indices = {};
     return host_of(self)->Reset(allocator, state);
 }
 // the host's GPU handle for a console one, which is the descriptor's address in the shadow
@@ -1521,14 +1536,90 @@ void count_draw(void *self) {
     const std::lock_guard lock(draw_mutex);
     ++draws_into[static_cast<ListProxy *>(self)->target];
 }
+constexpr UINT rectangle_list = 17, quad_list = 19;
+void STDMETHODCALLTYPE set_topology(void *self, UINT topology) {
+    static_cast<ListProxy *>(self)->topology = topology;
+    host_of(self)->IASetPrimitiveTopology(topology == rectangle_list || topology == quad_list
+                                              ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+                                              : static_cast<D3D_PRIMITIVE_TOPOLOGY>(topology));
+}
+// Indices that draw quads as two triangles each, for at least `quads` of them: 0 1 2, 0 2 3,
+// then the same four vertices on. One buffer that only grows; the ones it outgrew stay
+// alive, since lists already recorded may still use them.
+D3D12_INDEX_BUFFER_VIEW quad_indices(UINT quads) {
+    static std::mutex mutex;
+    static ID3D12Resource *buffer = nullptr;
+    static UINT capacity = 0;
+    const std::lock_guard lock(mutex);
+    auto *const device = d3d12_device.load();
+    if (quads > capacity && device) {
+        const UINT wanted = std::max(quads, std::max(capacity * 2, 4096u));
+        const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_UPLOAD};
+        const D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_BUFFER,
+                                       0,
+                                       std::uint64_t{wanted} * 6 * sizeof(std::uint32_t),
+                                       1,
+                                       1,
+                                       1,
+                                       DXGI_FORMAT_UNKNOWN,
+                                       {1, 0},
+                                       D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                                       D3D12_RESOURCE_FLAG_NONE};
+        ID3D12Resource *larger = nullptr;
+        void *mapped = nullptr;
+        if (SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                      IID_PPV_ARGS(&larger))) &&
+            SUCCEEDED(larger->Map(0, nullptr, &mapped))) {
+            auto *const index = static_cast<std::uint32_t *>(mapped);
+            constexpr UINT corners[] = {0, 1, 2, 0, 2, 3};
+            for (UINT quad = 0; quad < wanted; ++quad)
+                for (UINT corner = 0; corner < 6; ++corner)
+                    index[quad * 6 + corner] = quad * 4 + corners[corner];
+            larger->Unmap(0, nullptr);
+            buffer = larger;
+            capacity = wanted;
+        }
+    }
+    if (!buffer || quads > capacity)
+        return {};
+    return {buffer->GetGPUVirtualAddress(), quads * 6 * static_cast<UINT>(sizeof(std::uint32_t)),
+            DXGI_FORMAT_R32_UINT};
+}
+// A quad list is drawn with indices of ours over the title's vertices. A rectangle list
+// gives three corners of each rectangle and the GPU makes the fourth: here only the
+// triangle of the three is drawn, half of each rectangle.
 void STDMETHODCALLTYPE draw_instanced(void *self, UINT vertices, UINT instances, UINT first,
                                       UINT first_instance) {
     count_draw(self);
+    auto *const list = static_cast<ListProxy *>(self);
+    if (list->topology == quad_list) {
+        const auto view = quad_indices(vertices / 4);
+        if (!view.BufferLocation)
+            return;
+        list->host->IASetIndexBuffer(&view);
+        list->host->DrawIndexedInstanced(vertices / 4 * 6, instances, 0, static_cast<INT>(first),
+                                         first_instance);
+        list->host->IASetIndexBuffer(list->indices.BufferLocation ? &list->indices : nullptr);
+        return;
+    }
+    if (static std::atomic<bool> shown{false};
+        list->topology == rectangle_list && !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] a rectangle list is drawn as the triangles of its three "
+                             "corners: half of each rectangle is missing\n");
+        std::fflush(stderr);
+    }
     host_of(self)->DrawInstanced(vertices, instances, first, first_instance);
 }
 void STDMETHODCALLTYPE draw_indexed_instanced(void *self, UINT indices, UINT instances, UINT first,
                                               INT base, UINT first_instance) {
     count_draw(self);
+    if (static std::atomic<bool> shown{false};
+        static_cast<ListProxy *>(self)->topology == quad_list && !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] an indexed quad list is drawn as a triangle list, which "
+                             "is not the same picture\n");
+        std::fflush(stderr);
+    }
     host_of(self)->DrawIndexedInstanced(indices, instances, first, base, first_instance);
 }
 // XS_D3D_TRACE: a GPU address the title gives, and whether it is CPU memory of the process
@@ -1553,6 +1644,7 @@ void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
 void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIEW *view) {
     if (view)
         trace_address("IASetIndexBuffer", view->BufferLocation);
+    static_cast<ListProxy *>(self)->indices = view ? *view : D3D12_INDEX_BUFFER_VIEW{};
     host_of(self)->IASetIndexBuffer(view);
 }
 void STDMETHODCALLTYPE set_graphics_root_cbv(void *self, UINT index, std::uint64_t address) {
@@ -1646,6 +1738,7 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     vtable[22] = reinterpret_cast<Slot>(&set_scissors);
     vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
     vtable[27] = reinterpret_cast<Slot>(&execute_bundle);
+    vtable[20] = reinterpret_cast<Slot>(&set_topology);
     vtable[12] = reinterpret_cast<Slot>(&draw_instanced);
     vtable[13] = reinterpret_cast<Slot>(&draw_indexed_instanced);
     vtable[32] = reinterpret_cast<Slot>(&set_descriptor_heaps);
@@ -2080,6 +2173,12 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
             }
             const auto size = std::min(sizes[type], desc->SizeInBytes - at);
             stream.insert(stream.end(), bytes + at, bytes + at + size);
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY && size >= 8) {
+                D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
+                std::memcpy(&topology, stream.data() + stream.size() - size + 4, 4);
+                topology = host_topology_type(topology);
+                std::memcpy(stream.data() + stream.size() - size + 4, &topology, 4);
+            }
             if (type == 23 || type == 24) {
                 ++type;
                 std::memcpy(stream.data() + stream.size() - size, &type, 4);

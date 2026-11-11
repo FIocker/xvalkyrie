@@ -243,6 +243,7 @@ int wmain(int argc, wchar_t **argv) {
                       << std::endl;
             return code;
         };
+        hooks.starting = xs::surface::renew_title_surface;
         hooks.close_running = [] {
             std::cerr << "[Launcher] closing the title" << std::endl;
             xs::host::end_process(title_process.load());

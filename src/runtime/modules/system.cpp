@@ -1,6 +1,7 @@
 #include "runtime/modules/system.hpp"
 #include "host/files.hpp"
 #include "runtime/common/runtime.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <windows.h>
 
@@ -65,17 +66,38 @@ void install_xaudio2(Registry &registry) {
             registry.add(module, name, reinterpret_cast<void *>(function));
         }
 }
-// The front panel is a development kit's: a retail console has none, and says so
+// The front panel is a development kit's: a retail console has none, and says so. Its size
+// and pixel format are answered all the same, with a kit's 256x64 of 8-bit grey, because
+// titles ask for them before asking whether there is a panel. What a retail console says
+// there is not known.
+bool WINAPI front_panel_supported() { return false; }
+HRESULT WINAPI front_panel_absent() { return E_NOTIMPL; }
+HRESULT WINAPI front_panel_dimensions(std::uint32_t *height, std::uint32_t *width) {
+    if (!height || !width)
+        return E_POINTER;
+    *height = 64;
+    *width = 256;
+    return S_OK;
+}
+HRESULT WINAPI front_panel_format(std::uint32_t *format) {
+    if (!format)
+        return E_POINTER;
+    *format = 61; // DXGI_FORMAT_R8_UNORM
+    return S_OK;
+}
+HRESULT WINAPI front_panel_present(std::uint32_t, const std::uint8_t *) { return S_OK; }
 void install_front_panel(Registry &registry) {
-    static const auto unsupported = +[]() -> bool { return false; };
-    static const auto absent = +[]() -> HRESULT { return E_NOTIMPL; };
-    registry.add("xfrontpaneldisplay.dll", "XFrontPanelIsSupported",
-                 reinterpret_cast<void *>(unsupported));
-    for (const auto *name :
-         {"XFrontPanelGetButtonStates", "XFrontPanelGetLightStates", "XFrontPanelSetLightStates",
-          "XFrontPanelGetScreenDimensions", "XFrontPanelGetScreenPixelFormat",
-          "XFrontPanelSetDisplayName", "XFrontPanelPresentBuffer"})
-        registry.add("xfrontpaneldisplay.dll", name, reinterpret_cast<void *>(absent));
+    const char *const module = "xfrontpaneldisplay.dll";
+    const auto add = [&](const char *name, auto *function) {
+        registry.add(module, name, reinterpret_cast<void *>(function));
+    };
+    add("XFrontPanelIsSupported", &front_panel_supported);
+    add("XFrontPanelGetScreenDimensions", &front_panel_dimensions);
+    add("XFrontPanelGetScreenPixelFormat", &front_panel_format);
+    add("XFrontPanelPresentBuffer", &front_panel_present);
+    for (const auto *name : {"XFrontPanelGetButtonStates", "XFrontPanelGetLightStates",
+                             "XFrontPanelSetLightStates", "XFrontPanelSetDisplayName"})
+        add(name, &front_panel_absent);
 }
 void install_shader_compiler(Registry &registry, std::string_view module) {
     registry.add(module, "DxcCreateInstance", reinterpret_cast<void *>(&dxc_create_instance));

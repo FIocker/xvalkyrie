@@ -20,6 +20,9 @@ void set_title_parent(void *parent);
 // be given to draw into with use_title_surface. Hidden again by hide_title_surface, when
 // that process is gone.
 void *title_surface();
+// A new window in place of the surface, for the next title: a window a swap chain has
+// presented to does not take another process's swap chain. Same thread as set_title_parent.
+void renew_title_surface();
 void use_title_surface(void *surface);
 void hide_title_surface();
 // the top-level window the surface is in, null without a surface
