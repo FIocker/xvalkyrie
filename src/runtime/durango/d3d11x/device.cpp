@@ -7,6 +7,7 @@
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
+#include "runtime/modules/acphal.hpp"
 #include "runtime/modules/memory.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include "runtime/modules/d3d12x.hpp"
@@ -196,6 +197,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *context = nullptr;
     dxgi_inserted = sdk < 0x20000 ? 5 : 0;
     d3d11x::first_development_kits(dxgi_inserted != 0);
+    modules::early_audio_processor(dxgi_inserted != 0);
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
         std::fprintf(stderr,

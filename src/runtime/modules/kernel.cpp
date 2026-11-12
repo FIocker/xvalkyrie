@@ -319,7 +319,10 @@ LSTATUS WINAPI reg_close_key(HKEY key) {
 // COM classes of the host's: which one a title asked for and did not get
 HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD context,
                                   const GUID *iid, void **object) {
-    const auto result = CoCreateInstance(*class_id, outer, context, *iid, object);
+    auto result = CoCreateInstance(*class_id, outer, context, *iid, object);
+    // a console title's threads have COM without asking for it
+    if (result == CO_E_NOTINITIALIZED && SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
+        result = CoCreateInstance(*class_id, outer, context, *iid, object);
     if (FAILED(result)) {
         wchar_t text[64] = L"";
         StringFromGUID2(*class_id, text, 64);
@@ -328,6 +331,17 @@ HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD c
         std::fflush(stderr);
     }
     return result;
+}
+// RtlPcToFileHeader for the title's own modules, which the host's loader does not know:
+// the C++ runtime a title brings (std::exception_ptr in msvcp140) asks for the image a
+// thrown type is in
+void *WINAPI pc_to_file_header(void *address, void **base) {
+    auto *const found = detail::title_image_base(address);
+    if (!found)
+        return RtlPcToFileHeader(address, base);
+    if (base)
+        *base = found;
+    return found;
 }
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 const ApiFunction functions[] = {
@@ -376,6 +390,10 @@ void install_kernel(Registry &registry, Target target) {
     registry.add_api("RegQueryValueExW", erase(reg_query_value_ex_w));
     registry.add_api("RegCloseKey", erase(reg_close_key));
     registry.add_api("CoCreateInstance", erase(co_create_instance));
+    // Series only: with it the first-kit Xbox One title stops presenting after a few frames,
+    // for a reason not looked into
+    if (target == Target::scarlett)
+        registry.add_api("RtlPcToFileHeader", erase(pc_to_file_header));
     // system DLLs the libraries a GDK title ships with (its HTTP client, the C++ runtime)
     // use more of than the list of functions a title itself may import
     for (const auto *module : {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll"})

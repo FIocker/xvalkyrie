@@ -1,6 +1,5 @@
+#include "runtime/modules/acphal.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/durango/d3d11x/layout.hpp"
-#include "runtime/durango/runtime.hpp"
 #include "runtime/modules/memory.hpp"
 
 #include <algorithm>
@@ -19,8 +18,9 @@
 
 // The audio processor without SHAPE: commands are acknowledged and audio frames ticked so
 // the title's mixer runs, nothing is decoded. ABI as FMOD Ex calls it.
-namespace xs::runtime::durango {
+namespace xs::runtime::modules {
 namespace {
+std::atomic<bool> early_kit{false};
 struct ApuRegion {
     std::uintptr_t address;
     std::uint32_t size, apu;
@@ -38,7 +38,7 @@ std::uint32_t apu_address(std::uintptr_t address, std::uint32_t size) {
     return apu;
 }
 void *apu_memory(std::size_t size, std::uint64_t alignment) {
-    auto *const address = modules::allocate_aligned(size, alignment, nullptr);
+    auto *const address = allocate_aligned(size, alignment, nullptr);
     if (address) {
         const std::lock_guard lock(apu_mutex);
         apu_address(reinterpret_cast<std::uintptr_t>(address), static_cast<std::uint32_t>(size));
@@ -181,7 +181,7 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
         // the first development kits have the command's id right after its type, with no
         // time before them
         Message done{command_done, 0, 0, id};
-        if (d3d11x::first_development_kits())
+        if (early_kit)
             done.value = std::uint64_t{static_cast<std::uint32_t>(id)} << 32 | type;
         self->messages.push_back(done);
     }
@@ -224,6 +224,142 @@ HRESULT WINAPI acp_hal_create(Hal **hal) {
     return S_OK;
 }
 
+// xapu.dll, the Series console's audio decoder: Opus decoding and sample rate conversion
+// on the audio hardware, as a queue of commands and their results. Nothing is decoded here:
+// every command is answered at once, a Process command with silence of the length asked for.
+#pragma pack(push, 1)
+struct XApuCommand {
+    std::uint32_t type, stream, sequence, options;
+    void *context;
+};
+struct XApuActivate {
+    XApuCommand id;
+    std::uint32_t channels;
+};
+struct XApuProcess {
+    XApuCommand id;
+    float ramp, pitch;
+    std::uint32_t first_frame, frames, input_bytes;
+    void *input;
+    std::uint32_t output_bytes;
+    void *output;
+};
+struct XApuResult {
+    XApuCommand id;
+    std::uint32_t state;
+    std::uint64_t state_data, time;
+    HRESULT error;
+    std::uint32_t frames, output_bytes;
+    void *output;
+    float pitch;
+    std::uint32_t input_bytes;
+    void *input;
+};
+struct XApuConnectInput {
+    std::uint32_t process, streams, commands_per_stream, data_bytes, frames_per_output, options;
+};
+struct XApuConnectOutput {
+    void *data;
+    HANDLE ready;
+};
+#pragma pack(pop)
+struct XApu {
+    std::mutex mutex;
+    std::deque<XApuResult> results;
+    std::vector<std::uint32_t> channels;
+    void *data = nullptr;
+    HANDLE ready = nullptr;
+    std::uint32_t frames_per_output = 0;
+};
+constexpr HRESULT xapu_no_results = static_cast<HRESULT>(0x8ac81001);
+HRESULT WINAPI xapu_connect(const XApuConnectInput *input, XApuConnectOutput *output,
+                            XApu **handle) {
+    if (!input || !output || !handle)
+        return E_INVALIDARG;
+    auto *const client = new XApu;
+    client->channels.assign(std::max(input->streams, 1u), 2);
+    client->frames_per_output = input->frames_per_output;
+    if (input->data_bytes)
+        client->data = allocate_aligned(input->data_bytes, 0x10000, nullptr);
+    if (input->options & 8)
+        client->ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    *output = {client->data, client->ready};
+    *handle = client;
+    std::fprintf(stderr,
+                 "[Runtime] audio decoder connected: process type %u, %u streams (nothing is "
+                 "decoded: silence)\n",
+                 input->process, input->streams);
+    std::fflush(stderr);
+    return S_OK;
+}
+HRESULT WINAPI xapu_disconnect(XApu *client) {
+    if (!client)
+        return E_INVALIDARG;
+    if (client->data)
+        VirtualFree(client->data, 0, MEM_RELEASE);
+    if (client->ready)
+        CloseHandle(client->ready);
+    delete client;
+    return S_OK;
+}
+HRESULT WINAPI xapu_enqueue(XApu *client, const XApuCommand *command, std::uint32_t *count) {
+    if (!client || !command)
+        return E_INVALIDARG;
+    XApuResult result{};
+    result.id = *command;
+    result.pitch = 1;
+    const std::lock_guard lock(client->mutex);
+    const auto stream = command->stream < client->channels.size() ? command->stream : 0;
+    if (command->type == 1) {
+        const auto channels = reinterpret_cast<const XApuActivate *>(command)->channels;
+        client->channels[stream] = channels == 1 ? 1 : 2;
+    } else if (command->type == 3) {
+        const auto *const process = reinterpret_cast<const XApuProcess *>(command);
+        const std::uint32_t frame_bytes = client->channels[stream] * sizeof(float);
+        std::uint32_t frames = process->frames ? process->frames : client->frames_per_output;
+        frames = std::min(frames ? frames : 960, process->output_bytes / frame_bytes);
+        if (process->output && frames)
+            std::memset(process->output, 0, std::size_t{frames} * frame_bytes);
+        result.state = 1 | 2; // output ready, and more input wanted
+        result.frames = frames;
+        result.output_bytes = frames * frame_bytes;
+        result.output = process->output;
+        result.pitch = process->pitch;
+        result.input_bytes = process->input_bytes;
+        result.input = process->input;
+    }
+    client->results.push_back(result);
+    if (count)
+        *count = static_cast<std::uint32_t>(client->results.size());
+    if (client->ready && command->options & 1)
+        SetEvent(client->ready);
+    return S_OK;
+}
+HRESULT WINAPI xapu_dequeue(XApu *client, XApuResult *result) {
+    if (!client || !result)
+        return E_INVALIDARG;
+    const std::lock_guard lock(client->mutex);
+    if (client->results.empty())
+        return xapu_no_results;
+    *result = client->results.front();
+    client->results.pop_front();
+    return S_OK;
+}
+std::uint32_t WINAPI xapu_result_count(XApu *client, std::uint32_t *total) {
+    const std::lock_guard lock(client->mutex);
+    const auto count = static_cast<std::uint32_t>(client->results.size());
+    if (total)
+        *total = count;
+    return count;
+}
+// XApuUtilization: streams available, and the most there can be
+HRESULT WINAPI xapu_utilization(std::uint32_t, std::uint32_t, std::uint32_t *utilization) {
+    if (!utilization)
+        return E_INVALIDARG;
+    utilization[0] = utilization[1] = 256;
+    return S_OK;
+}
+
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 } // namespace
 
@@ -239,5 +375,15 @@ void install_acphal(Registry &registry) {
         {"AcpHalReleaseShapeContexts", erase(release_shape_contexts)}};
     for (const auto &[name, function] : functions)
         registry.add("acphal.dll", name, function);
+    const std::pair<const char *, void *> decoder[] = {
+        {"XApuConnect", erase(xapu_connect)},
+        {"XApuDisconnect", erase(xapu_disconnect)},
+        {"XApuEnqueueCommand", erase(xapu_enqueue)},
+        {"XApuDequeueResult", erase(xapu_dequeue)},
+        {"XApuGetResultCount", erase(xapu_result_count)},
+        {"XApuGetUtilization", erase(xapu_utilization)}};
+    for (const auto &[name, function] : decoder)
+        registry.add("xapu.dll", name, function);
 }
-} // namespace xs::runtime::durango
+void early_audio_processor(bool yes) { early_kit = yes; }
+} // namespace xs::runtime::modules

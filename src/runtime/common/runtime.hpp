@@ -116,6 +116,8 @@ bool title_provides(const Registry &registry, const std::filesystem::path &direc
 std::uint64_t guest_offset(const void *address);
 bool in_title(const void *address);
 // "image+0x...", "<dll>+0x..." or the address
+// the base of the title's image or DLL `address` is in, null for anything else
+void *title_image_base(const void *address);
 std::string guest_location(const void *address);
 // an export of a console system module from the title's system folder, mapping it on first
 // use; null without that folder or module

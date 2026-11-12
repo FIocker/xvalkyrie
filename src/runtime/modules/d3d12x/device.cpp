@@ -279,6 +279,64 @@ void console_resource(void *resource) {
                                          {{15, reinterpret_cast<Slot>(&no_console_method)},
                                           {16, reinterpret_cast<Slot>(&no_console_method)}});
 }
+// Map (8) of a resource the host does not map. All of the console's memory is the CPU's as
+// well, and a title maps a texture of the default heap to fill it (one clears its back
+// buffers that way). The title gets memory of ours of the resource's size instead, and what
+// it writes there goes nowhere.
+std::mutex scratch_mutex;
+struct Scratch {
+    void *memory = nullptr;
+    std::uint64_t size = 0;
+};
+std::map<ID3D12Resource *, Scratch> scratch_maps;
+HRESULT STDMETHODCALLTYPE map_resource(ID3D12Resource *self, UINT subresource,
+                                       const D3D12_RANGE *range, void **data) {
+    using Map = HRESULT(STDMETHODCALLTYPE *)(void *, UINT, const D3D12_RANGE *, void **);
+    const auto result = original<Map>(self, 8)(self, subresource, range, data);
+    if (SUCCEEDED(result) || !data)
+        return result;
+    const std::lock_guard lock(scratch_mutex);
+    ID3D12Device *device = nullptr;
+    if (FAILED(self->GetDevice(IID_PPV_ARGS(&device))))
+        return result;
+    const auto desc = self->GetDesc();
+    const auto size = device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
+    device->Release();
+    // a resource made where a released one was finds that one's memory, which may be smaller
+    auto &scratch = scratch_maps[self];
+    if (scratch.size < size) {
+        if (scratch.memory)
+            VirtualFree(scratch.memory, 0, MEM_RELEASE);
+        scratch = {VirtualAlloc(nullptr, static_cast<SIZE_T>(size), MEM_RESERVE | MEM_COMMIT,
+                                PAGE_READWRITE),
+                   size};
+        if (static std::atomic<int> shown{0}; shown++ < 4) {
+            std::fprintf(stderr,
+                         "[Runtime] the title maps a %llux%u texture the host does not map: "
+                         "what it writes there is lost\n",
+                         desc.Width, desc.Height);
+            std::fflush(stderr);
+        }
+    }
+    auto *const memory = scratch.memory;
+    *data = memory;
+    return memory ? S_OK : result;
+}
+void STDMETHODCALLTYPE unmap_resource(ID3D12Resource *self, UINT subresource,
+                                      const D3D12_RANGE *range) {
+    {
+        const std::lock_guard lock(scratch_mutex);
+        if (scratch_maps.contains(self))
+            return;
+    }
+    using Unmap = void(STDMETHODCALLTYPE *)(void *, UINT, const D3D12_RANGE *);
+    original<Unmap>(self, 9)(self, subresource, range);
+}
+void mappable_resource(void *resource) {
+    console_vtable<Family::resource>(resource, 15, 17,
+                                     {{8, reinterpret_cast<Slot>(&map_resource)},
+                                      {9, reinterpret_cast<Slot>(&unmap_resource)}});
+}
 // ID3D12Device::QueryInterface: the console's device is also its DXGI device
 HRESULT STDMETHODCALLTYPE device_query(ID3D12Device *self, REFIID iid, void **object) {
     if (object && is_any<IDXGIObject, IDXGIDevice, IDXGIDevice1>(iid)) {
@@ -1230,11 +1288,33 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
         if (host_desc.Layout >= 0x100)
             host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     }
+    // All of the console's memory is the CPU's as well: a title maps a buffer of the default
+    // heap and writes to it. The host only maps what is in a heap the CPU can reach, so such
+    // a buffer goes in one (unless it is written by the GPU, which those heaps do not take).
+    D3D12_HEAP_PROPERTIES mappable{};
+    if (console == Target::scarlett && heap && desc && heap->Type == D3D12_HEAP_TYPE_DEFAULT &&
+        desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
+        !(host_desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) {
+        mappable = {D3D12_HEAP_TYPE_CUSTOM, D3D12_CPU_PAGE_PROPERTY_WRITE_BACK,
+                    D3D12_MEMORY_POOL_L0, heap->CreationNodeMask, heap->VisibleNodeMask};
+        heap = &mappable;
+    }
+    if (static std::atomic<int> shown{0};
+        std::getenv("XS_D3D_TRACE") && heap && desc && shown++ < 40)
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommittedResource heap %d flags 0x%x dimension %d %llux%u "
+                     "format %d flags 0x%x state 0x%x\n",
+                     heap->Type, flags, desc->Dimension, desc->Width, desc->Height, desc->Format,
+                     desc->Flags, state);
     const auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr,
                                                    state, clear, iid, resource);
     if (SUCCEEDED(result) && resource && *resource) {
         console_resource(*resource);
         track_buffer(static_cast<ID3D12Resource *>(*resource));
+        if (console == Target::scarlett && desc &&
+            desc->Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
+            heap->Type == D3D12_HEAP_TYPE_DEFAULT)
+            mappable_resource(*resource);
     }
     if (FAILED(result) && heap && desc) {
         std::fprintf(stderr,

@@ -1,5 +1,6 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/acphal.hpp"
 #include "runtime/modules/gameinput.hpp"
 #include "runtime/modules/gameruntime.hpp"
 #include "runtime/modules/kernel.hpp"
@@ -35,7 +36,7 @@ void install(Registry &registry) {
     modules::install_front_panel(registry);
     modules::install_shader_compiler(registry, "dxcompiler_x.dll");
     install_system(registry);
-    install_acphal(registry);
+    modules::install_acphal(registry);
     modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);
     install_d3d11x(registry);

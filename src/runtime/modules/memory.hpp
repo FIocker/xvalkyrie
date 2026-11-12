@@ -15,8 +15,6 @@ namespace modules {
 std::span<const ApiFunction> memory_functions();
 // xmem.dll, and VirtualAlloc and its family for every API set
 void install_xmem(Registry &registry);
-// ApuAlloc and ApuFree of AcpHal.dll, for a console whose runtime has no more of that DLL
-void install_apu_memory(Registry &registry);
 void *allocate_aligned(std::size_t size, std::uint64_t alignment, void *address);
 // VirtualAlloc(MEM_COMMIT) as a title's own call does it, physical page reservations included
 void *commit_title_memory(void *address, std::size_t size);

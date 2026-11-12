@@ -388,6 +388,9 @@ BOOL WINAPI xmem_working_set_statistics(DWORD, WorkingSet *statistics) {
     return TRUE;
 }
 BOOL WINAPI no() { return FALSE; }
+// XMemTransferMemory moves memory between the title's and the system's budgets, which the
+// host does not keep apart
+BOOL WINAPI xmem_transfer_memory(UINT, SIZE_T) { return TRUE; }
 ULONGLONG WINAPI xmem_make_tag(UINT32 tag) { return ULONGLONG{tag} << 32; }
 
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
@@ -422,23 +425,6 @@ HRESULT WINAPI allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 ad
 }
 HRESULT WINAPI free_graphics_memory(void *address) { return d3d_free_graphics_memory(address); }
 
-// AcpHal.dll's memory for audio data: ordinary memory here, with no address of the audio
-// processor's to give
-HRESULT WINAPI apu_alloc(void **address, UINT32 *apu, UINT32 size, UINT32 alignment, UINT32) {
-    if (!address)
-        return E_INVALIDARG;
-    *address = allocate_aligned(size ? size : 1, alignment, nullptr);
-    if (apu)
-        *apu = 0;
-    return *address ? S_OK : E_OUTOFMEMORY;
-}
-HRESULT WINAPI apu_free(void *address) {
-    return address && VirtualFree(address, 0, MEM_RELEASE) ? S_OK : E_INVALIDARG;
-}
-void install_apu_memory(Registry &registry) {
-    registry.add("acphal.dll", "ApuAlloc", reinterpret_cast<void *>(&apu_alloc));
-    registry.add("acphal.dll", "ApuFree", reinterpret_cast<void *>(&apu_free));
-}
 void install_xmem(Registry &registry) {
     for (const auto &[name, function] : functions)
         if (std::string_view(name).starts_with("XMem") &&
@@ -453,6 +439,7 @@ void install_xmem(Registry &registry) {
         {"XMemGetWorkingSetStatistics", erase(xmem_working_set_statistics)},
         {"XMemGetWin32HeapStatistics", erase(not_implemented)},
         {"XMemIsToolsMemAvailable", erase(no)},
+        {"XMemTransferMemory", erase(xmem_transfer_memory)},
         {"XMemMakeTag", erase(xmem_make_tag)}};
     for (const auto &[name, function] : more)
         registry.add("xmem.dll", name, function);

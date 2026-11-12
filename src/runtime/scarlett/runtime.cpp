@@ -1,5 +1,6 @@
 #include "runtime/scarlett/runtime.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/acphal.hpp"
 #include "runtime/modules/d3d12x.hpp"
 #include "runtime/modules/gameinput.hpp"
 #include "runtime/modules/gameruntime.hpp"
@@ -18,7 +19,7 @@ void install(Registry &registry) {
     modules::install_gameruntime(registry);
     modules::install_gameinput(registry);
     modules::install_xmem(registry);
-    modules::install_apu_memory(registry);
+    modules::install_acphal(registry);
     modules::install_xaudio2(registry);
     modules::install_front_panel(registry);
     registry.forward("ws2_32.dll", "ws2_32.dll");

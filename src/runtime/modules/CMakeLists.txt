@@ -1,6 +1,6 @@
 # Console modules both consoles have. Each console's runtime installs them under the name
 # the DLL has there.
-add_library(xs_runtime_modules xg.cpp kernel.cpp memory.cpp window.cpp system.cpp placement.cpp storage.cpp gameinput.cpp
+add_library(xs_runtime_modules xg.cpp kernel.cpp memory.cpp acphal.cpp window.cpp system.cpp placement.cpp storage.cpp gameinput.cpp
   d3d12x/device.cpp d3d12x/present.cpp
   gameruntime/runtime.cpp gameruntime/slots.cpp gameruntime/task_queue.cpp gameruntime/async.cpp
   gameruntime/user.cpp gameruntime/save.cpp gameruntime/system.cpp)

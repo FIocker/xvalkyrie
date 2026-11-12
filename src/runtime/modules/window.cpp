@@ -21,17 +21,25 @@ HWND remember(HWND window) {
     }
     return window;
 }
+// The console has no frame around a title's window: the size the title asks for is the size
+// of what it draws to. A top-level window gets no caption or border here either.
+DWORD console_style(DWORD style, HWND parent) {
+    style &= ~WS_VISIBLE;
+    if (!parent && !(style & WS_CHILD))
+        style = (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP;
+    return style;
+}
 HWND WINAPI create_window_ex_w(DWORD extended, const wchar_t *class_name, const wchar_t *name,
                                DWORD style, int x, int y, int width, int height, HWND parent,
                                HMENU menu, HINSTANCE instance, void *parameter) {
-    return remember(CreateWindowExW(extended, class_name, name, style & ~WS_VISIBLE, x, y, width,
-                                    height, parent, menu, instance, parameter));
+    return remember(CreateWindowExW(extended, class_name, name, console_style(style, parent), x, y,
+                                    width, height, parent, menu, instance, parameter));
 }
 HWND WINAPI create_window_ex_a(DWORD extended, const char *class_name, const char *name,
                                DWORD style, int x, int y, int width, int height, HWND parent,
                                HMENU menu, HINSTANCE instance, void *parameter) {
-    return remember(CreateWindowExA(extended, class_name, name, style & ~WS_VISIBLE, x, y, width,
-                                    height, parent, menu, instance, parameter));
+    return remember(CreateWindowExA(extended, class_name, name, console_style(style, parent), x, y,
+                                    width, height, parent, menu, instance, parameter));
 }
 BOOL WINAPI show_window(HWND window, int command) {
     {

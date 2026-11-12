@@ -151,6 +151,14 @@ DWORD WINAPI get_module_file_name_a(HMODULE module, LPSTR buffer, DWORD size) {
     RaiseException(0xE06D7363, EXCEPTION_NONCONTINUABLE, 4, parameters);
     std::abort();
 }
+// FreeLibraryWhenCallbackReturns with a module of the title's: the C++ runtime holds its own
+// DLL while a thread pool callback runs and lets go of it this way. The host's loader does
+// not know that module and raises when the callback returns; there is nothing to free.
+void WINAPI free_library_when_callback_returns(PTP_CALLBACK_INSTANCE instance, HMODULE module) {
+    if (module && (is_guest(module) || module_at(module)))
+        return;
+    FreeLibraryWhenCallbackReturns(instance, module);
+}
 struct Override {
     std::string_view symbol;
     void *function;
@@ -259,6 +267,7 @@ const Override overrides[] = {
     {"GetModuleFileNameW", erase(get_module_file_name_w)},
     {"GetModuleFileNameA", erase(get_module_file_name_a)},
     {"_CxxThrowException", erase(cxx_throw_exception)},
+    {"FreeLibraryWhenCallbackReturns", erase(free_library_when_callback_returns)},
     {"GetCommandLineW", erase(get_command_line_w)},
     {"GetCommandLineA", erase(get_command_line_a)},
     {"__p___argc", erase(argc_pointer)},
@@ -799,6 +808,15 @@ void *detail::guest_symbol(void *module, const char *symbol) {
     return library && library->base == reinterpret_cast<std::uint64_t>(module)
                ? export_of(library, label)
                : nullptr;
+}
+
+void *detail::title_image_base(const void *address) {
+    if (!guest || !address)
+        return nullptr;
+    if (is_guest(address))
+        return guest_module();
+    const auto *const title = module_at(address);
+    return title ? reinterpret_cast<void *>(title->base) : nullptr;
 }
 
 void *detail::runtime_override(std::string_view symbol) {
