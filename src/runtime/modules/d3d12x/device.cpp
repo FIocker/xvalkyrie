@@ -1955,6 +1955,14 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
         self->CreateCommandList(desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]), allocator,
                                 state, IID_PPV_ARGS(&host));
     *list = SUCCEEDED(result) ? make_list_proxy(host) : nullptr;
+    if (FAILED(result)) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommandListX type %u flags 0x%x nodes 0x%x allocator %p: "
+                     "0x%08lx\n",
+                     desc[0], desc[1], desc[2], static_cast<void *>(allocator),
+                     static_cast<unsigned long>(result));
+        report_messages();
+    }
     return result;
 }
 // The uploads of placement textures the title wrote, on a list of ours that runs before the
