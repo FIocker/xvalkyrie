@@ -2,6 +2,7 @@
 #include "backends/input/input.hpp"
 #include "runtime/common/runtime.hpp"
 #include <atomic>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
@@ -17,7 +18,8 @@ using Slot = void *;
 constexpr std::uint32_t kind_gamepad = 0x00040000, kind_controller = 0x0000000e,
                         kind_ui_navigation = 0x01000000;
 constexpr HRESULT reading_not_found = static_cast<HRESULT>(0x838A0003);
-constexpr std::uint32_t device_connected = 1;
+// connected, input and output enabled, synchronized
+constexpr std::uint32_t device_connected = 1 | 2 | 4 | 0x40;
 
 struct Object {
     Slot *vtable;
@@ -49,14 +51,26 @@ constexpr char device_name[] = "IGameInputDevice", reading_name[] = "IGameInputR
 Slot device_vtable[24], reading_vtable[32], input_vtable[32];
 Object device{device_vtable}, input{input_vtable};
 
-// GameInputDeviceInfo: its size first; the rest says nothing about a device that has no
-// hardware behind it
-std::uint8_t device_info[1024];
-const void *WINAPI get_device_info(Object *) {
-    const std::uint32_t size = sizeof device_info;
-    std::memcpy(device_info, &size, sizeof size);
-    return device_info;
-}
+// GameInputDeviceInfo, as far as a title looks to tell a gamepad: an Xbox controller of the
+// Xbox One family that reads as a gamepad and has the four rumble motors. The rest (reports,
+// strings, descriptors) is empty.
+struct DeviceInfo {
+    std::uint32_t size;
+    std::uint16_t vendor, product, revision;
+    std::uint8_t interface_number, collection;
+    std::uint16_t usage_page, usage_id;
+    std::uint16_t hardware_version[4], firmware_version[4];
+    std::uint8_t device_id[32], root_id[32];
+    std::int32_t family;
+    std::uint32_t capabilities, supported_input, rumble_motors;
+    std::uint8_t rest[896];
+};
+static_assert(offsetof(DeviceInfo, supported_input) == 104);
+DeviceInfo device_info{sizeof(DeviceInfo), 0x045e, 0x0b12, 1,      0,
+                       0,                  1,      5,      {1},    {1},
+                       {0x58, 0x53, 1},    {0x58, 0x53, 1}, 1, 8,
+                       kind_gamepad | kind_controller | kind_ui_navigation | 2 | 4 | 8, 0xf, {}};
+const void *WINAPI get_device_info(Object *) { return &device_info; }
 std::uint32_t WINAPI get_device_status(Object *) { return device_connected; }
 void WINAPI set_rumble(Object *, const void *) {}
 
