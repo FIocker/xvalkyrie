@@ -7,6 +7,7 @@
 #include "runtime/modules/kernel.hpp"
 #include "runtime/modules/memory.hpp"
 #include "runtime/modules/system.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/window.hpp"
 #include "runtime/modules/xg.hpp"
 
@@ -14,6 +15,7 @@ namespace xs::runtime::scarlett {
 // A Series title is a GDK title: a Win32 program on API sets, the Gaming Runtime, and the
 // console's Direct3D 12. All of it is shared with Xbox One GDK titles.
 void install(Registry &registry) {
+    modules::frame_watchdog();
     modules::install_kernel(registry, Target::scarlett);
     modules::install_window(registry);
     modules::install_gameruntime(registry);

@@ -1,5 +1,5 @@
 #include "runtime/common/runtime.hpp"
-#include "runtime/durango/runtime.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -12,7 +12,7 @@
 
 // XS_WATCHDOG: when no frame has been presented for 5 seconds, the stack of every thread of
 // the process goes to the log, three times per stall, to see what the title is waiting on.
-namespace xs::runtime::durango {
+namespace xs::runtime::modules {
 namespace {
 std::atomic<std::int64_t> last_frame{0};
 std::int64_t now() {
@@ -101,4 +101,4 @@ void frame_watchdog() {
             }
         }).detach();
 }
-} // namespace xs::runtime::durango
+} // namespace xs::runtime::modules

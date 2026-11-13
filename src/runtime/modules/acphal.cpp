@@ -80,7 +80,19 @@ HRESULT WINAPI apu_map_virtual_address(std::uint32_t *apu, void *address, std::u
     *apu = apu_address(reinterpret_cast<std::uintptr_t>(address), size);
     return S_OK;
 }
+// ApuMapApuAddress: the memory an address of the audio processor's stands for
+void *WINAPI apu_map_apu_address(std::uint32_t apu) {
+    const std::lock_guard lock(apu_mutex);
+    for (const auto &region : apu_regions)
+        if (apu - region.apu < region.size)
+            return reinterpret_cast<void *>(region.address + (apu - region.apu));
+    return nullptr;
+}
 BOOL WINAPI apu_is_virtual_address_valid() { return TRUE; }
+// chad.dll (XDsp, the Series console's audio DSP) and the audio state monitor of
+// Windows.Media.MediaControl.dll: their interfaces are in no public header, so a title is
+// told they are not there
+HRESULT WINAPI no_audio_dsp() { return E_NOTIMPL; }
 HRESULT WINAPI apu_create_heap() { return S_OK; }
 
 // 0x60 bytes; the rest is unknown
@@ -369,6 +381,7 @@ void install_acphal(Registry &registry) {
         {"ApuFree", erase(apu_free)},
         {"ApuCreateHeap", erase(apu_create_heap)},
         {"ApuMapVirtualAddress", erase(apu_map_virtual_address)},
+        {"ApuMapApuAddress", erase(apu_map_apu_address)},
         {"ApuIsVirtualAddressValid", erase(apu_is_virtual_address_valid)},
         {"AcpHalCreate", erase(acp_hal_create)},
         {"AcpHalAllocateShapeContexts", erase(allocate_shape_contexts)},
@@ -384,6 +397,11 @@ void install_acphal(Registry &registry) {
         {"XApuGetUtilization", erase(xapu_utilization)}};
     for (const auto &[name, function] : decoder)
         registry.add("xapu.dll", name, function);
+    for (const auto *name :
+         {"XDspConnect", "XDspDisconnect", "XDspActivate", "XDspDeactivate", "XDspSubmitCommand"})
+        registry.add("chad.dll", name, erase(no_audio_dsp));
+    registry.add("windows.media.mediacontrol.dll",
+                 "CreateRenderAudioStateMonitorForCategoryAndDeviceRole", erase(no_audio_dsp));
 }
 void early_audio_processor(bool yes) { early_kit = yes; }
 } // namespace xs::runtime::modules

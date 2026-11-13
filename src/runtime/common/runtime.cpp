@@ -73,11 +73,12 @@ detail::Binding detail::resolve(const Registry &registry, std::string_view modul
                                 std::string_view symbol) {
     if (auto *const function = registry.find(module, symbol))
         return {function, "own"};
+    // ours whatever module it is imported from, the host policy included
+    if (auto *const function = registry.find_api(symbol))
+        return {function, "own"};
     const auto forwarded = registry.forwarded(module);
     if (forwarded.empty() && !registry.open() && !host_policy_allows(module, symbol))
         return {nullptr, "missing"};
-    if (auto *const function = registry.find_api(symbol))
-        return {function, "own"};
     if (auto *const function = runtime_override(symbol))
         return {function, "own"};
     if (auto *const function = host_export(forwarded.empty() ? module : forwarded, symbol))

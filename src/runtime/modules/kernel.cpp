@@ -49,7 +49,19 @@ HMODULE WINAPI load_library_a(const char *name) { return load_library_ex_a(name,
 // reads into memory placement resources live in
 BOOL WINAPI read_file(HANDLE file, void *buffer, DWORD bytes, DWORD *read, OVERLAPPED *overlapped) {
     prepare_title_write(buffer, bytes);
-    return ReadFile(file, buffer, bytes, read, overlapped);
+    const auto result = ReadFile(file, buffer, bytes, read, overlapped);
+    // XS_FILE_TRACE: a read the host turns down
+    if (static const bool trace = std::getenv("XS_FILE_TRACE") != nullptr;
+        trace && (overlapped || !result)) {
+        const auto error = GetLastError();
+        std::fprintf(stderr, "[Runtime] ReadFile(%p, %lu bytes at %llx, buffer %p): error %lu\n",
+                     file, bytes,
+                     overlapped ? ULONGLONG{overlapped->OffsetHigh} << 32 | overlapped->Offset : 0,
+                     buffer, error);
+        std::fflush(stderr);
+        SetLastError(error);
+    }
+    return result;
 }
 BOOL WINAPI read_file_ex(HANDLE file, void *buffer, DWORD bytes, OVERLAPPED *overlapped,
                          LPOVERLAPPED_COMPLETION_ROUTINE completion) {
@@ -405,13 +417,17 @@ void install_kernel(Registry &registry, Target target) {
     registry.add_api("RegQueryValueExW", erase(reg_query_value_ex_w));
     registry.add_api("RegCloseKey", erase(reg_close_key));
     registry.add_api("CoCreateInstance", erase(co_create_instance));
+    // not in the list of APIs a title may import, and imported all the same. Not an entry
+    // of kernel32.dll: a module with entries is ours to LoadLibrary, and this one is not.
+    registry.add_api("__C_specific_handler", erase(__C_specific_handler));
     // Series only: with it the first-kit Xbox One title stops presenting after a few frames,
     // for a reason not looked into
     if (target == Target::scarlett)
         registry.add_api("RtlPcToFileHeader", erase(pc_to_file_header));
     // system DLLs the libraries a GDK title ships with (its HTTP client, the C++ runtime)
     // use more of than the list of functions a title itself may import
-    for (const auto *module : {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll"})
+    for (const auto *module :
+         {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll", "advapi32.dll"})
         registry.forward(module, module);
 }
 } // namespace xs::runtime::modules

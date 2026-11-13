@@ -1,3 +1,4 @@
+#include "runtime/modules/watchdog.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include "backends/surface/surface.hpp"
@@ -502,7 +503,7 @@ Layout device() {
 
 // what follows each frame the title presents, whichever way it does
 void presented() {
-    frame_watchdog();
+    modules::frame_watchdog();
     if (auto *const window = winrt::current_title_window()) {
         window->show();
         static std::atomic<int> frames{0};

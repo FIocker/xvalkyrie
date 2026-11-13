@@ -1,5 +1,6 @@
 #include "backends/graphics/backend.hpp"
 #include "backends/surface/surface.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/d3d12x.hpp"
 #include "runtime/modules/d3d12x/internal.hpp"
 #include "runtime/modules/window.hpp"
@@ -240,6 +241,7 @@ HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_para
         back->Release();
     graphics::frame_counted();
     ++presents;
+    frame_watchdog();
     title_window().show();
     // a hidden window does not wait for the display, and a title that sees a status stops
     if (result == DXGI_STATUS_OCCLUDED)
