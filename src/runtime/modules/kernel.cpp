@@ -89,6 +89,21 @@ std::wstring console_path(const wchar_t *name) {
         std::filesystem::create_directories(folder, error);
         return (folder / path.substr(3)).wstring();
     }
+    // C:\Users\DefaultUser and C:\Users\<Xbox user id> are where a GDK title keeps what it
+    // writes on the console. On the host they are another user's folders, or nobody's.
+    if (drive(L"C:") && path.size() > 9 &&
+        CompareStringOrdinal(path.data() + 3, 5, L"Users", 5, TRUE) == CSTR_EQUAL &&
+        (path[8] == L'\\' || path[8] == L'/')) {
+        const auto rest = path.substr(9);
+        const auto name = rest.substr(0, rest.find_first_of(L"\\/"));
+        const bool user_id = !name.empty() && name.find_first_not_of(L"0123456789") == name.npos;
+        if (user_id || CompareStringOrdinal(name.data(), static_cast<int>(name.size()),
+                                            L"DefaultUser", 11, TRUE) == CSTR_EQUAL) {
+            const auto folder = save_directory() / "Users";
+            std::filesystem::create_directories(folder / name, error);
+            return (folder / rest).wstring();
+        }
+    }
     // from the root of the current drive, which is the package's on the console
     if (path.size() > 1 && (path[0] == L'\\' || path[0] == L'/') && path[1] != L'\\' &&
         path[1] != L'/')
