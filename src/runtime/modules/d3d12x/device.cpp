@@ -1287,6 +1287,10 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
         // a console layout names a tile mode (0x100 | mode): the host picks its own
         if (host_desc.Layout >= 0x100)
             host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        // the console takes any alignment for a buffer (a title asks for 64 bytes); the
+        // host only its own
+        if (host_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+            host_desc.Alignment = 0;
     }
     // All of the console's memory is the CPU's as well: a title maps a buffer of the default
     // heap and writes to it. The host only maps what is in a heap the CPU can reach, so such
@@ -2237,6 +2241,42 @@ void STDMETHODCALLTYPE create_feedback_view(ID3D12Device *self, ID3D12Resource *
                                              D3D12_CPU_DESCRIPTOR_HANDLE);
     original<Create>(self, 71)(self, target, feedback, host_handle(handle));
 }
+// CreateCommandSignature (41): which arguments the host turned down. The console has
+// argument types of its own from 100 on.
+HRESULT STDMETHODCALLTYPE create_command_signature(ID3D12Device *self,
+                                                   const D3D12_COMMAND_SIGNATURE_DESC *desc,
+                                                   ID3D12RootSignature *root, REFIID iid,
+                                                   void **signature) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_COMMAND_SIGNATURE_DESC *,
+                                                ID3D12RootSignature *, REFIID, void **);
+    // 104 and 105 are the console's own dispatches (DISPATCHX, DISPATCH_L2): three counts,
+    // as the desktop's dispatch has, which is what the host is given. What else sets them
+    // apart on the console is not known here.
+    D3D12_COMMAND_SIGNATURE_DESC host{};
+    std::vector<D3D12_INDIRECT_ARGUMENT_DESC> arguments;
+    if (desc && desc->pArgumentDescs) {
+        arguments.assign(desc->pArgumentDescs, desc->pArgumentDescs + desc->NumArgumentDescs);
+        for (auto &argument : arguments)
+            if (argument.Type == 104 || argument.Type == 105)
+                argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+        host = *desc;
+        host.pArgumentDescs = arguments.data();
+        desc = &host;
+    }
+    const auto result = original<Create>(self, 41)(self, desc, root, iid, signature);
+    if (FAILED(result) && desc) {
+        std::string types;
+        for (UINT i = 0; i < desc->NumArgumentDescs && desc->pArgumentDescs; ++i)
+            types += ' ' + std::to_string(desc->pArgumentDescs[i].Type);
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommandSignature stride %u, %u arguments of types%s, root "
+                     "signature %p: 0x%08lx\n",
+                     desc->ByteStride, desc->NumArgumentDescs, types.c_str(),
+                     static_cast<void *>(root), static_cast<unsigned long>(result));
+        report_messages();
+    }
+    return result;
+}
 // ID3D12Device2::CreatePipelineState, from a stream of subobjects: the host's (47), and why
 // when it turns the pipeline down
 HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
@@ -2348,6 +2388,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({14, reinterpret_cast<Slot>(&create_descriptor_heap)});
     overrides.push_back({15, reinterpret_cast<Slot>(&descriptor_increment)});
     overrides.push_back({16, reinterpret_cast<Slot>(&create_root_signature)});
+    overrides.push_back({41, reinterpret_cast<Slot>(&create_command_signature)});
     overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
     overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});
     overrides.push_back({19, reinterpret_cast<Slot>(&create_uav)});
