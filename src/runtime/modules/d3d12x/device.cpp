@@ -2377,6 +2377,37 @@ void STDMETHODCALLTYPE create_feedback_view(ID3D12Device *self, ID3D12Resource *
                                              D3D12_CPU_DESCRIPTOR_HANDLE);
     original<Create>(self, 71)(self, target, feedback, host_handle(handle));
 }
+// GetCopyableFootprints (38): the description is a console one, with the console's flags
+// and layouts, which the host answers with offsets of -1. A title adds those to the address
+// it copies to.
+void STDMETHODCALLTYPE copyable_footprints(ID3D12Device *self, const D3D12_RESOURCE_DESC *desc,
+                                           UINT first, UINT count, UINT64 offset,
+                                           D3D12_PLACED_SUBRESOURCE_FOOTPRINT *layouts,
+                                           UINT *rows, UINT64 *row_sizes, UINT64 *total) {
+    using Get = void(STDMETHODCALLTYPE *)(void *, const D3D12_RESOURCE_DESC *, UINT, UINT, UINT64,
+                                          D3D12_PLACED_SUBRESOURCE_FOOTPRINT *, UINT *, UINT64 *,
+                                          UINT64 *);
+    D3D12_RESOURCE_DESC host{};
+    if (desc) {
+        host = *desc;
+        host.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host.Flags & 0xff);
+        if (host.Layout >= 0x100)
+            host.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        host.Alignment = 0;
+    }
+    original<Get>(self, 38)(self, desc ? &host : nullptr, first, count, offset, layouts, rows,
+                            row_sizes, total);
+    if (static std::atomic<bool> shown{false};
+        desc && total && *total == ~0ull && !shown.exchange(true)) {
+        std::fprintf(stderr,
+                     "[Runtime] GetCopyableFootprints: the host has no layout for dimension %d "
+                     "%llux%ux%u mips %u format %d samples %u layout %d flags 0x%x\n",
+                     desc->Dimension, desc->Width, desc->Height, desc->DepthOrArraySize,
+                     desc->MipLevels, desc->Format, desc->SampleDesc.Count, desc->Layout,
+                     desc->Flags);
+        std::fflush(stderr);
+    }
+}
 // CreateCommandSignature (41): which arguments the host turned down. The console has
 // argument types of its own from 100 on.
 HRESULT STDMETHODCALLTYPE create_command_signature(ID3D12Device *self,
@@ -2525,6 +2556,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({15, reinterpret_cast<Slot>(&descriptor_increment)});
     overrides.push_back({16, reinterpret_cast<Slot>(&create_root_signature)});
     overrides.push_back({41, reinterpret_cast<Slot>(&create_command_signature)});
+    overrides.push_back({38, reinterpret_cast<Slot>(&copyable_footprints)});
     overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
     overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});
     overrides.push_back({19, reinterpret_cast<Slot>(&create_uav)});
