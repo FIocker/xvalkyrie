@@ -1095,6 +1095,36 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
 D3D12_PRIMITIVE_TOPOLOGY_TYPE host_topology_type(D3D12_PRIMITIVE_TOPOLOGY_TYPE type) {
     return type == 19 || type == 32 ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE : type;
 }
+// What a shader a pipeline was turned down with is made of: its container's parts by name
+// and size. A console build may carry only code for the console's GPU. XS_SHADER_DUMP=<file>
+// writes the first one there.
+void describe_shader(const char *stage, const D3D12_SHADER_BYTECODE &code) {
+    const auto *const bytes = static_cast<const std::uint8_t *>(code.pShaderBytecode);
+    if (!bytes || code.BytecodeLength < 32)
+        return;
+    std::string parts;
+    std::uint32_t count = 0;
+    if (!std::memcmp(bytes, "DXBC", 4)) {
+        std::memcpy(&count, bytes + 28, 4);
+        for (std::uint32_t i = 0; i < std::min(count, 32u); ++i) {
+            std::uint32_t offset = 0, size = 0;
+            std::memcpy(&offset, bytes + 32 + 4 * i, 4);
+            if (offset + 8 > code.BytecodeLength)
+                break;
+            std::memcpy(&size, bytes + offset + 4, 4);
+            parts += ' ' + std::string(reinterpret_cast<const char *>(bytes + offset), 4) + ':' +
+                     std::to_string(size);
+        }
+    }
+    std::fprintf(stderr, "[Runtime]   %s shader, %zu bytes, starts %.4s, parts:%s\n", stage,
+                 static_cast<std::size_t>(code.BytecodeLength), bytes, parts.c_str());
+    if (static std::atomic<bool> dumped{false};
+        std::getenv("XS_SHADER_DUMP") && !dumped.exchange(true))
+        if (auto *const file = std::fopen(std::getenv("XS_SHADER_DUMP"), "wb")) {
+            std::fwrite(bytes, 1, code.BytecodeLength, file);
+            std::fclose(file);
+        }
+}
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -1111,6 +1141,10 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreateGraphicsPipelineState: 0x%08lx\n",
                      static_cast<unsigned long>(result));
+        if (static std::atomic<int> shown{0}; desc && shown++ < 2) {
+            describe_shader("vertex", desc->VS);
+            describe_shader("pixel", desc->PS);
+        }
         report_messages();
     }
     return result;
