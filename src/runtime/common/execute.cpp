@@ -861,6 +861,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         std::fprintf(stderr, "[Runtime] could not mute the audio of this process\n");
 
     detail::set_save_directory(execution.save_directory);
+    detail::set_shader_cache_directory(execution.shader_cache_directory);
     detail::set_console_settings(execution.console);
     Stubs stubs;
     Guest state;

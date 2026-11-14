@@ -53,6 +53,7 @@ std::uint32_t run_title(const std::filesystem::path &path) {
     const auto bytes = xs::host::read_snapshot(file, 256 * 1024 * 1024);
     xs::runtime::ExecuteOptions options;
     options.save_directory = xs::title_save_directory(path);
+    options.shader_cache_directory = xs::cache_directory() / "shaders";
     options.console = console_settings();
     std::cerr << "[Launcher] saves in " << text(options.save_directory) << std::endl;
     return xs::runtime::execute(file, bytes, xs::runtime::title_registry(bytes), options);
@@ -188,6 +189,7 @@ int wmain(int argc, wchar_t **argv) {
             }
             const auto bytes = read_title(argv[2]);
             options.save_directory = xs::title_save_directory(argv[2]);
+            options.shader_cache_directory = xs::cache_directory() / "shaders";
             options.console = console_settings();
             return static_cast<int>(xs::runtime::execute(
                 xs::title_executable(argv[2]), bytes, xs::runtime::title_registry(bytes), options));

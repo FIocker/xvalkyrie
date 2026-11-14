@@ -22,11 +22,16 @@ std::string lower(std::string_view text) {
     return result;
 }
 std::filesystem::path saves;
+std::filesystem::path shader_cache;
 ConsoleSettings console;
 } // namespace
 
 const std::filesystem::path &save_directory() { return saves; }
 void detail::set_save_directory(std::filesystem::path directory) { saves = std::move(directory); }
+const std::filesystem::path &shader_cache_directory() { return shader_cache; }
+void detail::set_shader_cache_directory(std::filesystem::path directory) {
+    shader_cache = std::move(directory);
+}
 const ConsoleSettings &console_settings() { return console; }
 void detail::set_console_settings(ConsoleSettings settings) { console = std::move(settings); }
 

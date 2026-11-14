@@ -1,0 +1,471 @@
+#include "runtime/modules/console_shader.hpp"
+#include "runtime/common/runtime.hpp"
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <windows.h>
+
+#include <unknwn.h>
+
+namespace xs::runtime::modules {
+namespace {
+// Bumped whenever what is made for a shader changes: the cache keeps one file per version.
+constexpr int translator_version = 1;
+
+using Bytes = std::span<const std::uint8_t>;
+std::uint32_t word(Bytes bytes, std::size_t at) {
+    std::uint32_t value = 0;
+    if (at + 4 <= bytes.size())
+        std::memcpy(&value, bytes.data() + at, 4);
+    return value;
+}
+// a part of a DXBC container, by its four letters; empty if it has none
+Bytes part(Bytes container, const char *name) {
+    if (container.size() < 32 || std::memcmp(container.data(), "DXBC", 4))
+        return {};
+    const auto count = word(container, 28);
+    for (std::uint32_t i = 0; i < count && 36 + 4 * i <= container.size(); ++i) {
+        const auto offset = word(container, 32 + 4 * i);
+        if (offset + 8 > container.size() || std::memcmp(container.data() + offset, name, 4))
+            continue;
+        const auto size = word(container, offset + 4);
+        if (size > container.size() - offset - 8)
+            return {};
+        return container.subspan(offset + 8, size);
+    }
+    return {};
+}
+
+// Inflate (RFC 1951) of a zlib stream (RFC 1950), which is how the code is stored
+class Inflate {
+  public:
+    explicit Inflate(Bytes input) : in_(input) {}
+    bool run(std::vector<std::uint8_t> &out) {
+        if (in_.size() < 2 || (in_[0] & 0x0f) != 8)
+            return false;
+        at_ = 2;
+        for (bool last = false; !last;) {
+            last = bits(1);
+            const auto type = bits(2);
+            if (type == 0) {
+                count_ = 0;
+                if (at_ + 4 > in_.size())
+                    return false;
+                const std::size_t length = in_[at_] | in_[at_ + 1] << 8;
+                at_ += 4;
+                if (at_ + length > in_.size())
+                    return false;
+                out.insert(out.end(), in_.begin() + at_, in_.begin() + at_ + length);
+                at_ += length;
+            } else if (type == 1) {
+                fixed();
+                if (!codes(out))
+                    return false;
+            } else if (type == 2) {
+                if (!dynamic() || !codes(out))
+                    return false;
+            } else {
+                return false;
+            }
+            if (failed_ || out.size() > 64u << 20)
+                return false;
+        }
+        return true;
+    }
+
+  private:
+    struct Table {
+        std::array<std::uint16_t, 16> count{};
+        std::array<std::uint16_t, 288> symbol{};
+    };
+    std::uint32_t bits(int need) {
+        while (count_ < need) {
+            if (at_ >= in_.size()) {
+                failed_ = true;
+                return 0;
+            }
+            hold_ |= std::uint32_t{in_[at_++]} << count_;
+            count_ += 8;
+        }
+        const auto value = hold_ & ((1u << need) - 1);
+        hold_ >>= need;
+        count_ -= need;
+        return value;
+    }
+    static void build(Table &table, const std::uint8_t *lengths, int n) {
+        table.count.fill(0);
+        for (int i = 0; i < n; ++i)
+            ++table.count[lengths[i]];
+        table.count[0] = 0;
+        std::array<std::uint16_t, 16> offsets{};
+        for (int length = 1; length < 16; ++length)
+            offsets[length] = offsets[length - 1] + table.count[length - 1];
+        for (int i = 0; i < n; ++i)
+            if (lengths[i])
+                table.symbol[offsets[lengths[i]]++] = static_cast<std::uint16_t>(i);
+    }
+    int decode(const Table &table) {
+        int code = 0, first = 0, index = 0;
+        for (int length = 1; length < 16; ++length) {
+            code |= static_cast<int>(bits(1));
+            const int count = table.count[length];
+            if (code - count < first)
+                return table.symbol[index + (code - first)];
+            index += count;
+            first = (first + count) << 1;
+            code <<= 1;
+        }
+        failed_ = true;
+        return -1;
+    }
+    void fixed() {
+        std::uint8_t lengths[288];
+        for (int i = 0; i < 288; ++i)
+            lengths[i] = i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
+        build(literals_, lengths, 288);
+        std::fill(lengths, lengths + 30, std::uint8_t{5});
+        build(distances_, lengths, 30);
+    }
+    bool dynamic() {
+        const int literal_count = static_cast<int>(bits(5)) + 257;
+        const int distance_count = static_cast<int>(bits(5)) + 1;
+        const int length_count = static_cast<int>(bits(4)) + 4;
+        static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
+                                                   11, 4,  12, 3, 13, 2, 14, 1, 15};
+        std::uint8_t lengths[320] = {};
+        for (int i = 0; i < length_count; ++i)
+            lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
+        Table table;
+        build(table, lengths, 19);
+        std::fill(lengths, lengths + 320, std::uint8_t{0});
+        for (int i = 0; i < literal_count + distance_count;) {
+            const int symbol = decode(table);
+            if (symbol < 0)
+                return false;
+            if (symbol < 16) {
+                lengths[i++] = static_cast<std::uint8_t>(symbol);
+                continue;
+            }
+            std::uint8_t value = 0;
+            int repeat;
+            if (symbol == 16) {
+                if (!i)
+                    return false;
+                value = lengths[i - 1];
+                repeat = 3 + static_cast<int>(bits(2));
+            } else {
+                repeat = symbol == 17 ? 3 + static_cast<int>(bits(3)) : 11 + static_cast<int>(bits(7));
+            }
+            if (i + repeat > literal_count + distance_count)
+                return false;
+            while (repeat--)
+                lengths[i++] = value;
+        }
+        build(literals_, lengths, literal_count);
+        build(distances_, lengths + literal_count, distance_count);
+        return !failed_;
+    }
+    bool codes(std::vector<std::uint8_t> &out) {
+        static constexpr std::uint16_t length_base[29] = {
+            3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
+            31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+        static constexpr std::uint8_t length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+                                                          1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
+                                                          4, 4, 4, 4, 5, 5, 5, 5, 0};
+        static constexpr std::uint16_t distance_base[30] = {
+            1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
+            193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+        static constexpr std::uint8_t distance_extra[30] = {0, 0, 0,  0,  1,  1,  2,  2,  3,  3,
+                                                            4, 4, 5,  5,  6,  6,  7,  7,  8,  8,
+                                                            9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
+        for (;;) {
+            const int symbol = decode(literals_);
+            if (symbol < 0 || failed_)
+                return false;
+            if (symbol < 256) {
+                out.push_back(static_cast<std::uint8_t>(symbol));
+            } else if (symbol == 256) {
+                return true;
+            } else {
+                if (symbol > 285)
+                    return false;
+                const std::size_t length =
+                    length_base[symbol - 257] + bits(length_extra[symbol - 257]);
+                const int code = decode(distances_);
+                if (code < 0 || code > 29)
+                    return false;
+                const std::size_t distance = distance_base[code] + bits(distance_extra[code]);
+                if (distance > out.size())
+                    return false;
+                for (std::size_t i = 0; i < length; ++i)
+                    out.push_back(out[out.size() - distance]);
+            }
+        }
+    }
+    Bytes in_;
+    std::size_t at_ = 0;
+    std::uint32_t hold_ = 0;
+    int count_ = 0;
+    bool failed_ = false;
+    Table literals_, distances_;
+};
+
+// The XDAT block of the DXIL part: after the program header, a table of sections as (type,
+// offset, size). Section 0x0d is the zlib stream with the code.
+std::vector<std::uint8_t> code_container(Bytes container) {
+    const auto dxil = part(container, "DXIL");
+    constexpr std::size_t xdat = 24;
+    if (dxil.size() < xdat + 16 || std::memcmp(dxil.data() + xdat, "XDAT", 4))
+        return {};
+    const auto block = dxil.subspan(xdat);
+    for (std::size_t entry = 12; entry + 12 <= std::min<std::size_t>(block.size(), 12 + 16 * 12);
+         entry += 12) {
+        const auto type = word(block, entry), offset = word(block, entry + 4),
+                   size = word(block, entry + 8);
+        if (!type || type > 0xff || offset > block.size() || size > block.size() - offset)
+            break;
+        if (type != 0x0d)
+            continue;
+        std::vector<std::uint8_t> out;
+        if (Inflate(block.subspan(offset, size)).run(out) && out.size() >= 16 &&
+            !std::memcmp(out.data(), "FSSM", 4))
+            return out;
+        return {};
+    }
+    return {};
+}
+
+// One element of an ISG1 or OSG1 signature
+struct Element {
+    std::string name;
+    std::uint32_t index = 0, system = 0, type = 0, reg = 0;
+    std::uint8_t mask = 0;
+};
+std::vector<Element> signature(Bytes container, const char *name) {
+    const auto data = part(container, name);
+    std::vector<Element> elements;
+    const auto count = word(data, 0);
+    for (std::uint32_t i = 0; i < count && i < 64; ++i) {
+        const std::size_t at = 8 + 32 * std::size_t{i};
+        if (at + 32 > data.size())
+            return {};
+        Element element;
+        const auto text = word(data, at + 4);
+        if (text >= data.size())
+            return {};
+        const auto *const start = reinterpret_cast<const char *>(data.data()) + text;
+        element.name.assign(start, strnlen(start, data.size() - text));
+        element.index = word(data, at + 8);
+        element.system = word(data, at + 12);
+        element.type = word(data, at + 16);
+        element.reg = word(data, at + 20);
+        element.mask = data[at + 24];
+        elements.push_back(std::move(element));
+    }
+    return elements;
+}
+std::string hlsl_type(const Element &element) {
+    const int width = std::max(std::popcount(element.mask), 1);
+    const char *const base = element.type == 1 ? "uint" : element.type == 2 ? "int" : "float";
+    return std::string(base) + (width > 1 ? std::to_string(width) : "");
+}
+// the fields of a signature as an HLSL struct, in the order of its registers
+std::string hlsl_struct(const char *name, std::vector<Element> elements, bool interpolated) {
+    std::stable_sort(elements.begin(), elements.end(), [](const Element &a, const Element &b) {
+        return a.reg != b.reg ? a.reg < b.reg : a.mask < b.mask;
+    });
+    std::string text = std::string("struct ") + name + " {\n";
+    int field = 0;
+    for (const auto &element : elements) {
+        const bool integer = element.type == 1 || element.type == 2;
+        const bool system = !_strnicmp(element.name.c_str(), "SV_", 3);
+        text += "    ";
+        if (interpolated && integer && !system)
+            text += "nointerpolation ";
+        text += hlsl_type(element) + " f" + std::to_string(field++) + " : " + element.name;
+        // SV_Position and the like take no index; the others always may
+        if (!system || element.index ||
+            !_stricmp(element.name.c_str(), "SV_Target") ||
+            !_stricmp(element.name.c_str(), "SV_ClipDistance") ||
+            !_stricmp(element.name.c_str(), "SV_CullDistance"))
+            text += std::to_string(element.index);
+        text += ";\n";
+    }
+    if (elements.empty())
+        text += "    float unused : UNUSED;\n";
+    return text + "};\n";
+}
+
+// The translation proper: the body of `main` for the machine code, or nothing when the code
+// has an instruction or a way of reaching its inputs that is not handled.
+std::optional<std::string> translate(ShaderStage, const std::vector<std::uint32_t> &, Bytes) {
+    return std::nullopt;
+}
+
+// A shader with the original's signature that does nothing: a vertex shader that puts every
+// vertex at the origin (so nothing is drawn), a pixel shader that writes zero, an empty
+// compute shader. It stands in for a shader that is not translated, so that the title's
+// pipelines exist and it goes on.
+std::string stand_in(ShaderStage stage, Bytes container) {
+    if (stage == ShaderStage::compute)
+        return "[numthreads(1, 1, 1)] void main() {}\n";
+    const auto inputs = signature(container, "ISG1"), outputs = signature(container, "OSG1");
+    std::string text = hlsl_struct("Input", inputs, stage == ShaderStage::pixel);
+    if (outputs.empty())
+        return text + "void main(Input input) {}\n";
+    return text + hlsl_struct("Output", outputs, false) +
+           "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
+}
+
+using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
+                                  const char *, const char *, UINT, UINT, IUnknown **,
+                                  IUnknown **);
+struct Blob : IUnknown {
+    virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
+    virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
+};
+std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source) {
+    static const auto function = [] {
+        const auto library =
+            LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        return library ? reinterpret_cast<Compile>(GetProcAddress(library, "D3DCompile")) : nullptr;
+    }();
+    if (!function)
+        return {};
+    const char *const target = stage == ShaderStage::vertex  ? "vs_5_1"
+                               : stage == ShaderStage::pixel ? "ps_5_1"
+                                                             : "cs_5_1";
+    IUnknown *code = nullptr, *errors = nullptr;
+    const auto result = function(source.data(), source.size(), "console shader", nullptr, nullptr,
+                                 "main", target, 0, 0, &code, &errors);
+    std::vector<std::uint8_t> bytes;
+    if (SUCCEEDED(result) && code) {
+        auto *const blob = static_cast<Blob *>(code);
+        const auto *const data = static_cast<const std::uint8_t *>(blob->GetBufferPointer());
+        bytes.assign(data, data + blob->GetBufferSize());
+    } else if (static std::atomic<int> shown{0}; shown++ < 4) {
+        std::fprintf(stderr, "[Runtime] a host shader for a console one did not compile: %s\n%s\n",
+                     errors ? static_cast<const char *>(static_cast<Blob *>(errors)->GetBufferPointer())
+                            : "no message",
+                     source.c_str());
+        std::fflush(stderr);
+    }
+    if (code)
+        code->Release();
+    if (errors)
+        errors->Release();
+    return bytes;
+}
+
+std::string hash_name(Bytes bytes) {
+    std::uint64_t a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+    for (const auto byte : bytes) {
+        a = (a ^ byte) * 0x100000001b3ull;
+        b = (b ^ byte) * 0x100000001b3ull + 0x9e3779b97f4a7c15ull;
+    }
+    char text[40];
+    std::snprintf(text, sizeof text, "%016llx%016llx", static_cast<unsigned long long>(a),
+                  static_cast<unsigned long long>(b));
+    return text;
+}
+std::vector<std::uint8_t> read_file(const std::filesystem::path &path) {
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+void write_file(const std::filesystem::path &path, Bytes bytes) {
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    // written whole or not at all: another title process may be writing the same shader
+    auto partial = path;
+    partial += "." + std::to_string(GetCurrentProcessId());
+    {
+        std::ofstream file(partial, std::ios::binary);
+        file.write(reinterpret_cast<const char *>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+    }
+    std::filesystem::rename(partial, path, error);
+    if (error)
+        std::filesystem::remove(partial, error);
+}
+
+std::mutex mutex;
+std::map<std::string, std::vector<std::uint8_t>> made; // by cache name; never erased
+std::atomic<unsigned> translated{0}, stood_in{0};
+} // namespace
+
+bool console_only_shader(Bytes container) {
+    const auto dxil = part(container, "DXIL");
+    return dxil.size() >= 28 && !std::memcmp(dxil.data() + 24, "XDAT", 4);
+}
+
+std::vector<std::uint32_t> console_shader_code(Bytes container) {
+    const auto file = code_container(container);
+    const Bytes bytes(file);
+    // the header leads to a record that has where the code is and how long, padding included
+    const auto record = word(bytes, 0x38);
+    auto start = word(bytes, record + 0x10);
+    const auto size = word(bytes, record + 0x18);
+    if (!record || start % 4 || start >= bytes.size() || size > bytes.size() - start)
+        return {};
+    std::vector<std::uint32_t> code;
+    constexpr std::uint32_t end_program = 0xbf810000;
+    for (auto at = start; at + 4 <= start + size; at += 4) {
+        const auto value = word(bytes, at);
+        if (code.empty() && !value) // zero words lead in
+            continue;
+        code.push_back(value);
+        if (value == end_program)
+            return code;
+    }
+    return {};
+}
+
+std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
+    const char letter = stage == ShaderStage::vertex ? 'v' : stage == ShaderStage::pixel ? 'p' : 'c';
+    const auto hash = hash_name(container);
+    const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) + ".dxbc";
+    const std::lock_guard lock(mutex);
+    if (const auto found = made.find(name); found != made.end())
+        return found->second;
+    const auto &folder = shader_cache_directory();
+    std::vector<std::uint8_t> shader;
+    if (!folder.empty())
+        shader = read_file(folder / name);
+    const auto code = console_shader_code(container);
+    // XS_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin) and
+    // the whole of what it was stored in (.fssm)
+    if (const auto *const dump = std::getenv("XS_SHADER_CODE")) {
+        const auto base = std::filesystem::path(dump) / (hash + "-" + letter);
+        if (!code.empty())
+            write_file(base.wstring() + L".bin",
+                       {reinterpret_cast<const std::uint8_t *>(code.data()), code.size() * 4});
+        write_file(base.wstring() + L".fssm", code_container(container));
+    }
+    if (shader.empty()) {
+        const auto body = code.empty() ? std::nullopt : translate(stage, code, container);
+        ++(body ? translated : stood_in);
+        shader = compile(stage, body ? *body : stand_in(stage, container));
+        if (!shader.empty() && !folder.empty())
+            write_file(folder / name, shader);
+        const auto total = translated + stood_in;
+        if (std::has_single_bit(total))
+            std::fprintf(stderr,
+                         "[Runtime] console shaders made for the host so far: %u translated, %u "
+                         "with a stand-in that draws nothing%s\n",
+                         translated.load(), stood_in.load(),
+                         folder.empty() ? "" : " (kept in the shader cache)");
+    }
+    return made.emplace(name, std::move(shader)).first->second;
+}
+} // namespace xs::runtime::modules

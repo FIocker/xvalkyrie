@@ -68,6 +68,8 @@ struct ExecuteOptions {
     bool mute = false;
     // host folder where the title's saved games go, see save_directory()
     std::filesystem::path save_directory{};
+    // host folder for the shaders made for the host from console ones; none are kept if empty
+    std::filesystem::path shader_cache_directory{};
     ConsoleSettings console{};
     // the console's System32 the title shipped with; found next to the package when empty
     std::filesystem::path system_directory{};
@@ -91,10 +93,13 @@ std::filesystem::path package_directory(const std::filesystem::path &directory);
 // The folder of the running title's saved games, from ExecuteOptions; empty before execute
 // or when none was given.
 const std::filesystem::path &save_directory();
+// The folder of the shader cache, from ExecuteOptions; empty when none was given.
+const std::filesystem::path &shader_cache_directory();
 const ConsoleSettings &console_settings();
 
 namespace detail {
 void set_save_directory(std::filesystem::path directory);
+void set_shader_cache_directory(std::filesystem::path directory);
 void set_console_settings(ConsoleSettings settings);
 struct Binding {
     void *function;     // null if missing

@@ -1,5 +1,6 @@
 #include "runtime/modules/d3d12x.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/console_shader.hpp"
 #include "runtime/modules/d3d12x/internal.hpp"
 #include "runtime/modules/placement.hpp"
 #include <algorithm>
@@ -1125,6 +1126,32 @@ void describe_shader(const char *stage, const D3D12_SHADER_BYTECODE &code) {
             std::fclose(file);
         }
 }
+// A shader of the title's with only console GPU code is given to the host as the shader
+// made for it (see console_shader.hpp)
+bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code) {
+    const std::span<const std::uint8_t> container(
+        static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength);
+    if (!code.pShaderBytecode || !modules::console_only_shader(container))
+        return false;
+    const auto made = modules::host_shader(stage, container);
+    if (made.empty())
+        return false;
+    code = {made.data(), made.size()};
+    return true;
+}
+// A pipeline without a root signature has it in its shaders, and the shader made for the
+// host does not carry it: it is made from the title's shader
+ID3D12RootSignature *shader_root_signature(ID3D12Device *self,
+                                           std::initializer_list<D3D12_SHADER_BYTECODE> shaders) {
+    for (const auto &shader : shaders) {
+        ID3D12RootSignature *signature = nullptr;
+        if (shader.pShaderBytecode &&
+            SUCCEEDED(self->CreateRootSignature(0, shader.pShaderBytecode, shader.BytecodeLength,
+                                                IID_PPV_ARGS(&signature))))
+            return signature;
+    }
+    return nullptr;
+}
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -1132,18 +1159,28 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *,
                                                 REFIID, void **);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC host{};
+    ID3D12RootSignature *from_shader = nullptr;
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
         host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
+        const bool made = host_bytecode(modules::ShaderStage::vertex, host.VS) |
+                          host_bytecode(modules::ShaderStage::pixel, host.PS);
+        if (made && !host.pRootSignature)
+            host.pRootSignature = from_shader = shader_root_signature(self, {desc->VS, desc->PS});
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
+    if (from_shader)
+        from_shader->Release();
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreateGraphicsPipelineState: 0x%08lx\n",
                      static_cast<unsigned long>(result));
         if (static std::atomic<int> shown{0}; desc && shown++ < 2) {
             describe_shader("vertex", desc->VS);
             describe_shader("pixel", desc->PS);
+            describe_shader("geometry", desc->GS);
+            describe_shader("hull", desc->HS);
+            describe_shader("domain", desc->DS);
         }
         report_messages();
     }
@@ -1166,11 +1203,16 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
                                                 REFIID, void **);
     // the console's pipeline flags mean nothing to the host, which takes none of them
     D3D12_COMPUTE_PIPELINE_STATE_DESC host{};
+    ID3D12RootSignature *from_shader = nullptr;
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        if (host_bytecode(modules::ShaderStage::compute, host.CS) && !host.pRootSignature)
+            host.pRootSignature = from_shader = shader_root_signature(self, {desc->CS});
     }
     const auto result = original<Create>(self, 11)(self, desc ? &host : nullptr, iid, state);
+    if (from_shader)
+        from_shader->Release();
     if (FAILED(result) && desc) {
         const auto *bytes = static_cast<const std::uint8_t *>(desc->CS.pShaderBytecode);
         std::fprintf(stderr,
