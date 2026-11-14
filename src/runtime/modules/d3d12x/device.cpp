@@ -1943,6 +1943,132 @@ void *make_list_proxy(List *host) {
     return proxy;
 }
 
+// ID3D12XboxDmaCommandList (a list of type 16): the console's hardware copies, fills and
+// (de)compresses memory by itself, in the order of a queue. The slots are the ones of the
+// console header's table. Resources are copied on a host copy list of ours; what works on
+// memory by address is done by the CPU when it is recorded, since on the console a GPU
+// address is the title's own memory. The compression formats are not known: those say so.
+constexpr UINT dma_list_type = 16;
+constexpr std::size_t dma_slots = 32;
+struct DmaProxy : ListProxy {
+    ID3D12CommandAllocator *allocator = nullptr;
+};
+bool title_memory(std::uint64_t address, std::uint64_t size, bool write) {
+    MEMORY_BASIC_INFORMATION info{};
+    if (!address || !VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) ||
+        info.State != MEM_COMMIT)
+        return false;
+    const auto end = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
+    const DWORD writable = PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY;
+    const DWORD readable = writable | PAGE_READONLY | PAGE_EXECUTE_READ;
+    return address + size <= end && (info.Protect & (write ? writable : readable));
+}
+template <std::size_t Index>
+HRESULT STDMETHODCALLTYPE unknown_dma_method(void *, std::uint64_t a, std::uint64_t b) {
+    if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+        std::fprintf(stderr,
+                     "[Runtime] unimplemented Direct3D 12 call: DMA list slot %zu (%llx, %llx) "
+                     "from %s\n",
+                     Index, a, b, detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    return E_NOTIMPL;
+}
+HRESULT STDMETHODCALLTYPE dma_ok(void *) { return S_OK; }
+UINT STDMETHODCALLTYPE dma_type(void *) { return dma_list_type; }
+HRESULT STDMETHODCALLTYPE dma_device(void *self, REFIID iid, void **device) {
+    return host_of(self)->GetDevice(iid, device);
+}
+HRESULT STDMETHODCALLTYPE dma_reset(void *self, ID3D12CommandAllocator *, ID3D12PipelineState *) {
+    auto *const list = static_cast<DmaProxy *>(self);
+    return list->host->Reset(list->allocator, nullptr);
+}
+void STDMETHODCALLTYPE dma_copy_buffer(void *self, ID3D12Resource *target, UINT64 target_offset,
+                                       ID3D12Resource *source, UINT64 source_offset,
+                                       UINT64 bytes) {
+    host_of(self)->CopyBufferRegion(target, target_offset, source, source_offset, bytes);
+}
+void STDMETHODCALLTYPE dma_copy_texture(void *self, const D3D12_TEXTURE_COPY_LOCATION *target,
+                                        UINT x, UINT y, UINT z,
+                                        const D3D12_TEXTURE_COPY_LOCATION *source,
+                                        const D3D12_BOX *box) {
+    host_of(self)->CopyTextureRegion(target, x, y, z, source, box);
+}
+void STDMETHODCALLTYPE dma_copy_resource(void *self, ID3D12Resource *target,
+                                         ID3D12Resource *source) {
+    host_of(self)->CopyResource(target, source);
+}
+void STDMETHODCALLTYPE dma_copy_memory(void *, std::uint64_t target, std::uint64_t source,
+                                       std::uint64_t bytes, UINT) {
+    if (title_memory(target, bytes, true) && title_memory(source, bytes, false))
+        std::memmove(reinterpret_cast<void *>(target), reinterpret_cast<void *>(source),
+                     static_cast<std::size_t>(bytes));
+}
+void STDMETHODCALLTYPE dma_fill_memory(void *, std::uint64_t target, std::uint64_t bytes,
+                                       UINT value, UINT) {
+    if (!title_memory(target, bytes, true))
+        return;
+    auto *const words = reinterpret_cast<std::uint32_t *>(target);
+    std::fill(words, words + bytes / 4, value);
+}
+void STDMETHODCALLTYPE dma_last_error(void *, std::uint64_t target) {
+    constexpr std::uint32_t none = 0;
+    if (title_memory(target, sizeof none, true))
+        std::memcpy(reinterpret_cast<void *>(target), &none, sizeof none);
+}
+void STDMETHODCALLTYPE dma_nothing(void *) {}
+const std::array<Slot, dma_slots> dma_vtable = [] {
+    std::array<Slot, dma_slots> vtable{};
+    const auto fill = [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+        ((vtable[Index] = reinterpret_cast<Slot>(&unknown_dma_method<Index>)), ...);
+    };
+    fill(std::make_index_sequence<dma_slots>{});
+    const auto set = [&](std::size_t slot, auto *function) {
+        vtable[slot] = reinterpret_cast<Slot>(function);
+    };
+    set(0, &list_query);
+    set(1, &list_add_ref);
+    set(2, &list_release);
+    for (const std::size_t named : {3, 4, 5, 6}) // private data and the name
+        set(named, &dma_ok);
+    set(7, &dma_device);
+    set(8, &dma_type);
+    set(9, &close_list);
+    set(10, &dma_reset);
+    set(11, &dma_copy_buffer);
+    set(12, &dma_copy_texture);
+    set(13, &dma_copy_resource);
+    set(15, &resource_barrier);
+    // queries and markers count nothing here; a wait is over when it is recorded, as the
+    // value it waits for was written when that was; packets for the hardware and the
+    // kickoff have nothing to go to
+    for (const std::size_t ignored : {16, 17, 18, 19, 20, 21, 25, 30, 31})
+        set(ignored, &dma_nothing);
+    set(22, &dma_copy_memory);
+    set(23, &dma_fill_memory);
+    set(24, &write_64_bottom_of_pipe);
+    set(26, &dma_last_error);
+    return vtable;
+}();
+HRESULT make_dma_list(ID3D12Device *device, void **list) {
+    auto *const proxy = new DmaProxy{};
+    auto result = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY,
+                                                 IID_PPV_ARGS(&proxy->allocator));
+    if (SUCCEEDED(result))
+        result = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, proxy->allocator,
+                                           nullptr, IID_PPV_ARGS(&proxy->host));
+    if (FAILED(result)) {
+        delete proxy;
+        return result;
+    }
+    proxy->vtable = const_cast<Slot *>(dma_vtable.data());
+    proxy->references = 1;
+    const std::lock_guard lock(proxy_mutex);
+    list_proxies.insert(proxy);
+    *list = proxy;
+    return S_OK;
+}
+
 // slot 73: a command list from a description (Unreal's call site: the type, 0, the node mask,
 // 0), an allocator, a pipeline state, then the interface and the list
 HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *desc,
@@ -1950,6 +2076,8 @@ HRESULT STDMETHODCALLTYPE create_command_list(ID3D12Device *self, const UINT *de
                                               ID3D12PipelineState *state, REFIID, void **list) {
     if (!desc || !list)
         return E_INVALIDARG;
+    if (desc[0] == dma_list_type)
+        return make_dma_list(self, list);
     List *host = nullptr;
     const auto result =
         self->CreateCommandList(desc[2], static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]), allocator,
