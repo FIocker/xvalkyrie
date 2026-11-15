@@ -442,8 +442,14 @@ std::atomic<unsigned> translated{0}, stood_in{0};
 } // namespace
 
 bool console_only_shader(Bytes container) {
+    // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
+    // with console code may have its bitcode as well, and then the host runs that.
     const auto dxil = part(container, "DXIL");
-    return dxil.size() >= 28 && !std::memcmp(dxil.data() + 24, "XDAT", 4);
+    if (dxil.size() < 28 || std::memcmp(dxil.data() + 24, "XDAT", 4))
+        return false;
+    const std::size_t bitcode = 8 + std::size_t{word(dxil, 16)};
+    static constexpr std::uint8_t magic[] = {0x42, 0x43, 0xc0, 0xde};
+    return bitcode + 4 > dxil.size() || std::memcmp(dxil.data() + bitcode, magic, 4) != 0;
 }
 
 std::vector<std::uint32_t> console_shader_code(Bytes container) {
