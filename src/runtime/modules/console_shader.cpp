@@ -476,7 +476,10 @@ namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container) {
     const char letter = stage == ShaderStage::vertex ? 'v' : stage == ShaderStage::pixel ? 'p' : 'c';
     const auto hash = hash_name(container);
-    const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) + ".dxbc";
+    // XS_SHADER_STAND_INS: no translation, to tell what a translated shader breaks
+    static const bool stand_ins_only = std::getenv("XS_SHADER_STAND_INS") != nullptr;
+    const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) +
+                      (stand_ins_only ? "-stand-in" : "") + ".dxbc";
     const std::lock_guard lock(mutex);
     if (const auto found = made.find(name); found != made.end())
         return found->second;
@@ -495,7 +498,8 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         write_file(base.wstring() + L".fssm", code_container(container));
     }
     if (shader.empty()) {
-        const auto source = translated_source(stage, container, code);
+        const auto source =
+            stand_ins_only ? std::nullopt : translated_source(stage, container, code);
         // XS_SHADER_CODE: the HLSL made for it as well
         if (const auto *const dump = std::getenv("XS_SHADER_CODE"); dump && source) {
             const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");

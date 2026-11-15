@@ -326,6 +326,15 @@ HRESULT STDMETHODCALLTYPE map_resource(ID3D12Resource *self, UINT subresource,
     if (SUCCEEDED(result) || !data)
         return result;
     *data = scratch_memory(self);
+    if (!*data) {
+        const auto desc = self->GetDesc();
+        std::fprintf(stderr,
+                     "[Runtime] Map of subresource %u of a resource of dimension %d %llux%u "
+                     "format %d flags 0x%x: 0x%08lx\n",
+                     subresource, desc.Dimension, desc.Width, desc.Height, desc.Format, desc.Flags,
+                     static_cast<unsigned long>(result));
+        std::fflush(stderr);
+    }
     return *data ? S_OK : result;
 }
 void STDMETHODCALLTYPE unmap_resource(ID3D12Resource *self, UINT subresource,
@@ -2768,6 +2777,18 @@ void STDMETHODCALLTYPE copyable_footprints(ID3D12Device *self, const D3D12_RESOU
         std::fflush(stderr);
     }
 }
+// GetDeviceRemovedReason (37): a title asks once the host has dropped the device; why it did
+// is worth a line
+HRESULT STDMETHODCALLTYPE device_removed_reason(ID3D12Device *self) {
+    const auto reason = original<HRESULT(STDMETHODCALLTYPE *)(void *)>(self, 37)(self);
+    if (static std::atomic<bool> shown{false}; FAILED(reason) && !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] the host removed the Direct3D 12 device: 0x%08lx\n",
+                     static_cast<unsigned long>(reason));
+        report_messages();
+        std::fflush(stderr);
+    }
+    return reason;
+}
 // CreateCommandSignature (41): which arguments the host turned down. The console has
 // argument types of its own from 100 on.
 HRESULT STDMETHODCALLTYPE create_command_signature(ID3D12Device *self,
@@ -2917,6 +2938,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({16, reinterpret_cast<Slot>(&create_root_signature)});
     overrides.push_back({41, reinterpret_cast<Slot>(&create_command_signature)});
     overrides.push_back({38, reinterpret_cast<Slot>(&copyable_footprints)});
+    overrides.push_back({37, reinterpret_cast<Slot>(&device_removed_reason)});
     overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
     overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});
     overrides.push_back({19, reinterpret_cast<Slot>(&create_uav)});
