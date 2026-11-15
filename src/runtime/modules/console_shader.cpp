@@ -24,7 +24,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 2;
+constexpr int translator_version = 3;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -306,8 +306,10 @@ std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
             text += std::to_string(element.index);
         text += ";\n";
     }
+    // a struct needs a field: one the stage has whatever the stage before it writes
     if (elements.empty())
-        text += "    float unused : UNUSED;\n";
+        text += interpolated ? "    float4 unused : SV_Position;\n"
+                             : "    uint unused : SV_VertexID;\n";
     return text + "};\n";
 }
 
