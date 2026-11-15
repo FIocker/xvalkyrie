@@ -24,7 +24,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 3;
+constexpr int translator_version = 4;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -285,27 +285,38 @@ std::vector<Element> signature(Bytes container, const char *name) {
         elements.push_back(std::move(one.element));
     return elements;
 }
-// the fields of a signature as an HLSL struct
+// The fields of a signature as an HLSL struct: element n is the field fn. The values the
+// pipeline makes up itself are declared after everything else, as the compiler wants.
 std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
                         bool interpolated) {
+    const auto generated = [](const Element &element) {
+        for (const auto *made : {"SV_VertexID", "SV_InstanceID", "SV_PrimitiveID",
+                                 "SV_IsFrontFace", "SV_SampleIndex", "SV_Coverage"})
+            if (!_stricmp(element.name.c_str(), made))
+                return true;
+        return false;
+    };
     std::string text = std::string("struct ") + name + " {\n";
-    int field = 0;
-    for (const auto &element : elements) {
-        const bool integer = element.type == 1 || element.type == 2;
-        const bool named = !_strnicmp(element.name.c_str(), "SV_", 3);
-        text += "    ";
-        if (interpolated && integer && !named)
-            text += "nointerpolation ";
-        text += std::string(element.type == 1 ? "uint" : element.type == 2 ? "int" : "float") +
-                (element.width > 1 ? std::to_string(element.width) : "") + " f" +
-                std::to_string(field++) + " : " + element.name;
-        // SV_Position and the like take no index; the others always may
-        if (!named || element.index || !_stricmp(element.name.c_str(), "SV_Target") ||
-            !_stricmp(element.name.c_str(), "SV_ClipDistance") ||
-            !_stricmp(element.name.c_str(), "SV_CullDistance"))
-            text += std::to_string(element.index);
-        text += ";\n";
-    }
+    for (const bool last : {false, true})
+        for (std::size_t field = 0; field < elements.size(); ++field) {
+            const auto &element = elements[field];
+            if (generated(element) != last)
+                continue;
+            const bool integer = element.type == 1 || element.type == 2;
+            const bool named = !_strnicmp(element.name.c_str(), "SV_", 3);
+            text += "    ";
+            if (interpolated && integer && !named)
+                text += "nointerpolation ";
+            text += std::string(element.type == 1 ? "uint" : element.type == 2 ? "int" : "float") +
+                    (element.width > 1 ? std::to_string(element.width) : "") + " f" +
+                    std::to_string(field) + " : " + element.name;
+            // SV_Position and the like take no index; the others always may
+            if (!named || element.index || !_stricmp(element.name.c_str(), "SV_Target") ||
+                !_stricmp(element.name.c_str(), "SV_ClipDistance") ||
+                !_stricmp(element.name.c_str(), "SV_CullDistance"))
+                text += std::to_string(element.index);
+            text += ";\n";
+        }
     // a struct needs a field: one the stage has whatever the stage before it writes
     if (elements.empty())
         text += interpolated ? "    float4 unused : SV_Position;\n"

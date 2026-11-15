@@ -1737,6 +1737,53 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
                                            const D3D12_BOX *box) {
     auto *const host = host_of(self);
     ID3D12Device *device = nullptr;
+    // the other way, a texture read into a buffer at such an offset: into a buffer of ours
+    // at 0, and from there to where the title wants it
+    if (target && source && target->Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT &&
+        target->PlacedFootprint.Offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT &&
+        target->pResource && !x && !y && !z && SUCCEEDED(host->GetDevice(IID_PPV_ARGS(&device)))) {
+        const auto &footprint = target->PlacedFootprint.Footprint;
+        const auto offset = target->PlacedFootprint.Offset;
+        const auto room = target->pResource->GetDesc().Width;
+        const auto rows = footprint.Height; // block formats have fewer; the room caps it
+        const auto bytes = std::min<UINT64>(UINT64{footprint.RowPitch} * rows * footprint.Depth,
+                                            room > offset ? room - offset : 0);
+        const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+        const D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_BUFFER,
+                                       0,
+                                       std::max<UINT64>(UINT64{footprint.RowPitch} * rows *
+                                                            footprint.Depth,
+                                                        1),
+                                       1,
+                                       1,
+                                       1,
+                                       DXGI_FORMAT_UNKNOWN,
+                                       {1, 0},
+                                       D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                                       D3D12_RESOURCE_FLAG_NONE};
+        ID3D12Resource *buffer = nullptr;
+        const auto made = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                          D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                          IID_PPV_ARGS(&buffer));
+        device->Release();
+        if (SUCCEEDED(made) && bytes) {
+            auto staged = *target;
+            staged.pResource = buffer;
+            staged.PlacedFootprint.Offset = 0;
+            host->CopyTextureRegion(&staged, 0, 0, 0, source, box);
+            D3D12_RESOURCE_BARRIER barrier{};
+            barrier.Transition = {buffer, 0, D3D12_RESOURCE_STATE_COPY_DEST,
+                                  D3D12_RESOURCE_STATE_COPY_SOURCE};
+            host->ResourceBarrier(1, &barrier);
+            host->CopyBufferRegion(target->pResource, offset, buffer, 0, bytes);
+            const std::lock_guard lock(staging_mutex);
+            staging.push_back({buffer, GetTickCount64()});
+            return;
+        }
+        if (buffer)
+            buffer->Release();
+        device = nullptr;
+    }
     if (!source || source->Type != D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT ||
         source->PlacedFootprint.Offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT == 0 ||
         !source->pResource || FAILED(host->GetDevice(IID_PPV_ARGS(&device)))) {
@@ -1769,6 +1816,11 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
                                                       IID_PPV_ARGS(&buffer));
     device->Release();
     if (FAILED(made) || !bytes) {
+        std::fprintf(stderr,
+                     "[Runtime] CopyTextureRegion from offset %llu of a buffer of %llu bytes, "
+                     "%ux%ux%u format %d pitch %u: no way round the offset (0x%08lx)\n",
+                     offset, available, footprint.Width, footprint.Height, footprint.Depth,
+                     footprint.Format, footprint.RowPitch, static_cast<unsigned long>(made));
         host->CopyTextureRegion(target, x, y, z, source, box);
         return;
     }
@@ -1788,6 +1840,14 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
         staging.front().buffer->Release();
         staging.pop_front();
     }
+}
+// CopyTextureRegionX (83): the same copy with flags for the console's compressed surfaces
+void STDMETHODCALLTYPE copy_texture_region_x(void *self,
+                                             const D3D12_TEXTURE_COPY_LOCATION *target, UINT x,
+                                             UINT y, UINT z,
+                                             const D3D12_TEXTURE_COPY_LOCATION *source,
+                                             const D3D12_BOX *box, UINT) {
+    copy_texture_region(self, target, x, y, z, source, box);
 }
 void STDMETHODCALLTYPE execute_bundle(void *self, ID3D12GraphicsCommandList *bundle) {
     host_of(self)->ExecuteBundle(static_cast<List *>(host_list(bundle)));
@@ -2227,6 +2287,7 @@ void configure_lists() {
         ignore({98, 99});
         return;
     }
+    list_vtable[83] = reinterpret_cast<Slot>(&copy_texture_region_x);
     list_vtable[98] = reinterpret_cast<Slot>(&dispatch_mesh_x);
     // DriverHintX, the counters, and the binning of primitive batches
     ignore({99, 100, 101, 102, 103, 104});
