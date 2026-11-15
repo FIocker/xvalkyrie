@@ -89,10 +89,45 @@ void *WINAPI apu_map_apu_address(std::uint32_t apu) {
     return nullptr;
 }
 BOOL WINAPI apu_is_virtual_address_valid() { return TRUE; }
-// chad.dll (XDsp, the Series console's audio DSP) and the audio state monitor of
-// Windows.Media.MediaControl.dll: their interfaces are in no public header, so a title is
-// told they are not there
+// chad.dll (XDsp, the Series console's audio DSP): its interface is in no public header,
+// so a title is told it is not there
 HRESULT WINAPI no_audio_dsp() { return E_NOTIMPL; }
+// IAudioStateMonitor, which says how loud the system lets the title be: always in full. A
+// title takes the object without looking at the result of asking for it.
+struct StateMonitor {
+    const void *const *vtable;
+    std::atomic<ULONG> references{1};
+};
+HRESULT STDMETHODCALLTYPE monitor_query(StateMonitor *self, const GUID *, void **object) {
+    if (!object)
+        return E_POINTER;
+    ++self->references;
+    *object = self;
+    return S_OK;
+}
+ULONG STDMETHODCALLTYPE monitor_add_ref(StateMonitor *self) { return ++self->references; }
+ULONG STDMETHODCALLTYPE monitor_release(StateMonitor *self) {
+    const auto left = --self->references;
+    if (!left)
+        delete self;
+    return left;
+}
+HRESULT STDMETHODCALLTYPE monitor_register(StateMonitor *, void *, void *, std::int64_t *token) {
+    if (token)
+        *token = 1;
+    return S_OK;
+}
+void STDMETHODCALLTYPE monitor_unregister(StateMonitor *, std::int64_t) {}
+// SoundLevel: 0 muted, 1 low, 2 full
+int STDMETHODCALLTYPE monitor_sound_level(StateMonitor *) { return 2; }
+const void *const monitor_vtable[] = {&monitor_query,    &monitor_add_ref,   &monitor_release,
+                                      &monitor_register, &monitor_unregister, &monitor_sound_level};
+HRESULT WINAPI create_state_monitor(int, int, StateMonitor **monitor) {
+    if (!monitor)
+        return E_POINTER;
+    *monitor = new StateMonitor{monitor_vtable};
+    return S_OK;
+}
 HRESULT WINAPI apu_create_heap() { return S_OK; }
 
 // 0x60 bytes; the rest is unknown
@@ -401,7 +436,8 @@ void install_acphal(Registry &registry) {
          {"XDspConnect", "XDspDisconnect", "XDspActivate", "XDspDeactivate", "XDspSubmitCommand"})
         registry.add("chad.dll", name, erase(no_audio_dsp));
     registry.add("windows.media.mediacontrol.dll",
-                 "CreateRenderAudioStateMonitorForCategoryAndDeviceRole", erase(no_audio_dsp));
+                 "CreateRenderAudioStateMonitorForCategoryAndDeviceRole",
+                 erase(create_state_monitor));
 }
 void early_audio_processor(bool yes) { early_kit = yes; }
 } // namespace xs::runtime::modules

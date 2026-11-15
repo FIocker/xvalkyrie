@@ -1,5 +1,6 @@
 #include "runtime/modules/console_shader.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/console_shader_rdna.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,15 +14,17 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <vector>
 #include <string>
 #include <windows.h>
+#include <xmmintrin.h>
 
 #include <unknwn.h>
 
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 1;
+constexpr int translator_version = 2;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -246,57 +249,58 @@ std::vector<std::uint8_t> code_container(Bytes container) {
     return {};
 }
 
-// One element of an ISG1 or OSG1 signature
-struct Element {
-    std::string name;
-    std::uint32_t index = 0, system = 0, type = 0, reg = 0;
-    std::uint8_t mask = 0;
-};
+using rdna::Element;
+// an ISG1 or OSG1 signature, in the order of its registers
 std::vector<Element> signature(Bytes container, const char *name) {
     const auto data = part(container, name);
-    std::vector<Element> elements;
+    struct Read {
+        Element element;
+        std::uint32_t reg;
+        std::uint8_t mask;
+    };
+    std::vector<Read> read;
     const auto count = word(data, 0);
     for (std::uint32_t i = 0; i < count && i < 64; ++i) {
         const std::size_t at = 8 + 32 * std::size_t{i};
         if (at + 32 > data.size())
             return {};
-        Element element;
         const auto text = word(data, at + 4);
         if (text >= data.size())
             return {};
         const auto *const start = reinterpret_cast<const char *>(data.data()) + text;
+        Element element;
         element.name.assign(start, strnlen(start, data.size() - text));
         element.index = word(data, at + 8);
-        element.system = word(data, at + 12);
         element.type = word(data, at + 16);
-        element.reg = word(data, at + 20);
-        element.mask = data[at + 24];
-        elements.push_back(std::move(element));
+        element.width = static_cast<std::uint32_t>(std::max(std::popcount(data[at + 24]), 1));
+        element.system_value =
+            word(data, at + 12) != 0 || !_strnicmp(element.name.c_str(), "SV_", 3);
+        read.push_back({std::move(element), word(data, at + 20), data[at + 24]});
     }
-    return elements;
-}
-std::string hlsl_type(const Element &element) {
-    const int width = std::max(std::popcount(element.mask), 1);
-    const char *const base = element.type == 1 ? "uint" : element.type == 2 ? "int" : "float";
-    return std::string(base) + (width > 1 ? std::to_string(width) : "");
-}
-// the fields of a signature as an HLSL struct, in the order of its registers
-std::string hlsl_struct(const char *name, std::vector<Element> elements, bool interpolated) {
-    std::stable_sort(elements.begin(), elements.end(), [](const Element &a, const Element &b) {
+    std::stable_sort(read.begin(), read.end(), [](const Read &a, const Read &b) {
         return a.reg != b.reg ? a.reg < b.reg : a.mask < b.mask;
     });
+    std::vector<Element> elements;
+    for (auto &one : read)
+        elements.push_back(std::move(one.element));
+    return elements;
+}
+// the fields of a signature as an HLSL struct
+std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
+                        bool interpolated) {
     std::string text = std::string("struct ") + name + " {\n";
     int field = 0;
     for (const auto &element : elements) {
         const bool integer = element.type == 1 || element.type == 2;
-        const bool system = !_strnicmp(element.name.c_str(), "SV_", 3);
+        const bool named = !_strnicmp(element.name.c_str(), "SV_", 3);
         text += "    ";
-        if (interpolated && integer && !system)
+        if (interpolated && integer && !named)
             text += "nointerpolation ";
-        text += hlsl_type(element) + " f" + std::to_string(field++) + " : " + element.name;
+        text += std::string(element.type == 1 ? "uint" : element.type == 2 ? "int" : "float") +
+                (element.width > 1 ? std::to_string(element.width) : "") + " f" +
+                std::to_string(field++) + " : " + element.name;
         // SV_Position and the like take no index; the others always may
-        if (!system || element.index ||
-            !_stricmp(element.name.c_str(), "SV_Target") ||
+        if (!named || element.index || !_stricmp(element.name.c_str(), "SV_Target") ||
             !_stricmp(element.name.c_str(), "SV_ClipDistance") ||
             !_stricmp(element.name.c_str(), "SV_CullDistance"))
             text += std::to_string(element.index);
@@ -305,12 +309,6 @@ std::string hlsl_struct(const char *name, std::vector<Element> elements, bool in
     if (elements.empty())
         text += "    float unused : UNUSED;\n";
     return text + "};\n";
-}
-
-// The translation proper: the body of `main` for the machine code, or nothing when the code
-// has an instruction or a way of reaching its inputs that is not handled.
-std::optional<std::string> translate(ShaderStage, const std::vector<std::uint32_t> &, Bytes) {
-    return std::nullopt;
 }
 
 // A shader with the original's signature that does nothing: a vertex shader that puts every
@@ -327,6 +325,25 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     return text + hlsl_struct("Output", outputs, false) +
            "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
 }
+// the translation of the code, with the structs of the signature before it; nothing if the
+// code is not one that is handled
+std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
+                                             const std::vector<std::uint32_t> &code) {
+    if (code.empty() || stage == ShaderStage::compute)
+        return std::nullopt;
+    rdna::Shader shader;
+    shader.code = code;
+    shader.root_signature = part(container, "RTS0");
+    shader.inputs = signature(container, "ISG1");
+    shader.outputs = signature(container, "OSG1");
+    if (shader.outputs.empty())
+        return std::nullopt;
+    const auto body = rdna::translate(stage, shader);
+    if (!body)
+        return std::nullopt;
+    return hlsl_struct("Input", shader.inputs, stage == ShaderStage::pixel) +
+           hlsl_struct("Output", shader.outputs, false) + *body;
+}
 
 using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
                                   const char *, const char *, UINT, UINT, IUnknown **,
@@ -335,7 +352,8 @@ struct Blob : IUnknown {
     virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
     virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
 };
-std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source) {
+std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source,
+                                  bool report = true) {
     static const auto function = [] {
         const auto library =
             LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -346,15 +364,21 @@ std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source) 
     const char *const target = stage == ShaderStage::vertex  ? "vs_5_1"
                                : stage == ShaderStage::pixel ? "ps_5_1"
                                                              : "cs_5_1";
+    constexpr UINT unbounded_tables = 1u << 20; // D3DCOMPILE_ENABLE_UNBOUNDED_DESCRIPTOR_TABLES
     IUnknown *code = nullptr, *errors = nullptr;
+    // the compiler is run with the floating point state a host program has, not the
+    // title's thread's
+    const auto title_state = _mm_getcsr();
+    _mm_setcsr(0x1f80);
     const auto result = function(source.data(), source.size(), "console shader", nullptr, nullptr,
-                                 "main", target, 0, 0, &code, &errors);
+                                 "main", target, unbounded_tables, 0, &code, &errors);
+    _mm_setcsr(title_state);
     std::vector<std::uint8_t> bytes;
     if (SUCCEEDED(result) && code) {
         auto *const blob = static_cast<Blob *>(code);
         const auto *const data = static_cast<const std::uint8_t *>(blob->GetBufferPointer());
         bytes.assign(data, data + blob->GetBufferSize());
-    } else if (static std::atomic<int> shown{0}; shown++ < 4) {
+    } else if (static std::atomic<int> shown{0}; report && shown++ < 4) {
         std::fprintf(stderr, "[Runtime] a host shader for a console one did not compile: %s\n%s\n",
                      errors ? static_cast<const char *>(static_cast<Blob *>(errors)->GetBufferPointer())
                             : "no message",
@@ -412,8 +436,12 @@ bool console_only_shader(Bytes container) {
 std::vector<std::uint32_t> console_shader_code(Bytes container) {
     const auto file = code_container(container);
     const Bytes bytes(file);
-    // the header leads to a record that has where the code is and how long, padding included
-    const auto record = word(bytes, 0x38);
+    // The header has one slot per kind of shader, unused ones filled with a marker; the one
+    // in use leads to a record that has where the code is and how long, padding included.
+    std::uint32_t record = 0;
+    for (std::size_t slot = 0x18; slot < 0x78 && !record; slot += 8)
+        if (word(bytes, slot) != 0xdeadbeef)
+            record = word(bytes, slot);
     auto start = word(bytes, record + 0x10);
     const auto size = word(bytes, record + 0x18);
     if (!record || start % 4 || start >= bytes.size() || size > bytes.size() - start)
@@ -431,7 +459,8 @@ std::vector<std::uint32_t> console_shader_code(Bytes container) {
     return {};
 }
 
-std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
+namespace {
+std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container) {
     const char letter = stage == ShaderStage::vertex ? 'v' : stage == ShaderStage::pixel ? 'p' : 'c';
     const auto hash = hash_name(container);
     const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) + ".dxbc";
@@ -453,9 +482,19 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
         write_file(base.wstring() + L".fssm", code_container(container));
     }
     if (shader.empty()) {
-        const auto body = code.empty() ? std::nullopt : translate(stage, code, container);
-        ++(body ? translated : stood_in);
-        shader = compile(stage, body ? *body : stand_in(stage, container));
+        const auto source = translated_source(stage, container, code);
+        // XS_SHADER_CODE: the HLSL made for it as well
+        if (const auto *const dump = std::getenv("XS_SHADER_CODE"); dump && source) {
+            const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");
+            write_file(text, {reinterpret_cast<const std::uint8_t *>(source->data()),
+                              source->size()});
+        }
+        if (source)
+            shader = compile(stage, *source);
+        const bool done = !shader.empty();
+        ++(done ? translated : stood_in);
+        if (!done)
+            shader = compile(stage, stand_in(stage, container));
         if (!shader.empty() && !folder.empty())
             write_file(folder / name, shader);
         const auto total = translated + stood_in;
@@ -467,5 +506,10 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
                          folder.empty() ? "" : " (kept in the shader cache)");
     }
     return made.emplace(name, std::move(shader)).first->second;
+}
+} // namespace
+
+std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
+    return make_host_shader(stage, container);
 }
 } // namespace xs::runtime::modules
