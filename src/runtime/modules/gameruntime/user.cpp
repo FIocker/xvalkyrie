@@ -203,6 +203,9 @@ void install_user() {
     implement("XUserRegisterForChangeEvent", &register_event);
     implement("XUserUnregisterForChangeEvent", &unregister_event);
     implement("XUserRegisterForDeviceAssociationChanged", &register_event);
+    // the default audio endpoint never changes here
+    implement("XUserRegisterForDefaultAudioEndpointUtf16Changed", &register_event);
+    implement("XUserUnregisterForDefaultAudioEndpointUtf16Changed", &unregister_event);
     implement("XUserUnregisterForDeviceAssociationChanged", &unregister_event);
     implement("XUserGetSignOutDeferral", &sign_out_deferral);
     implement("XUserCloseSignOutDeferralHandle", &close_deferral);
