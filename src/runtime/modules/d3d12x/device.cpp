@@ -941,6 +941,49 @@ void STDMETHODCALLTYPE create_sampler(ID3D12Device *self, const D3D12_SAMPLER_DE
         self, desc, host_handle(handle));
     mark_host(handle);
 }
+// CreateSamplerX (61): a sampler as the console's GPU has it, with each filter on its own.
+// What the host has no word for (the filter along Z, the second bias, the anisotropy bias
+// and threshold, the performance settings) is left out.
+struct ConsoleSampler {
+    UINT flags, filter_mag, filter_min, filter_mip, filter_z, filter_mode;
+    D3D12_TEXTURE_ADDRESS_MODE address_u, address_v, address_w;
+    FLOAT min_lod, max_lod, lod_bias, lod_bias_secondary;
+    UINT max_anisotropy;
+    FLOAT anisotropy_bias;
+    UINT anisotropy_threshold;
+    D3D12_COMPARISON_FUNC comparison;
+    FLOAT border[4];
+};
+void STDMETHODCALLTYPE create_sampler_x(ID3D12Device *self, const ConsoleSampler *desc,
+                                        Handle handle) {
+    if (!desc)
+        return;
+    // filters: 0 point, 1 bilinear, 2 and 3 the same with anisotropy; mips: 0 none, 1 point,
+    // 2 linear; mode: 0 a blend, 1 the minimum, 2 the maximum
+    const bool compares = desc->comparison > D3D12_COMPARISON_FUNC_NEVER &&
+                          desc->comparison < D3D12_COMPARISON_FUNC_ALWAYS;
+    const UINT reduction = compares ? 1 : desc->filter_mode == 1 ? 2 : desc->filter_mode == 2 ? 3 : 0;
+    const bool anisotropic = desc->filter_mag >= 2 || desc->filter_min >= 2;
+    const UINT basic = (desc->filter_min & 1) << 4 | (desc->filter_mag & 1) << 2 |
+                       (desc->filter_mip == 2 ? 1u : 0u);
+    const auto address = [](D3D12_TEXTURE_ADDRESS_MODE mode) {
+        return mode >= 1 && mode <= 5 ? mode : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    };
+    D3D12_SAMPLER_DESC host{};
+    host.Filter = static_cast<D3D12_FILTER>((anisotropic ? 0x55u : basic) | reduction << 7);
+    host.AddressU = address(desc->address_u);
+    host.AddressV = address(desc->address_v);
+    host.AddressW = address(desc->address_w);
+    host.MipLODBias = desc->lod_bias;
+    host.MaxAnisotropy = anisotropic ? std::clamp(desc->max_anisotropy, 1u, 16u) : 1;
+    host.ComparisonFunc = compares ? desc->comparison : D3D12_COMPARISON_FUNC_NEVER;
+    std::copy(desc->border, desc->border + 4, host.BorderColor);
+    host.MinLOD = desc->min_lod;
+    host.MaxLOD = desc->filter_mip ? desc->max_lod : desc->min_lod;
+    original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 22)(
+        self, &host, host_handle(handle));
+    mark_host(handle);
+}
 // A copied descriptor: the host's goes along with the host's copy; one the title wrote goes
 // along as the title wrote it, read where it is bound
 void carry(Handle destination, Handle source, UINT stride) {
@@ -1670,7 +1713,13 @@ void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
                 target_states[barrier.Transition.pResource] = barrier.Transition.StateAfter;
             }
         }
-    host_of(self)->ResourceBarrier(count, host.data());
+    // The title's placed resources are committed ones here, each with memory of its own:
+    // none aliases another, and the host turns a list down for saying so.
+    std::erase_if(host, [](const D3D12_RESOURCE_BARRIER &barrier) {
+        return barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+    });
+    if (!host.empty())
+        host_of(self)->ResourceBarrier(static_cast<UINT>(host.size()), host.data());
 }
 // CopyTextureRegion from a buffer at an offset the host does not take: the console reads a
 // texture's data from anywhere in a buffer, the host from multiples of 512 bytes. The data
@@ -2813,6 +2862,8 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({20, reinterpret_cast<Slot>(&create_target_view<20>)});
     overrides.push_back({21, reinterpret_cast<Slot>(&create_target_view<21>)});
     overrides.push_back({22, reinterpret_cast<Slot>(&create_sampler)});
+    if (console == Target::scarlett)
+        overrides.push_back({61, reinterpret_cast<Slot>(&create_sampler_x)});
     overrides.push_back({23, reinterpret_cast<Slot>(&copy_descriptors)});
     overrides.push_back({24, reinterpret_cast<Slot>(&copy_descriptors_simple)});
     overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
