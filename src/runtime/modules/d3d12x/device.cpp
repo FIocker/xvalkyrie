@@ -1388,6 +1388,97 @@ ID3D12RootSignature *shader_root_signature(ID3D12Device *self, bool drawing,
     }
     return nullptr;
 }
+// What each graphics pipeline was made from, as the host was given it: the console derives
+// a pipeline from another with some of its state changed, and the host makes one whole.
+// Shaders are kept once each, however many pipelines use them.
+struct KeptPipeline {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+    std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
+    std::deque<std::string> names;
+};
+std::mutex kept_mutex;
+std::map<const void *, KeptPipeline> kept_pipelines;
+std::map<std::uint64_t, std::vector<std::uint8_t>> kept_shaders;
+D3D12_SHADER_BYTECODE keep_shader(const D3D12_SHADER_BYTECODE &code) {
+    if (!code.pShaderBytecode || !code.BytecodeLength)
+        return {};
+    const auto *const bytes = static_cast<const std::uint8_t *>(code.pShaderBytecode);
+    std::uint64_t hash = 0xcbf29ce484222325ull ^ code.BytecodeLength;
+    for (SIZE_T i = 0; i < code.BytecodeLength; ++i)
+        hash = (hash ^ bytes[i]) * 0x100000001b3ull;
+    auto &kept = kept_shaders[hash];
+    if (kept.empty())
+        kept.assign(bytes, bytes + code.BytecodeLength);
+    return {kept.data(), kept.size()};
+}
+void keep_pipeline(const void *pipeline, const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
+    const std::lock_guard lock(kept_mutex);
+    auto &kept = kept_pipelines[pipeline];
+    kept = {};
+    kept.desc = desc;
+    for (auto *const shader :
+         {&kept.desc.VS, &kept.desc.PS, &kept.desc.DS, &kept.desc.HS, &kept.desc.GS})
+        *shader = keep_shader(*shader);
+    kept.desc.StreamOutput = {};
+    kept.desc.CachedPSO = {};
+    for (UINT i = 0; i < desc.InputLayout.NumElements && desc.InputLayout.pInputElementDescs; ++i) {
+        auto element = desc.InputLayout.pInputElementDescs[i];
+        element.SemanticName = kept.names.emplace_back(element.SemanticName).c_str();
+        kept.elements.push_back(element);
+    }
+    kept.desc.InputLayout.pInputElementDescs = kept.elements.data();
+    if (kept.desc.pRootSignature)
+        kept.desc.pRootSignature->AddRef(); // for as long as it may be derived from
+}
+// CreateDerivedGraphicsPipelineStateX (55)
+struct DerivedState {
+    UINT type; // 0 depth and stencil, 1 rasterizer, 2 blend, 3 sample mask, 4 and up: what
+               // only the console's GPU has a use for
+    union {
+        D3D12_DEPTH_STENCIL_DESC depth_stencil;
+        D3D12_RASTERIZER_DESC rasterizer;
+        D3D12_BLEND_DESC blend;
+        UINT sample_mask;
+    };
+};
+HRESULT STDMETHODCALLTYPE create_derived_graphics_pipeline(ID3D12Device *self,
+                                                           ID3D12PipelineState *source,
+                                                           UINT count, const DerivedState *states,
+                                                           REFIID iid, void **state) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *,
+                                                REFIID, void **);
+    if (!source || !state || (count && !states))
+        return E_INVALIDARG;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;
+    {
+        const std::lock_guard lock(kept_mutex);
+        const auto found = kept_pipelines.find(source);
+        if (found == kept_pipelines.end()) {
+            std::fprintf(stderr, "[Runtime] CreateDerivedGraphicsPipelineStateX from a pipeline "
+                                 "that was not made here\n");
+            return E_INVALIDARG;
+        }
+        desc = found->second.desc;
+    }
+    for (UINT i = 0; i < count; ++i)
+        if (states[i].type == 0)
+            desc.DepthStencilState = states[i].depth_stencil;
+        else if (states[i].type == 1)
+            desc.RasterizerState = states[i].rasterizer;
+        else if (states[i].type == 2)
+            desc.BlendState = states[i].blend;
+        else if (states[i].type == 3)
+            desc.SampleMask = states[i].sample_mask;
+    const auto result = original<Create>(self, 10)(self, &desc, iid, state);
+    if (SUCCEEDED(result) && *state)
+        keep_pipeline(*state, desc);
+    else {
+        std::fprintf(stderr, "[Runtime] CreateDerivedGraphicsPipelineStateX: 0x%08lx\n",
+                     static_cast<unsigned long>(result));
+        report_messages();
+    }
+    return result;
+}
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -1406,6 +1497,8 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
             host.pRootSignature = from_shader = shader_root_signature(self, true, {desc->VS, desc->PS});
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
+    if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
+        keep_pipeline(*state, host);
     if (from_shader)
         from_shader->Release();
     if (FAILED(result)) {
@@ -3141,6 +3234,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({22, reinterpret_cast<Slot>(&create_sampler)});
     if (console == Target::scarlett)
         overrides.push_back({61, reinterpret_cast<Slot>(&create_sampler_x)});
+        overrides.push_back({55, reinterpret_cast<Slot>(&create_derived_graphics_pipeline)});
     overrides.push_back({23, reinterpret_cast<Slot>(&copy_descriptors)});
     overrides.push_back({24, reinterpret_cast<Slot>(&copy_descriptors_simple)});
     overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
