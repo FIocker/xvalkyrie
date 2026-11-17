@@ -183,6 +183,11 @@ HANDLE WINAPI find_first_file_ex_w(const wchar_t *name, FINDEX_INFO_LEVELS level
     note_missing("FindFirstFileExW", name, find == INVALID_HANDLE_VALUE);
     return find;
 }
+HANDLE WINAPI find_first_file_w(const wchar_t *name, WIN32_FIND_DATAW *data) {
+    const auto find = FindFirstFileW(console_path(name).c_str(), data);
+    note_missing("FindFirstFileW", name, find == INVALID_HANDLE_VALUE);
+    return find;
+}
 void note_missing(const char *call, const char *name, bool failed) {
     const auto error = GetLastError();
     const std::wstring wide(name ? name : "", name ? name + std::strlen(name) : "");
@@ -380,6 +385,7 @@ const ApiFunction functions[] = {
     {"GetFileAttributesExW", erase(get_file_attributes_ex_w)},
     {"GetFileAttributesW", erase(get_file_attributes_w)},
     {"FindFirstFileExW", erase(find_first_file_ex_w)},
+    {"FindFirstFileW", erase(find_first_file_w)},
     {"SetThreadAffinityMask", erase(set_thread_affinity_mask)},
     {"GetCurrentProcessorNumber", erase(get_current_processor_number)},
     {"GetSystemInfo", erase(get_system_info)},
