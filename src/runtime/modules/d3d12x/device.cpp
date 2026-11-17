@@ -80,10 +80,11 @@ struct ConsoleMode {
     DXGI_MODE_SCALING scaling;
     UINT flags;
 };
-class ConsoleOutput : public IDXGIOutput {
+// (No virtual destructor: it would take the slot right after the desktop's methods.)
+class ConsoleOutput final : public IDXGIOutput {
   public:
     explicit ConsoleOutput(IDXGIOutput *host) : host_(host) {}
-    virtual ~ConsoleOutput() { host_->Release(); }
+    ~ConsoleOutput() { host_->Release(); }
     STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
         if (!object)
             return E_POINTER;

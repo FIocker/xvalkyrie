@@ -369,9 +369,15 @@ class Factory final : public Object<FactoryInterface> {
         const auto handle =
             CreateFileW(console_file_path(path).c_str(), GENERIC_READ,
                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle == INVALID_HANDLE_VALUE)
-            return HRESULT_FROM_WIN32(GetLastError());
+                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS,
+                        nullptr); // a title opens the root of its package as well
+        if (handle == INVALID_HANDLE_VALUE) {
+            const auto error = GetLastError();
+            if (static std::atomic<int> shown{0}; shown++ < 6)
+                std::fprintf(stderr, "[Runtime] DirectStorage: cannot open %ls (as %ls): error %lu\n",
+                             path, console_file_path(path).c_str(), error);
+            return HRESULT_FROM_WIN32(error);
+        }
         auto *const made = new File(handle);
         const auto result = made->QueryInterface(iid, file);
         made->Release();
