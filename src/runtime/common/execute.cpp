@@ -853,8 +853,8 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         throw std::runtime_error("The image is a DLL, not an executable");
     if (!pe.at("entry_rva").get<std::uint64_t>())
         throw std::runtime_error("The image has no entry point");
-    if (contents.contains("delay_imports"))
-        throw std::runtime_error("Unsupported: the image declares delay-load imports");
+    // Delay-load imports are bound by the image's own helper on first use, through
+    // LoadLibrary and GetProcAddress or ResolveDelayLoadedAPI, which are ours.
 
     // XS_MUTE does the same as the option, for runs started from the window
     if ((execution.mute || std::getenv("XS_MUTE")) && !audio::mute_process())

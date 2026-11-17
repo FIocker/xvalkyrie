@@ -70,6 +70,144 @@ HRESULT WINAPI create_device_12(void *adapter, UINT level, REFIID iid, void **de
     std::fflush(stderr);
     return E_NOTIMPL;
 }
+// The Series console's IDXGIOutput goes on past the desktop's methods with three of its own,
+// and a title asks it for the display's modes. The host's output answers the rest.
+struct ConsoleMode {
+    UINT width, height;
+    DXGI_RATIONAL refresh;
+    DXGI_FORMAT format;
+    DXGI_MODE_SCANLINE_ORDER scanline;
+    DXGI_MODE_SCALING scaling;
+    UINT flags;
+};
+class ConsoleOutput : public IDXGIOutput {
+  public:
+    explicit ConsoleOutput(IDXGIOutput *host) : host_(host) {}
+    virtual ~ConsoleOutput() { host_->Release(); }
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        if (!is_any<IUnknown, IDXGIObject, IDXGIOutput>(iid)) {
+            *object = nullptr;
+            return E_NOINTERFACE;
+        }
+        AddRef();
+        *object = this;
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left)
+            delete this;
+        return left;
+    }
+    STDMETHODIMP SetPrivateData(REFGUID id, UINT size, const void *data) override {
+        return host_->SetPrivateData(id, size, data);
+    }
+    STDMETHODIMP SetPrivateDataInterface(REFGUID id, const IUnknown *object) override {
+        return host_->SetPrivateDataInterface(id, object);
+    }
+    STDMETHODIMP GetPrivateData(REFGUID id, UINT *size, void *data) override {
+        return host_->GetPrivateData(id, size, data);
+    }
+    STDMETHODIMP GetParent(REFIID iid, void **parent) override {
+        return host_->GetParent(iid, parent);
+    }
+    STDMETHODIMP GetDesc(DXGI_OUTPUT_DESC *desc) override { return host_->GetDesc(desc); }
+    STDMETHODIMP GetDisplayModeList(DXGI_FORMAT format, UINT flags, UINT *count,
+                                    DXGI_MODE_DESC *modes) override {
+        return host_->GetDisplayModeList(format, flags, count, modes);
+    }
+    STDMETHODIMP FindClosestMatchingMode(const DXGI_MODE_DESC *wanted, DXGI_MODE_DESC *closest,
+                                         IUnknown *device) override {
+        return host_->FindClosestMatchingMode(wanted, closest, device);
+    }
+    STDMETHODIMP WaitForVBlank() override { return host_->WaitForVBlank(); }
+    STDMETHODIMP TakeOwnership(IUnknown *, BOOL) override { return S_OK; }
+    STDMETHODIMP_(void) ReleaseOwnership() override {}
+    STDMETHODIMP GetGammaControlCapabilities(DXGI_GAMMA_CONTROL_CAPABILITIES *caps) override {
+        return host_->GetGammaControlCapabilities(caps);
+    }
+    STDMETHODIMP SetGammaControl(const DXGI_GAMMA_CONTROL *) override { return S_OK; }
+    STDMETHODIMP GetGammaControl(DXGI_GAMMA_CONTROL *control) override {
+        return host_->GetGammaControl(control);
+    }
+    STDMETHODIMP SetDisplaySurface(IDXGISurface *) override { return S_OK; }
+    STDMETHODIMP GetDisplaySurfaceData(IDXGISurface *) override { return E_NOTIMPL; }
+    STDMETHODIMP GetFrameStatistics(DXGI_FRAME_STATISTICS *statistics) override {
+        return host_->GetFrameStatistics(statistics);
+    }
+    virtual HRESULT STDMETHODCALLTYPE GetRefreshRate(DXGI_RATIONAL *rate) {
+        if (!rate)
+            return E_POINTER;
+        *rate = {60, 1};
+        return S_OK;
+    }
+    virtual HRESULT STDMETHODCALLTYPE GetAspectRatio(DXGI_RATIONAL *ratio) {
+        if (!ratio)
+            return E_POINTER;
+        *ratio = {16, 9};
+        return S_OK;
+    }
+    // GetDisplayModeListX: the modes a television gives the console, at 60 Hz
+    virtual HRESULT STDMETHODCALLTYPE GetDisplayModeListX(DXGI_FORMAT format, UINT, UINT *count,
+                                                         ConsoleMode *modes) {
+        if (!count)
+            return E_POINTER;
+        static constexpr UINT sizes[][2] = {{1920, 1080}, {2560, 1440}, {3840, 2160}};
+        if (!modes) {
+            *count = static_cast<UINT>(std::size(sizes));
+            return S_OK;
+        }
+        const auto given = std::min<UINT>(*count, static_cast<UINT>(std::size(sizes)));
+        for (UINT i = 0; i < given; ++i)
+            modes[i] = {sizes[i][0], sizes[i][1], {60, 1}, format,
+                        DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE, DXGI_MODE_SCALING_UNSPECIFIED, 0};
+        const bool all = given == std::size(sizes);
+        *count = given;
+        return all ? S_OK : DXGI_ERROR_MORE_DATA;
+    }
+
+  private:
+    IDXGIOutput *host_;
+    std::atomic<ULONG> references_{1};
+};
+// the host's adapter, but for the outputs it gives
+class ConsoleAdapter final
+    : public Microsoft::WRL::RuntimeClass<
+          Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDXGIAdapter> {
+  public:
+    explicit ConsoleAdapter(IDXGIAdapter *host) : host_(host) {}
+    ~ConsoleAdapter() override { host_->Release(); }
+    STDMETHODIMP SetPrivateData(REFGUID id, UINT size, const void *data) override {
+        return host_->SetPrivateData(id, size, data);
+    }
+    STDMETHODIMP SetPrivateDataInterface(REFGUID id, const IUnknown *object) override {
+        return host_->SetPrivateDataInterface(id, object);
+    }
+    STDMETHODIMP GetPrivateData(REFGUID id, UINT *size, void *data) override {
+        return host_->GetPrivateData(id, size, data);
+    }
+    STDMETHODIMP GetParent(REFIID iid, void **parent) override {
+        return host_->GetParent(iid, parent);
+    }
+    STDMETHODIMP EnumOutputs(UINT index, IDXGIOutput **output) override {
+        if (!output)
+            return E_POINTER;
+        IDXGIOutput *host = nullptr;
+        const auto result = host_->EnumOutputs(index, &host);
+        *output = SUCCEEDED(result) ? new ConsoleOutput(host) : nullptr;
+        return result;
+    }
+    STDMETHODIMP GetDesc(DXGI_ADAPTER_DESC *desc) override { return host_->GetDesc(desc); }
+    STDMETHODIMP CheckInterfaceSupport(REFGUID name, LARGE_INTEGER *version) override {
+        return host_->CheckInterfaceSupport(name, version);
+    }
+
+  private:
+    IDXGIAdapter *host_;
+};
 // The console's Direct3D 12 device answers for IDXGIDevice1, which the host's does not: this
 // one leads to the adapter the device was made on, and from there to our factory.
 class D3D12DxgiDevice final
@@ -88,6 +226,10 @@ class D3D12DxgiDevice final
         IDXGIAdapter *host = nullptr;
         result = factory->EnumAdapterByLuid(luid_, IID_PPV_ARGS(&host));
         factory->Release();
+        if (SUCCEEDED(result) && !adapter_wrapper && console == Target::scarlett) {
+            *adapter = Microsoft::WRL::Make<ConsoleAdapter>(host).Detach();
+            return S_OK;
+        }
         if (FAILED(result) || !adapter_wrapper) {
             *adapter = host;
             return result;

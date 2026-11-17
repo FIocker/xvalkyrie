@@ -1,6 +1,7 @@
 #include "runtime/modules/console_shader.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/console_shader_rdna.hpp"
+#include "runtime/modules/inflate.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -440,6 +441,10 @@ std::mutex mutex;
 std::map<std::string, std::vector<std::uint8_t>> made; // by cache name; never erased
 std::atomic<unsigned> translated{0}, stood_in{0};
 } // namespace
+
+bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) {
+    return Inflate(stream).run(out);
+}
 
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader

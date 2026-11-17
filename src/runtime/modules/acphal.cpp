@@ -89,6 +89,22 @@ void *WINAPI apu_map_apu_address(std::uint32_t apu) {
     return nullptr;
 }
 BOOL WINAPI apu_is_virtual_address_valid() { return TRUE; }
+// ApuHeapGetState: the heap is the host's memory, so there is always room. Free bytes, bytes
+// in use, bytes lost, the largest block to be had, and the number of blocks.
+HRESULT WINAPI apu_heap_state(std::uint32_t *state, std::uint32_t) {
+    if (!state)
+        return E_INVALIDARG;
+    const std::lock_guard lock(apu_mutex);
+    std::uint32_t used = 0;
+    for (const auto &region : apu_regions)
+        used += region.size;
+    state[0] = 256u << 20;
+    state[1] = used;
+    state[2] = 0;
+    state[3] = 64u << 20;
+    state[4] = static_cast<std::uint32_t>(apu_regions.size());
+    return S_OK;
+}
 // chad.dll (XDsp, the Series console's audio DSP): its interface is in no public header,
 // so a title is told it is not there
 HRESULT WINAPI no_audio_dsp() { return E_NOTIMPL; }
@@ -417,6 +433,7 @@ void install_acphal(Registry &registry) {
         {"ApuCreateHeap", erase(apu_create_heap)},
         {"ApuMapVirtualAddress", erase(apu_map_virtual_address)},
         {"ApuMapApuAddress", erase(apu_map_apu_address)},
+        {"ApuHeapGetState", erase(apu_heap_state)},
         {"ApuIsVirtualAddressValid", erase(apu_is_virtual_address_valid)},
         {"AcpHalCreate", erase(acp_hal_create)},
         {"AcpHalAllocateShapeContexts", erase(allocate_shape_contexts)},

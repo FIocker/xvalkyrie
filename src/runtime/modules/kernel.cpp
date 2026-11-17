@@ -408,6 +408,8 @@ std::span<const ApiFunction> kernel_functions() { return functions; }
 FARPROC get_proc_address(HMODULE module, const char *name) {
     return get_proc_address_of(module, name);
 }
+std::wstring console_file_path(const wchar_t *path) { return console_path(path); }
+
 void install_kernel(Registry &registry, Target target) {
     console = target;
     for (const auto &[name, function] : functions)
