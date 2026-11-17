@@ -29,7 +29,9 @@ void release(Placement &placement) {
     if (placement.d3d12)
         placement.d3d12->Release();
 }
-std::mutex mutex;
+// Taken again by the fault handler when code of ours writes to a placement's memory while
+// it holds it
+std::recursive_mutex mutex;
 std::map<std::uintptr_t, Placement> placements; // by start
 std::vector<std::uintptr_t> dirty;              // starts of the ones written since uploaded
 std::uintptr_t largest = 0;
