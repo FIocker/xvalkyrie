@@ -130,7 +130,14 @@ std::filesystem::path console_system_directory(const std::filesystem::path &exec
 
 bool console_system_module(std::string_view module) {
     const auto name = lower(module);
-    return name == "xg_x.dll" || name == "xg.dll" || name == "xg_xs.dll";
+    // texture layouts, and the shader compiler with its back ends: they compute, and ask
+    // the system for nothing a host program does not get. The rest of that folder (the
+    // graphics, audio, input and runtime DLLs) talks to the console's kernel and drivers.
+    for (const auto *computing : {"xg_x.dll", "xg.dll", "xg_xs.dll", "dxcompiler_x.dll",
+                                  "dxcompiler_xs.dll", "scdxil.dll", "dxbc2dxil_xs.dll"})
+        if (name == computing)
+            return true;
+    return false;
 }
 
 namespace {

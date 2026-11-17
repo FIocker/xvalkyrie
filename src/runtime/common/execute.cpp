@@ -396,6 +396,17 @@ const TitleModule *title_module(std::string_view file_name, const Resolver &reso
     loader::MapOptions options;
     options.executable = true;
     options.resolve = resolve;
+    // A module of the console's system is not held to the list of APIs a title may import:
+    // what nothing of ours answers goes to the host's function of that name.
+    if (!file_path.empty())
+        options.resolve = [resolve](std::string_view from,
+                                    std::string_view symbol) -> std::optional<std::uint64_t> {
+            if (!detail::resolve(*guest->registry, from, symbol).function &&
+                detail::title_dll(guest->directory, from).empty())
+                if (auto *const host = detail::host_export(from, symbol))
+                    return reinterpret_cast<std::uint64_t>(host);
+            return resolve(from, symbol);
+        };
     TitleModule module;
     module.name = name;
     module.path = std::filesystem::absolute(path).wstring();
