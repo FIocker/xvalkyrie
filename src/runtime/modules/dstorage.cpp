@@ -5,6 +5,7 @@
 #include "runtime/modules/placement.hpp"
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -269,6 +270,15 @@ class Queue final : public Object<QueueInterface> {
         for (auto &entry : work) {
             if (auto *const request = std::get_if<Request>(&entry)) {
                 const auto result = read(*request);
+                // XS_FILE_TRACE: the first requests, and every one that fails
+                if (static std::atomic<int> shown{0};
+                    std::getenv("XS_FILE_TRACE") && (FAILED(result) || shown < 24) && shown++ < 200)
+                    std::fprintf(stderr,
+                                 "[Runtime] DirectStorage request: options 0x%llx, %u bytes at "
+                                 "%llu to %u bytes (intermediate %u): 0x%08lx\n",
+                                 request->options, request->source_size, request->file_offset,
+                                 request->destination_size, request->intermediate_size,
+                                 static_cast<unsigned long>(result));
                 if (!(request->options & 1ull << 22) && request->source)
                     static_cast<IUnknown *>(request->source)->Release();
                 if (FAILED(result)) {
