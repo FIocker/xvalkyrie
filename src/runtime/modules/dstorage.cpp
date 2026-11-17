@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <intrin.h>
 #include <mutex>
 #include <string>
 #include <variant>
@@ -388,6 +389,10 @@ class Factory final : public Object<FactoryInterface> {
                              path, console_file_path(path).c_str(), error);
             return HRESULT_FROM_WIN32(error);
         }
+        if (static std::atomic<int> shown{0}; std::getenv("XS_FILE_TRACE") && shown++ < 40)
+            std::fprintf(stderr, "[Runtime] DirectStorage: opened %ls (%zu characters) from %s\n",
+                         path, wcslen(path),
+                         detail::guest_location(_ReturnAddress()).c_str());
         auto *const made = new File(handle);
         const auto result = made->QueryInterface(iid, file);
         made->Release();
