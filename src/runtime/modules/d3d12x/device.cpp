@@ -1078,6 +1078,35 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(ID3D12Device *, const D3D12_
 void report_messages();
 // CreateRootSignature (16): its descriptor tables are kept, to know what the descriptors the
 // title writes are
+// The root signatures the title made, newest last, each with a reference of ours and
+// whether it allows an input layout (which tells one for drawing from one for computing)
+struct TitleSignature {
+    ID3D12RootSignature *signature;
+    bool input_layout;
+};
+std::mutex title_signature_mutex;
+std::vector<TitleSignature> title_signatures;
+void remember_signature(ID3D12RootSignature *signature, const void *blob, SIZE_T size) {
+    const auto *const bytes = static_cast<const std::uint8_t *>(blob);
+    std::uint32_t flags = 0;
+    if (size >= 32 && !std::memcmp(bytes, "DXBC", 4)) {
+        std::uint32_t count = 0;
+        std::memcpy(&count, bytes + 28, 4);
+        for (std::uint32_t i = 0; i < count && 36 + 4 * i <= size; ++i) {
+            std::uint32_t offset = 0;
+            std::memcpy(&offset, bytes + 32 + 4 * i, 4);
+            if (offset + 8 + 24 <= size && !std::memcmp(bytes + offset, "RTS0", 4))
+                std::memcpy(&flags, bytes + offset + 8 + 20, 4);
+        }
+    }
+    const std::lock_guard lock(title_signature_mutex);
+    for (const auto &known : title_signatures)
+        if (known.signature == signature)
+            return;
+    signature->AddRef();
+    title_signatures.push_back(
+        {signature, (flags & D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT) != 0});
+}
 HRESULT STDMETHODCALLTYPE create_root_signature(ID3D12Device *self, UINT node, const void *blob,
                                                 SIZE_T size, REFIID iid, void **signature) {
     using Create =
@@ -1096,8 +1125,10 @@ HRESULT STDMETHODCALLTYPE create_root_signature(ID3D12Device *self, UINT node, c
             size = contained;
     }
     const auto result = original<Create>(self, 16)(self, node, blob, size, iid, signature);
-    if (SUCCEEDED(result) && signature && *signature)
+    if (SUCCEEDED(result) && signature && *signature) {
         read_root_signature(*signature, blob, size);
+        remember_signature(static_cast<ID3D12RootSignature *>(*signature), blob, size);
+    }
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreateRootSignature from %zu bytes: 0x%08lx\n",
                      static_cast<std::size_t>(size), static_cast<unsigned long>(result));
@@ -1192,9 +1223,19 @@ bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code) {
     return true;
 }
 // A pipeline without a root signature has it in its shaders, and the shader made for the
-// host does not carry it: it is made from the title's shader
-ID3D12RootSignature *shader_root_signature(ID3D12Device *self,
+// host does not carry it. On the host a pipeline is bound to the root signature it was made
+// with, and the title sets its own on its lists: the pipeline gets the newest one the title
+// made of its kind (for drawing or for computing), or failing that the one in the shader.
+ID3D12RootSignature *shader_root_signature(ID3D12Device *self, bool drawing,
                                            std::initializer_list<D3D12_SHADER_BYTECODE> shaders) {
+    {
+        const std::lock_guard lock(title_signature_mutex);
+        for (auto known = title_signatures.rbegin(); known != title_signatures.rend(); ++known)
+            if (known->input_layout == drawing) {
+                known->signature->AddRef();
+                return known->signature;
+            }
+    }
     for (const auto &shader : shaders) {
         ID3D12RootSignature *signature = nullptr;
         if (shader.pShaderBytecode &&
@@ -1219,7 +1260,7 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         const bool made = host_bytecode(modules::ShaderStage::vertex, host.VS) |
                           host_bytecode(modules::ShaderStage::pixel, host.PS);
         if (made && !host.pRootSignature)
-            host.pRootSignature = from_shader = shader_root_signature(self, {desc->VS, desc->PS});
+            host.pRootSignature = from_shader = shader_root_signature(self, true, {desc->VS, desc->PS});
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
     if (from_shader)
@@ -1260,7 +1301,7 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
         if (host_bytecode(modules::ShaderStage::compute, host.CS) && !host.pRootSignature)
-            host.pRootSignature = from_shader = shader_root_signature(self, {desc->CS});
+            host.pRootSignature = from_shader = shader_root_signature(self, false, {desc->CS});
     }
     const auto result = original<Create>(self, 11)(self, desc ? &host : nullptr, iid, state);
     if (from_shader)
@@ -2908,6 +2949,16 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
             }
             debug->Release();
         }
+        // The debug layer raises an exception of its own (0x87d) for some messages, for a
+        // debugger to see. With none attached and a title's frames below, nobody takes it
+        // and the process ends: it is passed over.
+        static const auto passed_over = AddVectoredExceptionHandler(
+            1, [](EXCEPTION_POINTERS *exception) -> LONG {
+                return exception->ExceptionRecord->ExceptionCode == 0x87d
+                           ? EXCEPTION_CONTINUE_EXECUTION
+                           : EXCEPTION_CONTINUE_SEARCH;
+            });
+        static_cast<void>(passed_over);
         // what the GPU was doing when the device goes, and where it faulted
         if (ID3D12DeviceRemovedExtendedDataSettings *dred = nullptr;
             get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&dred)))) {
