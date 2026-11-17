@@ -631,11 +631,13 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
             read(context.Rdx, at_rdx, sizeof at_rdx);
             read(context.R8, at_r8, sizeof at_r8);
             std::fprintf(stderr,
-                         "[Break] image+0x%llx thread %lu rcx %llx rdx %llx r8 %llx r9 %llx "
+                         "[Break] image+0x%llx thread %lu rax %llx (image at %llx) rcx %llx rdx %llx r8 %llx r9 %llx "
                          "[rcx] %llx %llx %llx %llx [rdx] %llx %llx %llx %llx [r8] %llx %llx %llx %llx %llx from %s\n",
                          static_cast<unsigned long long>(
                              reinterpret_cast<std::uint64_t>(point.address) - guest->base),
-                         GetCurrentThreadId(), context.Rcx, context.Rdx, context.R8, context.R9,
+                         GetCurrentThreadId(), context.Rax,
+                         static_cast<unsigned long long>(guest->base), context.Rcx, context.Rdx,
+                         context.R8, context.R9,
                          at_rcx[0], at_rcx[1], at_rcx[2], at_rcx[3], at_rdx[0], at_rdx[1], at_rdx[2],
                          at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
                          at_r8[3], at_r8[4],
