@@ -16,6 +16,8 @@ struct Element {
     std::uint32_t type = 3;  // 1 uint, 2 int, 3 float
     std::uint32_t width = 4; // components
     bool system_value = false;
+    std::uint32_t reg = 0; // the register it is in, and which of its components
+    std::uint8_t mask = 0;
 };
 struct Shader {
     std::vector<std::uint32_t> code;               // with the six words that lead it in

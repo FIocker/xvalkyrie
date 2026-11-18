@@ -1531,6 +1531,9 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
             std::fprintf(stderr, "[Runtime]   vertex %s\n[Runtime]   pixel %s\n",
                          modules::shader_signature(bytes(desc->VS)).c_str(),
                          modules::shader_signature(bytes(desc->PS)).c_str());
+            if (desc->GS.pShaderBytecode)
+                std::fprintf(stderr, "[Runtime]   geometry %s\n",
+                             modules::shader_signature(bytes(desc->GS)).c_str());
             std::fprintf(stderr, "[Runtime]   topology %d, %u targets of format %d, depth %d, "
                                  "samples %u, layout:",
                          host.PrimitiveTopologyType, host.NumRenderTargets, host.RTVFormats[0],

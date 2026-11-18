@@ -276,6 +276,8 @@ std::vector<Element> signature(Bytes container, const char *name) {
         element.width = static_cast<std::uint32_t>(std::max(std::popcount(data[at + 24]), 1));
         element.system_value =
             word(data, at + 12) != 0 || !_strnicmp(element.name.c_str(), "SV_", 3);
+        element.reg = word(data, at + 20);
+        element.mask = data[at + 24];
         read.push_back({std::move(element), word(data, at + 20), data[at + 24]});
     }
     std::stable_sort(read.begin(), read.end(), [](const Read &a, const Read &b) {
@@ -469,13 +471,15 @@ bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) {
     return Inflate(stream).run(out);
 }
 
+bool console_only_shader(Bytes container);
 std::string shader_signature(Bytes container) {
-    std::string text;
+    std::string text = console_only_shader(container) ? "(console code only) " : "";
     for (const auto *name : {"ISG1", "OSG1"}) {
         text += name == std::string("ISG1") ? "in:" : " out:";
         for (const auto &element : signature(container, name))
             text += " " + element.name + std::to_string(element.index) + "/" +
-                    std::to_string(element.type) + "x" + std::to_string(element.width);
+                    std::to_string(element.type) + "x" + std::to_string(element.width) + "@r" +
+                    std::to_string(element.reg) + "m" + std::to_string(element.mask);
     }
     return text;
 }
