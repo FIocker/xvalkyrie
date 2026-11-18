@@ -1517,6 +1517,22 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         if (static std::atomic<int> shown{0}; desc && shown++ < 2) {
             describe_shader("vertex", desc->VS);
             describe_shader("pixel", desc->PS);
+            const auto bytes = [](const D3D12_SHADER_BYTECODE &code) {
+                return std::span<const std::uint8_t>(
+                    static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength);
+            };
+            std::fprintf(stderr, "[Runtime]   vertex %s\n[Runtime]   pixel %s\n",
+                         modules::shader_signature(bytes(desc->VS)).c_str(),
+                         modules::shader_signature(bytes(desc->PS)).c_str());
+            std::fprintf(stderr, "[Runtime]   topology %d, %u targets of format %d, depth %d, "
+                                 "samples %u, layout:",
+                         host.PrimitiveTopologyType, host.NumRenderTargets, host.RTVFormats[0],
+                         host.DSVFormat, host.SampleDesc.Count);
+            for (UINT i = 0; i < host.InputLayout.NumElements; ++i)
+                std::fprintf(stderr, " %s%u/%d", host.InputLayout.pInputElementDescs[i].SemanticName,
+                             host.InputLayout.pInputElementDescs[i].SemanticIndex,
+                             host.InputLayout.pInputElementDescs[i].Format);
+            std::fprintf(stderr, "\n");
             describe_shader("geometry", desc->GS);
             describe_shader("hull", desc->HS);
             describe_shader("domain", desc->DS);

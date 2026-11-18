@@ -25,7 +25,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 4;
+constexpr int translator_version = 5;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -318,13 +318,17 @@ std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
                 text += std::to_string(element.index);
             text += ";\n";
         }
-    // a struct needs a field: one the stage has whatever the stage before it writes
-    if (elements.empty())
-        text += interpolated ? "    float4 unused : SV_Position;\n"
-                             : "    uint unused : SV_VertexID;\n";
     return text + "};\n";
 }
 
+// A stage without inputs takes none: `main` has no parameter, and no struct is made. (A
+// made-up input would have to match what the stage before writes.)
+std::string without_input(std::string source) {
+    const std::string parameter = "main(Input input)";
+    if (const auto at = source.find(parameter); at != std::string::npos)
+        source.replace(at, parameter.size(), "main()");
+    return source;
+}
 // A shader with the original's signature that does nothing: a vertex shader that puts every
 // vertex at the origin (so nothing is drawn), a pixel shader that writes zero, an empty
 // compute shader. It stands in for a shader that is not translated, so that the title's
@@ -333,11 +337,14 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     if (stage == ShaderStage::compute)
         return "[numthreads(1, 1, 1)] void main() {}\n";
     const auto inputs = signature(container, "ISG1"), outputs = signature(container, "OSG1");
-    std::string text = hlsl_struct("Input", inputs, stage == ShaderStage::pixel);
+    std::string text =
+        inputs.empty() ? "" : hlsl_struct("Input", inputs, stage == ShaderStage::pixel);
     if (outputs.empty())
-        return text + "void main(Input input) {}\n";
-    return text + hlsl_struct("Output", outputs, false) +
-           "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
+        text += "void main(Input input) {}\n";
+    else
+        text += hlsl_struct("Output", outputs, false) +
+                "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
+    return inputs.empty() ? without_input(std::move(text)) : text;
 }
 // the translation of the code, with the structs of the signature before it; nothing if the
 // code is not one that is handled
@@ -355,6 +362,8 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     const auto body = rdna::translate(stage, shader);
     if (!body)
         return std::nullopt;
+    if (shader.inputs.empty())
+        return hlsl_struct("Output", shader.outputs, false) + without_input(*body);
     return hlsl_struct("Input", shader.inputs, stage == ShaderStage::pixel) +
            hlsl_struct("Output", shader.outputs, false) + *body;
 }
@@ -444,6 +453,17 @@ std::atomic<unsigned> translated{0}, stood_in{0};
 
 bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) {
     return Inflate(stream).run(out);
+}
+
+std::string shader_signature(Bytes container) {
+    std::string text;
+    for (const auto *name : {"ISG1", "OSG1"}) {
+        text += name == std::string("ISG1") ? "in:" : " out:";
+        for (const auto &element : signature(container, name))
+            text += " " + element.name + std::to_string(element.index) + "/" +
+                    std::to_string(element.type) + "x" + std::to_string(element.width);
+    }
+    return text;
 }
 
 bool console_only_shader(Bytes container) {

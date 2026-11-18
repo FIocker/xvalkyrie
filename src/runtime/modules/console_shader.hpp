@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 // Shaders a console build ships without the bitcode the host runs: their DXIL part holds
@@ -14,6 +15,8 @@ bool console_only_shader(std::span<const std::uint8_t> container);
 // The machine code of such a shader, as little-endian words up to and including the one
 // that ends the program. Empty if it is not found.
 std::vector<std::uint32_t> console_shader_code(std::span<const std::uint8_t> container);
+// the inputs and outputs of a shader, by semantic, for a line of a log
+std::string shader_signature(std::span<const std::uint8_t> container);
 // The host's shader for it, from the cache or made now. It stays where it is for as long
 // as the process runs. Empty if none could be made.
 std::span<const std::uint8_t> host_shader(ShaderStage stage,
