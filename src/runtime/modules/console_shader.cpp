@@ -25,7 +25,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 6;
+constexpr int translator_version = 7;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -339,7 +339,7 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     if (stage == ShaderStage::compute)
         return "[numthreads(1, 1, 1)] void main() {}\n";
     const auto inputs = signature(container, "ISG1"), outputs = signature(container, "OSG1");
-    // a geometry shader that emits nothing
+    // a geometry shader that draws nothing
     if (stage >= ShaderStage::geometry_points) {
         if (inputs.empty() || outputs.empty())
             return {};
@@ -348,7 +348,9 @@ std::string stand_in(ShaderStage stage, Bytes container) {
                                                                              : "triangle Input input[3]";
         return hlsl_struct("Input", inputs, false) + hlsl_struct("Output", outputs, false) +
                "[maxvertexcount(1)] void main(" + primitive +
-               ", inout TriangleStream<Output> stream) {}\n";
+               ", inout TriangleStream<Output> stream) {\n"
+               // one vertex makes no triangle, and gives the shader its output signature
+               "    Output output = (Output)0;\n    stream.Append(output);\n}\n";
     }
     std::string text =
         inputs.empty() ? "" : hlsl_struct("Input", inputs, stage == ShaderStage::pixel);
