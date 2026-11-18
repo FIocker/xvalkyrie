@@ -3092,6 +3092,39 @@ HRESULT STDMETHODCALLTYPE device_removed_reason(ID3D12Device *self) {
     }
     return reason;
 }
+// CreateHeap (28): the console's heap flags and alignments. The host knows two alignments
+// (64 KiB and 4 MiB) and its own flags; a heap is given the nearest of what it has.
+HRESULT STDMETHODCALLTYPE create_heap(ID3D12Device *self, const D3D12_HEAP_DESC *desc, REFIID iid,
+                                      void **heap) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_HEAP_DESC *, REFIID, void **);
+    D3D12_HEAP_DESC host{};
+    if (desc) {
+        host = *desc;
+        host.Flags = static_cast<D3D12_HEAP_FLAGS>(host.Flags & 0xfff);
+        if (host.Alignment != 0 && host.Alignment != 0x10000 && host.Alignment != 0x400000)
+            host.Alignment = host.Alignment > 0x10000 ? 0x400000 : 0x10000;
+        host.SizeInBytes = (host.SizeInBytes + 0xffff) & ~0xffffull;
+    }
+    auto result = original<Create>(self, 28)(self, desc ? &host : nullptr, iid, heap);
+    if (FAILED(result) && desc) {
+        // once more with nothing but the size and the kind of heap
+        D3D12_HEAP_DESC plain{};
+        plain.SizeInBytes = host.SizeInBytes;
+        plain.Properties.Type = host.Properties.Type >= 1 && host.Properties.Type <= 3
+                                    ? host.Properties.Type
+                                    : D3D12_HEAP_TYPE_DEFAULT;
+        result = original<Create>(self, 28)(self, &plain, iid, heap);
+        std::fprintf(stderr,
+                     "[Runtime] CreateHeap of %llu bytes, type %d page %d pool %d, alignment "
+                     "0x%llx, flags 0x%x: as a plain heap 0x%08lx\n",
+                     desc->SizeInBytes, desc->Properties.Type, desc->Properties.CPUPageProperty,
+                     desc->Properties.MemoryPoolPreference, desc->Alignment, desc->Flags,
+                     static_cast<unsigned long>(result));
+        if (FAILED(result))
+            report_messages();
+    }
+    return result;
+}
 // CreateCommandSignature (41): which arguments the host turned down. The console has
 // argument types of its own from 100 on.
 HRESULT STDMETHODCALLTYPE create_command_signature(ID3D12Device *self,
@@ -3252,6 +3285,8 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({41, reinterpret_cast<Slot>(&create_command_signature)});
     overrides.push_back({38, reinterpret_cast<Slot>(&copyable_footprints)});
     overrides.push_back({37, reinterpret_cast<Slot>(&device_removed_reason)});
+    if (console == Target::scarlett)
+        overrides.push_back({28, reinterpret_cast<Slot>(&create_heap)});
     overrides.push_back({17, reinterpret_cast<Slot>(&create_cbv)});
     overrides.push_back({18, reinterpret_cast<Slot>(&create_srv)});
     overrides.push_back({19, reinterpret_cast<Slot>(&create_uav)});
