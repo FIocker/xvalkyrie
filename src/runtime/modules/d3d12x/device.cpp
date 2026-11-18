@@ -1053,6 +1053,16 @@ void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFE
     D3D12_CONSTANT_BUFFER_VIEW_DESC host{};
     if (desc) {
         host = *desc;
+        // the console takes a view of any size; the host wants multiples of 256 bytes, and
+        // removes the device over one that is not
+        ID3D12Resource *buffer = nullptr;
+        std::uint64_t offset = 0, room = 0;
+        const auto rounded = (host.SizeInBytes + 255u) & ~255u;
+        if (rounded != host.SizeInBytes)
+            host.SizeInBytes = buffer_at(host.BufferLocation, buffer, offset, room) &&
+                                       room < rounded && room >= 256
+                                   ? static_cast<UINT>(room & ~255ull)
+                                   : rounded;
         host.BufferLocation = host_address(host.BufferLocation);
     }
     original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 17)(
