@@ -263,7 +263,73 @@ HRESULT STDMETHODCALLTYPE set_frame_interval(ID3D12Device *, void *, UINT micros
         interval_microseconds = microseconds;
     return S_OK;
 }
-HRESULT STDMETHODCALLTYPE schedule_frame_event(ID3D12Device *, UINT, UINT, void *, UINT) {
+// ScheduleFrameEventX: the objects a title wants signalled at a point of every frame (its
+// start, the vertical blank or the flip), each at an offset from it. A thread of ours keeps
+// the frame's time and signals them; one schedule per kind of event, replaced by the next.
+struct FrameObjects {
+    UINT count;
+    HANDLE *objects;
+};
+struct Schedule {
+    std::vector<HANDLE> objects; // duplicates of the title's, so that they outlive its own
+    UINT offset_microseconds = 0;
+    bool enabled = false;
+};
+std::mutex schedule_mutex;
+Schedule schedules[3];
+void run_schedules() {
+    using Clock = std::chrono::steady_clock;
+    auto origin = Clock::now();
+    for (;;) {
+        const auto frame = std::chrono::microseconds(std::max(interval_microseconds.load(), 1000u));
+        // each schedule at its offset, in the order of their offsets
+        std::vector<std::pair<UINT, std::vector<HANDLE>>> due;
+        {
+            const std::lock_guard lock(schedule_mutex);
+            for (const auto &schedule : schedules)
+                if (schedule.enabled && !schedule.objects.empty())
+                    due.emplace_back(schedule.offset_microseconds, schedule.objects);
+        }
+        std::stable_sort(due.begin(), due.end(),
+                         [](const auto &a, const auto &b) { return a.first < b.first; });
+        for (const auto &[offset, objects] : due) {
+            std::this_thread::sleep_until(
+                origin + std::min<std::chrono::microseconds>(std::chrono::microseconds(offset), frame));
+            for (const auto object : objects)
+                if (!SetEvent(object))
+                    ReleaseSemaphore(object, 1, nullptr);
+        }
+        origin += frame;
+        if (origin < Clock::now() - frame * 4)
+            origin = Clock::now(); // fell behind (a debugger, a stall): no burst to catch up
+        std::this_thread::sleep_until(origin);
+    }
+}
+HRESULT STDMETHODCALLTYPE schedule_frame_event(ID3D12Device *, UINT type, UINT offset,
+                                               void *signal_list, UINT flags) {
+    const auto *const list = static_cast<const FrameObjects *>(signal_list);
+    if (type >= std::size(schedules))
+        return E_INVALIDARG;
+    std::vector<HANDLE> objects;
+    for (UINT i = 0; list && list->objects && i < list->count; ++i) {
+        HANDLE copy = nullptr;
+        if (DuplicateHandle(GetCurrentProcess(), list->objects[i], GetCurrentProcess(), &copy, 0,
+                            FALSE, DUPLICATE_SAME_ACCESS))
+            objects.push_back(copy);
+    }
+    {
+        const std::lock_guard lock(schedule_mutex);
+        auto &schedule = schedules[type];
+        if (list) {
+            for (const auto old : schedule.objects)
+                CloseHandle(old);
+            schedule.objects = std::move(objects);
+        }
+        schedule.offset_microseconds = offset;
+        schedule.enabled = !(flags & 1); // DISABLE_SIGNAL
+    }
+    static std::once_flag started;
+    std::call_once(started, [] { std::thread(run_schedules).detach(); });
     return S_OK;
 }
 // The start of the next frame. A title that presents is held to the display's rate by the

@@ -1,5 +1,6 @@
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/watchdog.hpp"
+#include <cstring>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -70,6 +71,36 @@ void dump_threads() {
     CloseHandle(snapshot);
     std::fflush(stderr);
 }
+} // namespace
+
+namespace {
+// Engines name their threads the old way, with an exception for a debugger (0x406D1388).
+// With the watchdog on, such a name is given to the thread, so that its stack says whose it is.
+LONG WINAPI thread_named(EXCEPTION_POINTERS *info) {
+    const auto *const record = info->ExceptionRecord;
+    if (record->ExceptionCode != 0x406d1388 || record->NumberParameters < 3)
+        return EXCEPTION_CONTINUE_SEARCH;
+    struct Name {
+        DWORD type;
+        const char *name;
+        DWORD thread, flags;
+    };
+    const auto *const name = reinterpret_cast<const Name *>(record->ExceptionInformation);
+    if (name->type != 0x1000 || !name->name)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const auto id = name->thread == ~0u ? GetCurrentThreadId() : name->thread;
+    if (auto *const thread = OpenThread(THREAD_SET_LIMITED_INFORMATION, FALSE, id)) {
+        const std::wstring wide(name->name, name->name + std::strlen(name->name));
+        SetThreadDescription(thread, wide.c_str());
+        CloseHandle(thread);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+const bool names_kept = [] {
+    if (std::getenv("XS_WATCHDOG") || std::getenv("XS_THREAD_DUMP"))
+        AddVectoredExceptionHandler(1, &thread_named);
+    return true;
+}();
 } // namespace
 
 void frame_watchdog() {
