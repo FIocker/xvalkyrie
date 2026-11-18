@@ -25,7 +25,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 5;
+constexpr int translator_version = 6;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -337,6 +337,17 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     if (stage == ShaderStage::compute)
         return "[numthreads(1, 1, 1)] void main() {}\n";
     const auto inputs = signature(container, "ISG1"), outputs = signature(container, "OSG1");
+    // a geometry shader that emits nothing
+    if (stage >= ShaderStage::geometry_points) {
+        if (inputs.empty() || outputs.empty())
+            return {};
+        const char *const primitive = stage == ShaderStage::geometry_points  ? "point Input input[1]"
+                                      : stage == ShaderStage::geometry_lines ? "line Input input[2]"
+                                                                             : "triangle Input input[3]";
+        return hlsl_struct("Input", inputs, false) + hlsl_struct("Output", outputs, false) +
+               "[maxvertexcount(1)] void main(" + primitive +
+               ", inout TriangleStream<Output> stream) {}\n";
+    }
     std::string text =
         inputs.empty() ? "" : hlsl_struct("Input", inputs, stage == ShaderStage::pixel);
     if (outputs.empty())
@@ -350,7 +361,7 @@ std::string stand_in(ShaderStage stage, Bytes container) {
 // code is not one that is handled
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
                                              const std::vector<std::uint32_t> &code) {
-    if (code.empty() || stage == ShaderStage::compute)
+    if (code.empty() || (stage != ShaderStage::vertex && stage != ShaderStage::pixel))
         return std::nullopt;
     rdna::Shader shader;
     shader.code = code;
@@ -384,9 +395,12 @@ std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source,
     }();
     if (!function)
         return {};
-    const char *const target = stage == ShaderStage::vertex  ? "vs_5_1"
-                               : stage == ShaderStage::pixel ? "ps_5_1"
-                                                             : "cs_5_1";
+    if (source.empty())
+        return {};
+    const char *const target = stage == ShaderStage::vertex    ? "vs_5_1"
+                               : stage == ShaderStage::pixel   ? "ps_5_1"
+                               : stage == ShaderStage::compute ? "cs_5_1"
+                                                               : "gs_5_1";
     constexpr UINT unbounded_tables = 1u << 20; // D3DCOMPILE_ENABLE_UNBOUNDED_DESCRIPTOR_TABLES
     IUnknown *code = nullptr, *errors = nullptr;
     // the compiler is run with the floating point state a host program has, not the
@@ -505,7 +519,7 @@ std::vector<std::uint32_t> console_shader_code(Bytes container) {
 
 namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container) {
-    const char letter = stage == ShaderStage::vertex ? 'v' : stage == ShaderStage::pixel ? 'p' : 'c';
+    const char letter = "vpc123"[static_cast<int>(stage)];
     const auto hash = hash_name(container);
     // XS_SHADER_STAND_INS: no translation, to tell what a translated shader breaks
     static const bool stand_ins_only = std::getenv("XS_SHADER_STAND_INS") != nullptr;

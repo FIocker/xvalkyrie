@@ -1501,10 +1501,17 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
         host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
+        const auto geometry =
+            host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT
+                ? modules::ShaderStage::geometry_points
+                : host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
+                      ? modules::ShaderStage::geometry_lines
+                      : modules::ShaderStage::geometry_triangles;
         const bool made = host_bytecode(modules::ShaderStage::vertex, host.VS) |
-                          host_bytecode(modules::ShaderStage::pixel, host.PS);
+                          host_bytecode(modules::ShaderStage::pixel, host.PS) |
+                          host_bytecode(geometry, host.GS);
         if (made && !host.pRootSignature)
-            host.pRootSignature = from_shader = shader_root_signature(self, true, {desc->VS, desc->PS});
+            host.pRootSignature = from_shader = shader_root_signature(self, true, {desc->VS, desc->PS, desc->GS});
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
     if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
