@@ -559,8 +559,13 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
             shader = compile(stage, *source);
         const bool done = !shader.empty();
         ++(done ? translated : stood_in);
-        if (!done)
-            shader = compile(stage, stand_in(stage, container));
+        if (!done) {
+            const auto text = stand_in(stage, container);
+            if (const auto *const dump = std::getenv("XS_SHADER_CODE"))
+                write_file(std::filesystem::path(dump) / (hash + "-" + letter + ".stand-in.hlsl"),
+                           {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});
+            shader = compile(stage, text);
+        }
         if (!shader.empty() && !folder.empty())
             write_file(folder / name, shader);
         const auto total = translated + stood_in;
