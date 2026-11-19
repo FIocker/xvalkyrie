@@ -176,7 +176,10 @@ void probe(ID3D12Resource *picture) {
         report_picture(
             data.data(), pitch, width, height, format,
             ("back buffer (" + std::to_string(draws_into_target(picture)) + " draws)").c_str());
+    // XS_D3D_PROBE_TARGETS: the render targets as well. Not by default: a title may have let
+    // go of one that is still listed, and reading that back takes the process down.
     int index = 0;
+    if (std::getenv("XS_D3D_PROBE_TARGETS"))
     for (auto *const target : bound_render_targets())
         if (target != picture && read_back(target, data, pitch, width, height, format,
                       tracked_state(target, D3D12_RESOURCE_STATE_RENDER_TARGET)))
