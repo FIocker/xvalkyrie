@@ -538,7 +538,10 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         return found->second;
     const auto &folder = shader_cache_directory();
     std::vector<std::uint8_t> shader;
-    if (!folder.empty())
+    // XS_SHADER_WHY: every shader made anew, and what stopped the ones with a stand-in
+    static const bool asking = std::getenv("XS_SHADER_WHY") != nullptr;
+    static std::map<std::string, unsigned> reasons;
+    if (!folder.empty() && !asking)
         shader = read_file(folder / name);
     const auto code = console_shader_code(container);
     // XS_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin), the
@@ -552,7 +555,8 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         write_file(base.wstring() + L".dxbc", container); // the shader as the title has it
     }
     if (shader.empty()) {
-        auto source = stand_ins_only ? std::nullopt : translated_source(stage, container);
+        std::string why = "stand-ins asked for";
+        auto source = stand_ins_only ? std::nullopt : translated_source(stage, container, &why);
         // XS_SHADER_SKIP=<text>[,<text>...]: a stand-in for the shaders whose HLSL has any
         // of these in it, to find which kind of shader breaks something
         if (const auto *const skip = std::getenv("XS_SHADER_SKIP"); skip && source) {
@@ -575,13 +579,15 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         const bool done = !shader.empty();
         ++(done ? translated : stood_in);
         if (!done) {
+            if (asking)
+                ++reasons[std::string(1, letter) + ": " + (source ? "the host's compiler" : why)];
             const auto text = stand_in(stage, container);
             if (const auto *const dump = std::getenv("XS_SHADER_CODE"))
                 write_file(std::filesystem::path(dump) / (hash + "-" + letter + ".stand-in.hlsl"),
                            {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});
             shader = compile(stage, text);
         }
-        if (!shader.empty() && !folder.empty())
+        if (!shader.empty() && !folder.empty() && !asking)
             write_file(folder / name, shader);
         const auto total = translated + stood_in;
         if (std::has_single_bit(total))
@@ -590,6 +596,9 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                          "with a stand-in that draws nothing%s\n",
                          translated.load(), stood_in.load(),
                          folder.empty() ? "" : " (kept in the shader cache)");
+        if (asking && std::has_single_bit(total) && total >= 256)
+            for (const auto &[reason, count] : reasons)
+                std::fprintf(stderr, "[Runtime]   %u stopped by %s\n", count, reason.c_str());
     }
     return made.emplace(name, std::move(shader)).first->second;
 }
