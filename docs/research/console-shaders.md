@@ -68,3 +68,50 @@ the same signature. None of it exists here. Open questions, in the order they bl
 
 AMD's reference for the instruction set is public ("RDNA Shader ISA"), and LLVM's AMDGPU
 target disassembles it (processor `gfx1013` is the closest to the Series GPU).
+
+## What a translator has to know (read from two retail titles' shaders)
+
+Checked against the disassembly LLVM gives for these shaders (`llvm-objdump -d
+--triple=amdgcn --mcpu=gfx1013` on the code wrapped in an ELF file).
+
+### The FSSM file
+
+| Offset | What |
+|---|---|
+| `0x00` | `FSSM`, then version `0x101` |
+| `0xC0` | u64: where the code region starts |
+| `0xC8` | u64: its size, `s_code_end` padding included |
+| code region `+0x00` | four dwords. A compute shader: `COMPUTE_PGM_RSRC2` (user registers in bits 5:1, thread group id enables in 7 to 9, components of the thread id in 12:11), then the thread group's size X, Y, Z |
+| code region `+0x10` | 24 bytes that are not code (a hash) |
+| code region `+0x28` | the first instruction |
+| after the code | records of 20 bytes (five dwords), ended by one whose third dword is `0xFFFFFFFF`, then the entry point's name |
+
+The records say where the root signature's parameters are and what the shader uses:
+
+- `(3, 0, 1, 0, parameter << 8 | register)`: root parameter `parameter` (a descriptor
+  table) is in scalar register `register`. Graphics shaders start at `s8`, compute shaders
+  at `s4`.
+- `(0x300 | kind, offset, register, extra, parameter << 16 | scalar << 8 | words)`: a
+  resource the shader uses. `kind` 0 a shader resource, 1 a constant buffer, 2 a sampler,
+  3 an unordered access view; `offset` its place in the table in dwords; `register` its HLSL
+  register; `words` the size of its descriptor (8 a texture, 4 a buffer or a sampler). For a
+  buffer `extra` looks like the stride of its elements; for a texture it is 4.
+
+### Registers a shader starts with
+
+- Vertex: `s_swappc_b64 s[4:5], s[4:5]` first, a call to a fetch shader that is not in the
+  file. After it input element of register `r` is in `v[4 + 4r]` and the three after it.
+  `v0` is the vertex id and `v3` the instance id.
+- Pixel: `v0` and `v1` are the barycentrics, used only by `v_interp_p1/p2`; `attrN` is the
+  input of register N... of the inputs that are interpolated (see the code). The position's
+  components that the shader reads follow in `v2` and on.
+- Compute: after the user registers, the thread group's id (X, Y, Z as enabled) in the
+  next scalar registers; the thread's id within the group in `v0`, `v1`, `v2`.
+- A table's pointer is 32 bits: shaders build the pair with `s_mov_b32 hi, 0`.
+
+### Frame pacing an engine depends on
+
+Unreal holds its game thread until the frames before were shown. It asks
+`GetFrameStatisticsX` for each token `WaitFrameEventX` gave, and waits for the objects it
+gave `ScheduleFrameEventX`. Answering neither stops the title after a few frames with no
+error at all, and its own hang detector then ends it with a write to address 3.

@@ -539,14 +539,15 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     if (!folder.empty())
         shader = read_file(folder / name);
     const auto code = console_shader_code(container);
-    // XS_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin) and
-    // the whole of what it was stored in (.fssm)
+    // XS_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin), the
+    // whole of what it was stored in (.fssm) and the shader itself (.dxbc)
     if (const auto *const dump = std::getenv("XS_SHADER_CODE")) {
         const auto base = std::filesystem::path(dump) / (hash + "-" + letter);
         if (!code.empty())
             write_file(base.wstring() + L".bin",
                        {reinterpret_cast<const std::uint8_t *>(code.data()), code.size() * 4});
         write_file(base.wstring() + L".fssm", code_container(container));
+        write_file(base.wstring() + L".dxbc", container); // the shader as the title has it
     }
     if (shader.empty()) {
         const auto source =
