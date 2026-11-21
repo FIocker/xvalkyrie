@@ -20,7 +20,10 @@ bool placement_data(const D3D11_TEXTURE2D_DESC &desc, const void *address,
 void upload_placements(ID3D11DeviceContext *context);
 // The same for a Direct3D 12 texture, in the tiling the console picks for it. Its uploads are
 // recorded by whoever submits work: each dirty one's subresources, linear and tightly packed.
-void track_placement(ID3D12Resource *resource, const void *address);
+// `layout` is the description a Series title gave (with its swizzle mode), for the Series
+// console's xg_xs.dll.
+void track_placement(ID3D12Resource *resource, const void *address,
+                     const D3D12_RESOURCE_DESC *layout = nullptr);
 struct PlacementUpload {
     ID3D12Resource *resource; // one reference, the taker's
     std::vector<std::vector<std::byte>> subresources;

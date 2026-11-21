@@ -1397,7 +1397,8 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
           (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)))
         track_placement(static_cast<ID3D12Resource *>(*resource),
-                                reinterpret_cast<const void *>(address));
+                        reinterpret_cast<const void *>(address),
+                        console == Target::scarlett ? desc : nullptr);
     return result;
 }
 // The console's GPU draws rectangle lists and quad lists (topology types 19 and 32, the
@@ -2934,11 +2935,16 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
             for (UINT i = 0; i < count; ++i) {
                 const auto &source = upload.subresources[i];
                 const auto pitch = upload.pitches[i];
-                for (UINT row = 0; row < rows[i] && std::size_t{row + 1} * pitch <= source.size();
-                     ++row)
-                    std::memcpy(static_cast<std::uint8_t *>(mapped) + footprints[i].Offset +
-                                    std::size_t{row} * footprints[i].Footprint.RowPitch,
-                                source.data() + std::size_t{row} * pitch, pitch);
+                // each slice of a volume after the one before it, in both
+                const auto plane = std::size_t{pitch} * rows[i];
+                for (UINT slice = 0; slice < footprints[i].Footprint.Depth; ++slice)
+                    for (UINT row = 0;
+                         row < rows[i] && slice * plane + std::size_t{row + 1} * pitch <= source.size();
+                         ++row)
+                        std::memcpy(static_cast<std::uint8_t *>(mapped) + footprints[i].Offset +
+                                        (std::size_t{slice} * rows[i] + row) *
+                                            footprints[i].Footprint.RowPitch,
+                                    source.data() + slice * plane + std::size_t{row} * pitch, pitch);
             }
             buffer->Unmap(0, nullptr);
             D3D12_RESOURCE_BARRIER barrier{};

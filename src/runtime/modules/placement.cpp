@@ -22,6 +22,8 @@ struct Placement {
     UINT tile_mode, pitch;
     ID3D12Resource *d3d12 = nullptr; // one reference of ours
     D3D12_RESOURCE_DESC desc{};
+    bool series = false; // laid out as the Series console's xg_xs.dll says, from `layout`
+    D3D12_RESOURCE_DESC layout{}; // the description the title gave, with its swizzle mode
 };
 void release(Placement &placement) {
     if (placement.resource)
@@ -356,9 +358,77 @@ XgTexture2D xg_desc(const D3D12_RESOURCE_DESC &desc, UINT tile_mode) {
             tile_mode,
             0};
 }
+// The Series console's XG: a computer made from the resource description the title gave
+// (XGCreateTextureComputer), whose methods are AddRef, Release, GetResourceLayout,
+// GetResourceSizeBytes (3), ..., CopyIntoSubresource (8), CopyFromSubresource (9)
+using CreateSeriesComputer = HRESULT(WINAPI *)(const D3D12_RESOURCE_DESC *, void **);
+using SeriesCopy = HRESULT(WINAPI *)(void *, void *, UINT, UINT, UINT, const void *, UINT, UINT);
+CreateSeriesComputer series_xg() {
+    static const auto create = reinterpret_cast<CreateSeriesComputer>(
+        detail::system_export("xg_xs.dll", "XGCreateTextureComputer"));
+    return create;
+}
+bool series_copy_out(SeriesCopy copy, void *computer, void *destination, UINT subresource,
+                     const void *source, UINT row_pitch, UINT slice_pitch) {
+    __try {
+        return SUCCEEDED(
+            copy(computer, destination, 0, subresource, 0, source, row_pitch, slice_pitch));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+void *series_computer(const D3D12_RESOURCE_DESC &layout) {
+    void *computer = nullptr;
+    const auto create = series_xg();
+    __try {
+        if (!create || FAILED(create(&layout, &computer)))
+            computer = nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        computer = nullptr;
+    }
+    return computer;
+}
+std::uint64_t series_size(void *computer) {
+    __try {
+        return reinterpret_cast<std::uint64_t(WINAPI *)(void *)>(
+            (*static_cast<void ***>(computer))[3])(computer);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+void series_release(void *computer) {
+    reinterpret_cast<ULONG(WINAPI *)(void *)>((*static_cast<void ***>(computer))[1])(computer);
+}
+bool series_subresources(const Placement &placement, PlacementUpload &upload) {
+    const auto &desc = placement.desc;
+    auto *const computer = series_computer(placement.layout);
+    if (!computer)
+        return false;
+    const auto copy = reinterpret_cast<SeriesCopy>((*static_cast<void ***>(computer))[9]);
+    const UINT mips = std::max<UINT>(desc.MipLevels, 1);
+    const bool volume = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+    const UINT slices = volume ? 1 : std::max<UINT>(desc.DepthOrArraySize, 1);
+    bool ok = true;
+    for (UINT slice = 0; slice < slices && ok; ++slice)
+        for (UINT mip = 0; mip < mips && ok; ++mip) {
+            const auto pitch = row_bytes(static_cast<UINT>(desc.Width >> mip), desc.Format);
+            const auto plane = std::size_t{pitch} * rows(desc.Height >> mip, desc.Format);
+            const auto depth = volume ? std::max<UINT>(desc.DepthOrArraySize >> mip, 1) : 1;
+            std::vector<std::byte> linear(plane * depth);
+            ok = series_copy_out(copy, computer, linear.data(), slice * mips + mip,
+                                 reinterpret_cast<const void *>(placement.start), pitch,
+                                 static_cast<UINT>(plane));
+            upload.subresources.push_back(std::move(linear));
+            upload.pitches.push_back(pitch);
+        }
+    series_release(computer);
+    return ok;
+}
 // what a texture's subresources hold, linear: through xg_x.dll for a tiling, as XG's linear
 // layout otherwise
 bool linear_subresources(const Placement &placement, PlacementUpload &upload) {
+    if (placement.series)
+        return series_subresources(placement, upload);
     const auto &desc = placement.desc;
     const UINT mips = std::max<UINT>(desc.MipLevels, 1),
                slices = std::max<UINT>(desc.DepthOrArraySize, 1);
@@ -420,10 +490,58 @@ std::size_t placed_bytes(const D3D12_RESOURCE_DESC &desc, UINT tile_mode) {
 }
 } // namespace
 
-void track_placement(ID3D12Resource *resource, const void *address) {
+std::vector<Placement> pending; // placed where there is no memory yet
+void track_placement(ID3D12Resource *resource, const void *address,
+                     const D3D12_RESOURCE_DESC *layout) {
     if (!resource || !address)
         return;
     const auto desc = resource->GetDesc();
+    if (layout && series_xg() && desc.SampleDesc.Count == 1 &&
+        (desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+         desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)) {
+        // a Series title: the console's own XG says how the texture lies in its memory
+        auto *const computer = series_computer(*layout);
+        const auto bytes = computer ? static_cast<std::size_t>(series_size(computer)) : 0;
+        if (computer)
+            series_release(computer);
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5)
+            std::fprintf(stderr, "[Runtime] placement texture at %llx, layout 0x%x, %zu bytes%s\n",
+                         static_cast<unsigned long long>(start), layout->Layout, bytes,
+                         bytes && readable(start, bytes) ? "" : ", not readable");
+        if (!bytes)
+            return;
+        const std::lock_guard lock(mutex);
+        // memory the title has not committed yet: looked at again whenever work is
+        // submitted, and followed from when it is there
+        if (!readable(start, bytes)) {
+            resource->AddRef();
+            Placement waiting{nullptr, start, start + bytes, true, 0, 0};
+            waiting.d3d12 = resource;
+            waiting.desc = desc;
+            waiting.series = true;
+            waiting.layout = *layout;
+            pending.push_back(waiting);
+            return;
+        }
+        if (!handler)
+            handler = AddVectoredExceptionHandler(1, &written);
+        if (const auto old = placements.find(start); old != placements.end()) {
+            protect(old->second, PAGE_READWRITE);
+            release(old->second);
+            placements.erase(old);
+        }
+        resource->AddRef();
+        largest = std::max<std::uintptr_t>(largest, bytes);
+        auto &placement = placements[start] = {nullptr, start, start + bytes, true, 0, 0};
+        placement.d3d12 = resource;
+        placement.desc = desc;
+        placement.series = true;
+        placement.layout = *layout;
+        dirty.push_back(start);
+        protect(placement, PAGE_READONLY);
+        return;
+    }
     if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count > 1)
         return;
     static const auto optimal = reinterpret_cast<OptimalTileMode>(
@@ -461,6 +579,23 @@ void track_placement(ID3D12Resource *resource, const void *address) {
 std::vector<PlacementUpload> take_d3d12_uploads() {
     std::vector<PlacementUpload> uploads;
     const std::lock_guard lock(mutex);
+    for (auto waiting = pending.begin(); waiting != pending.end();) {
+        if (!readable(waiting->start, waiting->end - waiting->start)) {
+            ++waiting;
+            continue;
+        }
+        if (!handler)
+            handler = AddVectoredExceptionHandler(1, &written);
+        if (const auto old = placements.find(waiting->start); old != placements.end()) {
+            protect(old->second, PAGE_READWRITE);
+            release(old->second);
+            placements.erase(old);
+        }
+        largest = std::max<std::uintptr_t>(largest, waiting->end - waiting->start);
+        placements[waiting->start] = *waiting;
+        dirty.push_back(waiting->start);
+        waiting = pending.erase(waiting);
+    }
     std::vector<std::uintptr_t> kept;
     for (const auto start : dirty) {
         const auto found = placements.find(start);
