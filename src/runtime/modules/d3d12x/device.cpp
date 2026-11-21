@@ -874,6 +874,31 @@ bool buffer_at(std::uint64_t address, ID3D12Resource *&resource, std::uint64_t &
     return true;
 }
 
+// An address the title gives for a vertex or index buffer that no buffer here answers for:
+// worth a line, since the host's GPU faults on it
+void check_address(const char *what, std::uint64_t address, std::uint64_t bytes) {
+    if (!address)
+        return;
+    ID3D12Resource *resource = nullptr;
+    std::uint64_t offset = 0, size = 0;
+    {
+        const std::lock_guard lock(buffer_mutex);
+        auto found = mapped_at.upper_bound(address);
+        if (found != mapped_at.begin() && address < std::prev(found)->second.end)
+            return;
+    }
+    if (buffer_at(address, resource, offset, size) && size >= bytes)
+        return;
+    if (static std::atomic<int> shown{0}; shown++ < 8) {
+        MEMORY_BASIC_INFORMATION info{};
+        const bool cpu = VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+                         info.State == MEM_COMMIT;
+        std::fprintf(stderr, "[Runtime] %s at %llx (%llu bytes) is in no buffer known here%s\n", what,
+                     static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes),
+                     cpu ? ": it is memory of the title's" : "");
+        std::fflush(stderr);
+    }
+}
 // The descriptor tables of each root signature: the type of the descriptors at each offset
 // from a table's start, for the descriptors the title writes itself
 struct TableRange {
@@ -941,6 +966,44 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
                      words[0], words[1], words[2], words[3], more[0], more[1], more[2], more[3]);
         std::fflush(stderr);
     }
+    // A sampler the title wrote (S#): the hardware's four words of sampler state. Clamp
+    // modes in bits 0 to 8 of the first, the comparison in 12 to 14, the anisotropy in 9 to
+    // 11; the LOD range in the second (4.8 fixed point each); the bias in the low 14 bits of
+    // the third (signed 5.8), then the filters; the border colour's kind in the top of the
+    // last. A sampler slot the host is left without hangs the GPU when it is sampled with.
+    if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
+        static constexpr D3D12_TEXTURE_ADDRESS_MODE modes[] = {
+            D3D12_TEXTURE_ADDRESS_MODE_WRAP,        D3D12_TEXTURE_ADDRESS_MODE_MIRROR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,       D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,       D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
+            D3D12_TEXTURE_ADDRESS_MODE_BORDER,      D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE};
+        const auto magnify = (words[2] >> 20) & 3, minify = (words[2] >> 22) & 3,
+                   mip = (words[2] >> 26) & 3, compare = (words[0] >> 12) & 7,
+                   ratio = (words[0] >> 9) & 7, border = words[3] >> 30;
+        const bool anisotropic = magnify >= 2 || minify >= 2;
+        const bool compares = compare != 0 && compare != 7;
+        D3D12_SAMPLER_DESC desc{};
+        desc.Filter = static_cast<D3D12_FILTER>(
+            (anisotropic ? 0x55u : (minify & 1) << 4 | (magnify & 1) << 2 | (mip == 2 ? 1u : 0u)) |
+            (compares ? 0x80u : 0u));
+        desc.AddressU = modes[words[0] & 7];
+        desc.AddressV = modes[(words[0] >> 3) & 7];
+        desc.AddressW = modes[(words[0] >> 6) & 7];
+        desc.MipLODBias = static_cast<float>(static_cast<std::int32_t>(words[2] << 18) >> 18) / 256.0f;
+        desc.MaxAnisotropy = anisotropic ? 1u << ratio : 1;
+        desc.ComparisonFunc = compares ? static_cast<D3D12_COMPARISON_FUNC>(compare + 1)
+                                       : D3D12_COMPARISON_FUNC_NEVER;
+        const float colour = border == 2 ? 1.0f : 0.0f;
+        desc.BorderColor[0] = desc.BorderColor[1] = desc.BorderColor[2] = colour;
+        desc.BorderColor[3] = border == 0 ? 0.0f : 1.0f;
+        desc.MinLOD = static_cast<float>(words[1] & 0xfff) / 256.0f;
+        desc.MaxLOD = mip ? static_cast<float>((words[1] >> 12) & 0xfff) / 256.0f : desc.MinLOD;
+        auto *const device = heap.device;
+        original<void(STDMETHODCALLTYPE *)(void *, const void *, D3D12_CPU_DESCRIPTOR_HANDLE)>(
+            device, 22)(device, &desc, host_slot(heap, at));
+        set_mark(heap, at);
+        return;
+    }
     // a descriptor the title cleared is a null one, whose reads give 0: the host's slot may
     // hold anything until it is made so
     if ((first == 0 && words[2] == 0 && words[3] == 0) || null_buffer(words)) {
@@ -978,8 +1041,18 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     const auto host = host_slot(heap, at);
     auto *const device = heap.device;
     if (type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV) {
+        // the address is the one the title has for the buffer, which on Series is where
+        // its memory is: the host is given its own for it, and no more than the buffer has
+        ID3D12Resource *resource = nullptr;
+        std::uint64_t offset = 0, room = 0;
+        if (!buffer_at(address, resource, offset, room))
+            return;
+        const auto wanted = std::max<std::uint64_t>((bytes + 255) & ~255ull, 256);
         const D3D12_CONSTANT_BUFFER_VIEW_DESC view{
-            address, static_cast<UINT>(std::min<std::uint64_t>((bytes + 255) & ~255ull, 65536))};
+            host_address(address),
+            static_cast<UINT>(std::min<std::uint64_t>({wanted, 65536, room & ~255ull}))};
+        if (!view.SizeInBytes)
+            return;
         original<void(STDMETHODCALLTYPE *)(void *, const void *, D3D12_CPU_DESCRIPTOR_HANDLE)>(
             device, 17)(device, &view, host);
     } else if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV || type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV) {
@@ -2378,8 +2451,10 @@ void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
     std::vector<D3D12_VERTEX_BUFFER_VIEW> host;
     if (views) {
         host.assign(views, views + count);
-        for (auto &view : host)
+        for (auto &view : host) {
+            check_address("a vertex buffer", view.BufferLocation, view.SizeInBytes);
             view.BufferLocation = host_address(view.BufferLocation);
+        }
     }
     host_of(self)->IASetVertexBuffers(start, count, views ? host.data() : nullptr);
 }
@@ -2387,6 +2462,7 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
     if (view)
         trace_address("IASetIndexBuffer", view->BufferLocation);
     auto host = view ? *view : D3D12_INDEX_BUFFER_VIEW{};
+    check_address("an index buffer", host.BufferLocation, host.SizeInBytes);
     host.BufferLocation = host_address(host.BufferLocation);
     static_cast<ListProxy *>(self)->indices = host;
     host_of(self)->IASetIndexBuffer(view ? &host : nullptr);
@@ -2610,6 +2686,10 @@ void configure_lists() {
         return;
     }
     list_vtable[83] = reinterpret_cast<Slot>(&copy_texture_region_x);
+    // XS_D3D_NO_QUERIES: no queries (BeginQuery, EndQuery, ResolveQueryData), which the
+    // debug layer does not get through with some titles
+    if (std::getenv("XS_D3D_NO_QUERIES"))
+        ignore({28, 29, 30});
     list_vtable[98] = reinterpret_cast<Slot>(&dispatch_mesh_x);
     // DriverHintX, the counters, and the binning of primitive batches
     ignore({99, 100, 101, 102, 103, 104});

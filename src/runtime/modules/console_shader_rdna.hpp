@@ -18,13 +18,15 @@ struct Element {
     bool system_value = false;
     std::uint32_t reg = 0; // the register it is in, and which of its components
     std::uint8_t mask = 0;
+    std::uint8_t read = 0; // the components the shader reads (an input)
 };
 struct Shader {
-    std::vector<std::uint32_t> code;               // with the six words that lead it in
-    std::span<const std::uint8_t> root_signature;  // the RTS0 part
+    std::span<const std::uint8_t> file;           // the FSSM file: code and what goes with it
+    std::span<const std::uint8_t> root_signature; // the RTS0 part
     std::vector<Element> inputs, outputs;
 };
-// The HLSL for the code: what the shader declares and its `main`, which takes `Input input`
-// and returns `Output`. Nothing if the code has something that is not handled.
-std::optional<std::string> translate(Stage stage, const Shader &shader);
+// The HLSL for the code: what the shader declares and its `main`. A vertex or pixel shader's
+// takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing
+// if the code has something that is not handled, and then `why` says what.
+std::optional<std::string> translate(Stage stage, const Shader &shader, std::string *why = nullptr);
 } // namespace xs::runtime::modules::rdna

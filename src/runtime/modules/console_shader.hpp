@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -16,6 +17,11 @@ bool console_only_shader(std::span<const std::uint8_t> container);
 // The machine code of such a shader, as little-endian words up to and including the one
 // that ends the program. Empty if it is not found.
 std::vector<std::uint32_t> console_shader_code(std::span<const std::uint8_t> container);
+// The HLSL made for a console shader, or nothing and in `why` what stopped it. For tools
+// and tests: `host_shader` is what a title's pipelines get.
+std::optional<std::string> console_shader_source(ShaderStage stage,
+                                                 std::span<const std::uint8_t> container,
+                                                 std::string *why = nullptr);
 // the inputs and outputs of a shader, by semantic, for a line of a log
 std::string shader_signature(std::span<const std::uint8_t> container);
 // The host's shader for it, from the cache or made now. It stays where it is for as long

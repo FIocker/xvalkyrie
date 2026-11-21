@@ -25,7 +25,7 @@
 namespace xs::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 7;
+constexpr int translator_version = 9;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -278,6 +278,7 @@ std::vector<Element> signature(Bytes container, const char *name) {
             word(data, at + 12) != 0 || !_strnicmp(element.name.c_str(), "SV_", 3);
         element.reg = word(data, at + 20);
         element.mask = data[at + 24];
+        element.read = data[at + 25];
         read.push_back({std::move(element), word(data, at + 20), data[at + 24]});
     }
     std::stable_sort(read.begin(), read.end(), [](const Read &a, const Read &b) {
@@ -361,26 +362,19 @@ std::string stand_in(ShaderStage stage, Bytes container) {
                 "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
     return inputs.empty() ? without_input(std::move(text)) : text;
 }
-// the translation of the code, with the structs of the signature before it; nothing if the
-// code is not one that is handled
+// the translation of the code; nothing if the code is not one that is handled, and then
+// `why` says what stopped it
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
-                                             const std::vector<std::uint32_t> &code) {
-    if (code.empty() || (stage != ShaderStage::vertex && stage != ShaderStage::pixel))
+                                             std::string *why = nullptr) {
+    if (stage != ShaderStage::vertex && stage != ShaderStage::pixel && stage != ShaderStage::compute)
         return std::nullopt;
+    const auto file = code_container(container);
     rdna::Shader shader;
-    shader.code = code;
+    shader.file = file;
     shader.root_signature = part(container, "RTS0");
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
-    if (shader.outputs.empty())
-        return std::nullopt;
-    const auto body = rdna::translate(stage, shader);
-    if (!body)
-        return std::nullopt;
-    if (shader.inputs.empty())
-        return hlsl_struct("Output", shader.outputs, false) + without_input(*body);
-    return hlsl_struct("Input", shader.inputs, stage == ShaderStage::pixel) +
-           hlsl_struct("Output", shader.outputs, false) + *body;
+    return rdna::translate(stage, shader, why);
 }
 
 using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
@@ -486,6 +480,11 @@ std::string shader_signature(Bytes container) {
     return text;
 }
 
+std::optional<std::string> console_shader_source(ShaderStage stage, Bytes container,
+                                                 std::string *why) {
+    return translated_source(stage, container, why);
+}
+
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
     // with console code may have its bitcode as well, and then the host runs that.
@@ -527,8 +526,11 @@ namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container) {
     const char letter = "vpc123"[static_cast<int>(stage)];
     const auto hash = hash_name(container);
-    // XS_SHADER_STAND_INS: no translation, to tell what a translated shader breaks
-    static const bool stand_ins_only = std::getenv("XS_SHADER_STAND_INS") != nullptr;
+    // XS_SHADER_STAND_INS: no translation, to tell what a translated shader breaks; with a
+    // value, the letters of the stages that are still translated (v, p, c)
+    static const char *const stand_ins = std::getenv("XS_SHADER_STAND_INS");
+    const char stage_letter = "vpc123"[static_cast<int>(stage)];
+    const bool stand_ins_only = stand_ins && !std::strchr(stand_ins, stage_letter);
     const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) +
                       (stand_ins_only ? "-stand-in" : "") + ".dxbc";
     const std::lock_guard lock(mutex);
@@ -550,8 +552,18 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         write_file(base.wstring() + L".dxbc", container); // the shader as the title has it
     }
     if (shader.empty()) {
-        const auto source =
-            stand_ins_only ? std::nullopt : translated_source(stage, container, code);
+        auto source = stand_ins_only ? std::nullopt : translated_source(stage, container);
+        // XS_SHADER_SKIP=<text>[,<text>...]: a stand-in for the shaders whose HLSL has any
+        // of these in it, to find which kind of shader breaks something
+        if (const auto *const skip = std::getenv("XS_SHADER_SKIP"); skip && source) {
+            const std::string list = skip;
+            for (std::size_t at = 0; at <= list.size() && source;) {
+                const auto end = std::min(list.find(',', at), list.size());
+                if (end > at && source->find(list.substr(at, end - at)) != std::string::npos)
+                    source.reset();
+                at = end + 1;
+            }
+        }
         // XS_SHADER_CODE: the HLSL made for it as well
         if (const auto *const dump = std::getenv("XS_SHADER_CODE"); dump && source) {
             const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");
