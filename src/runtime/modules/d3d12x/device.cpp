@@ -177,9 +177,19 @@ class ConsoleOutput final : public IDXGIOutput {
 // the host's adapter, but for the outputs it gives
 class ConsoleAdapter final
     : public Microsoft::WRL::RuntimeClass<
-          Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDXGIAdapter> {
+          Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
+          Microsoft::WRL::ChainInterfaces<IDXGIAdapter2, IDXGIAdapter1, IDXGIAdapter>> {
   public:
-    explicit ConsoleAdapter(IDXGIAdapter *host) : host_(host) {}
+    // takes over `host`
+    static HRESULT make(IDXGIAdapter *host, IDXGIAdapter **adapter) {
+        IDXGIAdapter2 *latest = nullptr;
+        const auto result = host->QueryInterface(&latest);
+        host->Release();
+        if (SUCCEEDED(result))
+            *adapter = Microsoft::WRL::Make<ConsoleAdapter>(latest).Detach();
+        return result;
+    }
+    explicit ConsoleAdapter(IDXGIAdapter2 *host) : host_(host) {}
     ~ConsoleAdapter() override { host_->Release(); }
     STDMETHODIMP SetPrivateData(REFGUID id, UINT size, const void *data) override {
         return host_->SetPrivateData(id, size, data);
@@ -205,9 +215,11 @@ class ConsoleAdapter final
     STDMETHODIMP CheckInterfaceSupport(REFGUID name, LARGE_INTEGER *version) override {
         return host_->CheckInterfaceSupport(name, version);
     }
+    STDMETHODIMP GetDesc1(DXGI_ADAPTER_DESC1 *desc) override { return host_->GetDesc1(desc); }
+    STDMETHODIMP GetDesc2(DXGI_ADAPTER_DESC2 *desc) override { return host_->GetDesc2(desc); }
 
   private:
-    IDXGIAdapter *host_;
+    IDXGIAdapter2 *host_;
 };
 // The console's Direct3D 12 device answers for IDXGIDevice1, which the host's does not: this
 // one leads to the adapter the device was made on, and from there to our factory.
@@ -227,10 +239,8 @@ class D3D12DxgiDevice final
         IDXGIAdapter *host = nullptr;
         result = factory->EnumAdapterByLuid(luid_, IID_PPV_ARGS(&host));
         factory->Release();
-        if (SUCCEEDED(result) && !adapter_wrapper && console == Target::scarlett) {
-            *adapter = Microsoft::WRL::Make<ConsoleAdapter>(host).Detach();
-            return S_OK;
-        }
+        if (SUCCEEDED(result) && !adapter_wrapper && console == Target::scarlett)
+            return ConsoleAdapter::make(host, adapter);
         if (FAILED(result) || !adapter_wrapper) {
             *adapter = host;
             return result;
@@ -608,6 +618,16 @@ void mark_host(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     if (const auto *heap = shadow_heap(handle.ptr))
         set_mark(*heap, handle.ptr);
 }
+// whether a host handle is a slot of a heap the title still has
+bool live_slot(D3D12_DESCRIPTOR_HEAP_TYPE type, std::uint64_t handle) {
+    const std::lock_guard lock(shadow_mutex);
+    for (const auto &[base, heap] : shadow_heaps) {
+        const auto size = (heap.end - heap.base) / heap.stride * heap.host_stride;
+        if (heap.type == type && handle >= heap.host.ptr && handle - heap.host.ptr < size)
+            return (handle - heap.host.ptr) % heap.host_stride == 0;
+    }
+    return false;
+}
 // A marked descriptor that names another slot is a copy the title made itself: the host's
 // descriptor follows it
 void resolve(const ShadowHeap &heap, std::uintptr_t at) {
@@ -616,6 +636,9 @@ void resolve(const ShadowHeap &heap, std::uintptr_t at) {
     std::memcpy(words, reinterpret_cast<const void *>(at), sizeof words);
     const auto own = host_slot(heap, at);
     if (words[0] != host_mark || words[1] == own.ptr || words[1] == 0)
+        return;
+    // the slot it names may have gone with its heap, or the title may be writing here now
+    if (!live_slot(heap.type, words[1]))
         return;
     using Copy = void(STDMETHODCALLTYPE *)(void *, UINT, D3D12_CPU_DESCRIPTOR_HANDLE,
                                            D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_DESCRIPTOR_HEAP_TYPE);
@@ -642,11 +665,13 @@ bool null_buffer(const std::uint32_t *words) { return words[2] == 1 && words[3] 
 // Buffers (V#: 48-bit address, stride in bits 48-61, record count in the third dword) become
 // constant buffer views.
 void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
-    const ShadowHeap *heap;
+    ShadowHeap found{};
     {
         const std::lock_guard lock(shadow_mutex);
-        heap = shadow_heap(handle.ptr);
+        if (const auto *const live = shadow_heap(handle.ptr))
+            found = *live;
     }
+    const auto *const heap = found.base ? &found : nullptr;
     if (!heap || heap->type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
         return;
     std::uint32_t words[4];
@@ -735,6 +760,7 @@ struct HeapProxy {
     std::atomic<ULONG> references;
 };
 std::mutex heap_proxy_mutex;
+std::atomic<unsigned> shadows_released{0};
 std::set<const void *> heap_proxies;
 ID3D12DescriptorHeap *host_heap(void *heap) {
     const std::lock_guard lock(heap_proxy_mutex);
@@ -787,6 +813,16 @@ ULONG STDMETHODCALLTYPE heap_release(void *self) {
         {
             const std::lock_guard lock(heap_proxy_mutex);
             heap_proxies.erase(proxy);
+        }
+        // its shadow goes with it: the host's descriptors it stood for are no more
+        {
+            const std::lock_guard lock(shadow_mutex);
+            if (const auto found = shadow_of.find(proxy); found != shadow_of.end()) {
+                VirtualFree(reinterpret_cast<void *>(found->second), 0, MEM_RELEASE);
+                shadow_heaps.erase(found->second);
+                shadow_of.erase(found);
+                ++shadows_released;
+            }
         }
         proxy->host->Release();
         delete proxy;
@@ -3183,7 +3219,7 @@ HRESULT STDMETHODCALLTYPE device_removed_reason(ID3D12Device *self) {
     if (static std::atomic<bool> shown{false}; FAILED(reason) && !shown.exchange(true)) {
         std::fprintf(stderr, "[Runtime] the host removed the Direct3D 12 device: 0x%08lx\n",
                      static_cast<unsigned long>(reason));
-        report_messages();
+        report_failure();
         std::fflush(stderr);
     }
     return reason;
@@ -3459,8 +3495,11 @@ void report_failure() {
                      static_cast<unsigned long long>(decoded[2].load()),
                      static_cast<unsigned long long>(decoded[3].load()));
     }
-    std::fprintf(stderr, "[Runtime] Direct3D 12 device removed: 0x%08lx\n",
-                 static_cast<unsigned long>(device->GetDeviceRemovedReason()));
+    std::fprintf(stderr,
+                 "[Runtime] Direct3D 12 device removed: 0x%08lx; descriptor heaps the title "
+                 "let go of: %u\n",
+                 static_cast<unsigned long>(device->GetDeviceRemovedReason()),
+                 shadows_released.load());
     report_messages();
     ID3D12DeviceRemovedExtendedData *dred = nullptr;
     if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dred))))
