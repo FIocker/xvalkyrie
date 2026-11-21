@@ -36,7 +36,7 @@ The test program is an unpacked ERA title kept outside the repository, in
 `samples/`. What it needs is listed in
 [docs/research/era-title.md](docs/research/era-title.md).
 
-- [x] Find out exactly what it imports (`xvalkyrie bind`)
+- [x] Find out exactly what it imports (`xvboot bind`)
 - [x] `kernelx.dll`: the Win32 subset goes to the host, plus `XMemAllocDefault` / `XMemFreeDefault`
 - [x] `combase.dll` and `ws2_32.dll` go to the host, also by ordinal
 - [x] `etwplus.dll` as no-ops
@@ -72,11 +72,13 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [ ] `XGCreateTextureComputer`: the layout of `XG_RESOURCE_DESC` is not known
 - [ ] `D3D11XCreateDeviceX` and `DXGIXPresentArray` (Unity titles)
 - [ ] Connected storage that stores: reads say "no such blob", writes succeed and are dropped
-- [x] The title draws inside the xvalkyrie window (16:9 between the menu and the status
-  bar); `exec` still gives it a window of its own
+- [x] A title runs in a process and a window of its own (`xvboot`), started by the
+  xvalkyrie window; its caption shows the title, the video driver, the frame rate and the
+  version. F11 is full screen, borderless or native (Options > Graphics); the xvalkyrie
+  window shows what the title's process prints
 - [x] Opening a title does not block the window: it is read on a worker thread, with a
   loading screen until its first frame
-- [ ] Closing a running title without closing xvalkyrie
+- [x] Closing a running title without closing xvalkyrie
 - [x] DLLs shipped with the title (`xcompress.dll`), loaded from its folder
 - [x] Finished async operations and actions (`winrt/async.cpp`)
 - [x] `CoreWindow` in the console layout (bounds, dispatcher, activate; the rest unknown)

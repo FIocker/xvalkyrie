@@ -33,7 +33,7 @@ description of what a title links against.
 
 `tools/import_xbdepends.py` downloads the three source files at a pinned
 commit, checks their hashes and generates `src/analysis/xbdepends_data.hpp`.
-`xvalkyrie assess` and `xvalkyrie bind` use those tables, and the runtime uses
+`xvboot assess` and `xvboot bind` use those tables, and the runtime uses
 the API list to decide which calls may be forwarded to Windows.
 
 One difference: the original tool searches its patterns anywhere in the DLL

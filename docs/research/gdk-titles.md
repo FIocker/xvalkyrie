@@ -149,13 +149,13 @@ their shaders the same way was not checked: there was none to look at.
 
 ## Results
 
-- The Series sample runs with `xvalkyrie exec <folder>`: 3840x2160 frames; the picture at
+- The Series sample runs with `xvboot exec <folder>`: 3840x2160 frames; the picture at
   frame 120 (`XV_D3D_PROBE`) is the sample's triangle on its grey background; the scripted
   View button (`XV_INPUT_PRESS=view@2`) ends the program, as the sample's code does on that
-  button. `xvalkyrie bind` shows no missing import. Opening it from the window, and a real
+  button. `xvboot bind` shows no missing import. Opening it from the window, and a real
   gamepad or the keyboard, were not tried.
 - Three more samples of the same repository, built the same way, present frames with
-  `xvalkyrie exec`: SimpleTexture (the picture at frame 120 is its photograph), Gamepad and
+  `xvboot exec`: SimpleTexture (the picture at frame 120 is its photograph), Gamepad and
   SimpleMeshShader (non-black averages; their pictures were not looked at). They needed
   three things the triangle did not: the caller check has to look further back than 64
   bytes for the load of the slot (160 now); `D3D12XboxCreateDevice` has to answer the
@@ -182,7 +182,7 @@ their shaders the same way was not checked: there was none to look at.
 
 66 samples of the public repository have a Series configuration. Built the same way, 40
 compile and 26 do not (why was not looked at for each; the first ones miss headers of kits
-the build script does not set up). Each of the 40 was run with `xvalkyrie exec` for 12
+the build script does not set up). Each of the 40 was run with `xvboot exec` for 12
 seconds and `XV_D3D_PROBE=120`, and the average of the back buffer read. Pictures were
 looked at for SimpleTriangle, SimpleTexture, SimpleMSAA and SmokeSimulation only.
 

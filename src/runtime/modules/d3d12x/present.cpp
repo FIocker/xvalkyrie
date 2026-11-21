@@ -42,6 +42,7 @@ struct Presenter {
     IDXGISwapChain3 *chain = nullptr;
     UINT width = 0, height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    bool fullscreen = false; // the display is the chain's
     ID3D12CommandAllocator *allocator = nullptr;
     ID3D12GraphicsCommandList *list = nullptr;
     ID3D12Fence *fence = nullptr;
@@ -75,6 +76,9 @@ DXGI_FORMAT chain_format(DXGI_FORMAT format) {
     }
 }
 void release(Presenter &state) {
+    // a chain that has the display cannot be let go of
+    if (state.chain && state.fullscreen)
+        state.chain->SetFullscreenState(FALSE, nullptr);
     for (IUnknown *object :
          {static_cast<IUnknown *>(state.chain), static_cast<IUnknown *>(state.list),
           static_cast<IUnknown *>(state.allocator), static_cast<IUnknown *>(state.fence)})
@@ -151,7 +155,30 @@ HRESULT prepare(ID3D12CommandQueue *queue, const D3D12_RESOURCE_DESC &desc) {
     presenter.width = width;
     presenter.height = desc.Height;
     presenter.format = format;
+    surface::offer_exclusive_fullscreen();
     return S_OK;
+}
+// Native full screen (F11 with Options > Graphics > Full screen: Native): the display is
+// given to the chain, or taken back, when the window asks for the other of the two. A flip
+// chain needs its buffers made again after either; nothing holds one between frames.
+void match_fullscreen(Presenter &state) {
+    const bool wanted = surface::exclusive_fullscreen_wanted();
+    if (wanted == state.fullscreen)
+        return;
+    auto result = state.chain->SetFullscreenState(wanted, nullptr);
+    const auto resized =
+        state.chain->ResizeBuffers(0, state.width, state.height, DXGI_FORMAT_UNKNOWN, 0);
+    if (SUCCEEDED(result))
+        result = resized;
+    std::fprintf(stderr, "[Runtime] native full screen %s: 0x%08lx\n", wanted ? "on" : "off",
+                 static_cast<unsigned long>(result));
+    std::fflush(stderr);
+    state.fullscreen = wanted && SUCCEEDED(result);
+    if (wanted && FAILED(result)) {
+        state.chain->SetFullscreenState(FALSE, nullptr);
+        state.chain->ResizeBuffers(0, state.width, state.height, DXGI_FORMAT_UNKNOWN, 0);
+        surface::exclusive_fullscreen_failed();
+    }
 }
 D3D12_RESOURCE_BARRIER transition(ID3D12Resource *resource, D3D12_RESOURCE_STATES before,
                                   D3D12_RESOURCE_STATES after) {
@@ -265,6 +292,7 @@ HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_para
     probe(picture);
     auto &state = presenter;
     wait_for(state.fence, state.value);
+    match_fullscreen(state);
     ID3D12Resource *back = nullptr;
     auto result =
         state.chain->GetBuffer(state.chain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&back));

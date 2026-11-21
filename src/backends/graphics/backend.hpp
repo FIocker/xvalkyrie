@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace xv::graphics {
@@ -19,9 +20,26 @@ bool backend_renders_titles(Backend backend);
 Backend selected_backend();
 void select_backend(Backend backend);
 
+// How the title's window fills the screen (F11 in it).
+enum class Fullscreen {
+    borderless, // the window without its frame, as large as the display. The default.
+    native      // the display given to the title's swap chain, where the host can
+};
+std::string_view fullscreen_name(Fullscreen mode);
+std::optional<Fullscreen> parse_fullscreen(std::string_view name);
+// Process-wide; starts as borderless.
+Fullscreen fullscreen_mode();
+void select_fullscreen_mode(Fullscreen mode);
+
 // How many frames titles have presented in this process, whatever the backend. A backend
 // calls frame_counted() once per Present; the difference between two readings over the
 // time between them is the frame rate.
 void frame_counted();
 std::uint64_t frames_presented();
+
+// What the title's frames are drawn with in this process, for people: "Direct3D 11",
+// "Vulkan", "Direct3D 12". Whoever creates the host device says so with drawing_with();
+// empty before that.
+void drawing_with(std::string_view driver);
+std::string video_driver();
 } // namespace xv::graphics

@@ -4,25 +4,38 @@
 #include "host/threading.hpp"
 #include <algorithm>
 #include <bit>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <windows.h>
+// after windows.h, which it needs
+#include <shellapi.h>
 
 namespace xv::host {
+namespace {
+[[noreturn]] void fail(const char *operation, DWORD error = GetLastError());
+}
 std::filesystem::path executable_directory() {
     std::wstring path(32768, L'\0');
     path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
     return std::filesystem::path(path).parent_path();
 }
-std::uint32_t run_self(const std::vector<std::wstring> &arguments, std::atomic<void *> &process) {
-    std::wstring path(32768, L'\0');
-    path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
+std::uint32_t run_beside(const std::wstring &name, const std::vector<std::wstring> &arguments,
+                         std::atomic<void *> &process,
+                         const std::function<void(std::string_view)> &output) {
+    const auto path = (executable_directory() / name).wstring();
     auto command = L"\"" + path + L"\"";
-    for (const auto &argument : arguments)
-        command += L" \"" + argument + L"\"";
+    for (const auto &argument : arguments) {
+        // backslashes right before the closing quote would escape it: doubled, they are
+        // backslashes again
+        const auto last = argument.find_last_not_of(L'\\');
+        const auto trailing = argument.size() - (last == std::wstring::npos ? 0 : last + 1);
+        command += L" \"" + argument + std::wstring(trailing, L'\\') + L"\"";
+    }
     // a job that ends its processes when this one goes, however it goes
     static const HANDLE job = [] {
         const auto handle = CreateJobObjectW(nullptr, nullptr);
@@ -33,17 +46,59 @@ std::uint32_t run_self(const std::vector<std::wstring> &arguments, std::atomic<v
                                     sizeof limits);
         return handle;
     }();
-    STARTUPINFOW startup{sizeof startup};
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof startup;
     PROCESS_INFORMATION child{};
-    if (!CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
-                        nullptr, nullptr, &startup, &child))
-        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
-                                "Cannot start the title's process");
+    // without a console here, a console program would open one of its own
+    DWORD flags = CREATE_SUSPENDED | (GetConsoleWindow() ? 0 : CREATE_NO_WINDOW);
+    // The child's stdout and stderr are a pipe read here. It inherits the pipe and no other
+    // handle of this process.
+    HANDLE read = nullptr, write = nullptr;
+    std::vector<std::byte> attributes;
+    if (output) {
+        SECURITY_ATTRIBUTES inherited{sizeof inherited, nullptr, TRUE};
+        SIZE_T size = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+        attributes.resize(size);
+        startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+        if (!CreatePipe(&read, &write, &inherited, 1 << 16) ||
+            !SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0) ||
+            !InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &size) ||
+            !UpdateProcThreadAttribute(startup.lpAttributeList, 0,
+                                       PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &write, sizeof write,
+                                       nullptr, nullptr))
+            fail("Cannot make the pipe for the output of a process");
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = write;
+        flags |= EXTENDED_STARTUPINFO_PRESENT;
+    }
+    const bool started =
+        CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, output ? TRUE : FALSE, flags,
+                       nullptr, nullptr, &startup.StartupInfo, &child);
+    const auto error = GetLastError();
+    if (output) {
+        DeleteProcThreadAttributeList(startup.lpAttributeList);
+        CloseHandle(write);
+    }
+    if (!started) {
+        if (read)
+            CloseHandle(read);
+        throw std::system_error(static_cast<int>(error), std::system_category(),
+                                "Cannot start " + std::filesystem::path(name).string());
+    }
     if (job)
         AssignProcessToJobObject(job, child.hProcess);
     ResumeThread(child.hThread);
     CloseHandle(child.hThread);
     process = child.hProcess;
+    if (output) {
+        // until the child and whatever it gave the pipe to are gone
+        char buffer[8192];
+        DWORD count = 0;
+        while (ReadFile(read, buffer, sizeof buffer, &count, nullptr) && count)
+            output({buffer, count});
+        CloseHandle(read);
+    }
     WaitForSingleObject(child.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(child.hProcess, &code);
@@ -55,6 +110,67 @@ void end_process(void *process) {
     if (process)
         TerminateProcess(process, 0);
 }
+void end_now(std::uint32_t code) {
+    TerminateProcess(GetCurrentProcess(), code);
+    std::abort(); // not reached
+}
+std::string status_text(std::uint32_t code) {
+    // the exceptions a title's code ends with, by the names the host's headers give them
+    static constexpr std::pair<std::uint32_t, const char *> exceptions[] = {
+        {EXCEPTION_ACCESS_VIOLATION, "Access violation"},
+        {EXCEPTION_STACK_OVERFLOW, "Stack overflow"},
+        {EXCEPTION_ILLEGAL_INSTRUCTION, "Illegal instruction"},
+        {EXCEPTION_PRIV_INSTRUCTION, "Privileged instruction"},
+        {EXCEPTION_INT_DIVIDE_BY_ZERO, "Integer division by zero"},
+        {EXCEPTION_BREAKPOINT, "Breakpoint"},
+        {EXCEPTION_IN_PAGE_ERROR, "In-page error"},
+        {EXCEPTION_ARRAY_BOUNDS_EXCEEDED, "Array bounds exceeded"},
+        {EXCEPTION_DATATYPE_MISALIGNMENT, "Datatype misalignment"},
+        {EXCEPTION_NONCONTINUABLE_EXCEPTION, "Noncontinuable exception"},
+        {0xC0000409u, "Fail fast (stack buffer overrun or __fastfail)"},
+        {0xC0000374u, "Heap corruption"},
+        {0xE06D7363u, "Unhandled C++ exception"},
+        {0xC000013Au, "Ended from its console (Ctrl+C)"},
+    };
+    for (const auto &[value, name] : exceptions)
+        if (value == code)
+            return name;
+    // any other status: the host's own message for it, if it has no blanks to fill in
+    wchar_t message[512];
+    const auto length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        GetModuleHandleW(L"ntdll.dll"), code, 0, message, 512, nullptr);
+    std::wstring text(message, length);
+    if (code < 0x80000000u || text.empty() || text.find(L'%') != std::wstring::npos)
+        return {};
+    // "{Title}" and line breaks
+    if (text.front() == L'{')
+        if (const auto end = text.find(L'}'); end != std::wstring::npos)
+            text = text.substr(1, end - 1) + L". " + text.substr(end + 1);
+    std::wstring line;
+    for (const auto c : text)
+        if (c != L'\r' && c != L'\n')
+            line += c;
+        else if (!line.empty() && line.back() != L' ')
+            line += L' ';
+    while (!line.empty() && line.back() == L' ')
+        line.pop_back();
+    const auto utf8 = std::filesystem::path(line).u8string();
+    return {utf8.begin(), utf8.end()};
+}
+bool show_in_file_manager(const std::filesystem::path &path) {
+    std::error_code error;
+    if (std::filesystem::is_directory(path, error))
+        return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"explore", path.c_str(), nullptr,
+                                                       nullptr, SW_SHOWNORMAL)) > 32;
+    const auto select = L"/select,\"" + path.wstring() + L"\"";
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"explorer.exe",
+                                                   select.c_str(), nullptr, SW_SHOWNORMAL)) > 32;
+}
+bool open_with_host(const std::filesystem::path &path) {
+    return reinterpret_cast<INT_PTR>(
+               ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+}
 namespace {
 void check_path(const std::filesystem::path &path) {
     if (path.empty() || path.native().find('\0') != std::filesystem::path::string_type::npos)
@@ -65,7 +181,7 @@ std::size_t checked_size(std::uintmax_t bytes, std::size_t limit) {
         throw std::length_error("File exceeds configured byte limit");
     return static_cast<std::size_t>(bytes);
 }
-[[noreturn]] void fail(const char *operation, DWORD error = GetLastError()) {
+[[noreturn]] void fail(const char *operation, DWORD error) {
     throw std::system_error(static_cast<int>(error), std::system_category(), operation);
 }
 class Handle {

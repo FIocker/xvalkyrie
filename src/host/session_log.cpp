@@ -5,7 +5,9 @@
 #include <fcntl.h>
 #include <io.h>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
 #include <windows.h>
 
 // stdout and stderr are pointed at pipes, at the level of the OS handles so that a title,
@@ -21,8 +23,21 @@ std::filesystem::path log_path(const std::filesystem::path &directory) {
     std::tm local{};
     localtime_s(&local, &now);
     char name[32];
-    std::strftime(name, sizeof name, "%Y-%m-%d_%H-%M-%S.log", &local);
-    return directory / name;
+    std::strftime(name, sizeof name, "%Y-%m-%d_%H-%M-%S", &local);
+    // Two programs that start in the same second, the window and the title it was asked
+    // to open, get a file each: the name is taken by creating it.
+    for (int count = 1;; ++count) {
+        const auto path =
+            directory / (name + (count > 1 ? "_" + std::to_string(count) : std::string()) + ".log");
+        const auto file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                      CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE) {
+            CloseHandle(file);
+            return path;
+        }
+        if (GetLastError() != ERROR_FILE_EXISTS || count == 100)
+            throw std::runtime_error("Cannot create the session log");
+    }
 }
 } // namespace
 
@@ -71,6 +86,25 @@ void copy(HANDLE read, HANDLE file, HANDLE original) {
     }
 }
 } // namespace
+
+void use_parent_console() {
+    const auto leads_nowhere = [](DWORD which) {
+        const auto handle = GetStdHandle(which);
+        return !handle || handle == INVALID_HANDLE_VALUE;
+    };
+    if (!(leads_nowhere(STD_OUTPUT_HANDLE) || leads_nowhere(STD_ERROR_HANDLE)) ||
+        !AttachConsole(ATTACH_PARENT_PROCESS))
+        return;
+    const std::pair<DWORD, std::FILE *> streams[] = {{STD_OUTPUT_HANDLE, stdout},
+                                                     {STD_ERROR_HANDLE, stderr}};
+    for (const auto &[which, stream] : streams) {
+        std::FILE *opened = nullptr;
+        if (!leads_nowhere(which) || freopen_s(&opened, "CONOUT$", "w", stream))
+            continue;
+        std::setvbuf(stream, nullptr, _IONBF, 0);
+        SetStdHandle(which, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream))));
+    }
+}
 
 std::filesystem::path start_session_log(const std::filesystem::path &directory) {
     if (active.exchange(true))

@@ -1,4 +1,4 @@
-#include "app/ui/keys.hpp"
+#include "app/gui/keys.hpp"
 #include <GLFW/glfw3.h>
 
 namespace xv::ui {

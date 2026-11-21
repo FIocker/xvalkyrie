@@ -1,4 +1,4 @@
-#include "app/ui/file_dialog.hpp"
+#include "app/gui/file_dialog.hpp"
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <nfd_glfw3.h>
 #include <stdexcept>

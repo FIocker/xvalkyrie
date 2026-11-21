@@ -1,19 +1,17 @@
-#include "app/ui/desktop.hpp"
-#include "app/ui/file_dialog.hpp"
-#include "app/ui/keys.hpp"
-#include "app/ui/logo.hpp"
-#include "app/ui/settings.hpp"
-#include "app/ui/theme.hpp"
-#include "app/ui/widgets.hpp"
+#include "app/gui/desktop.hpp"
+#include "app/gui/file_dialog.hpp"
+#include "app/gui/keys.hpp"
+#include "app/gui/logo.hpp"
+#include "app/gui/properties.hpp"
+#include "app/gui/settings.hpp"
+#include "app/gui/theme.hpp"
+#include "app/gui/widgets.hpp"
 #include "app/version.hpp"
-#include "backends/input/input.hpp"
+#include "host/files.hpp"
 #include "launcher/launch.hpp"
 #include "launcher/library.hpp"
 #include <GLFW/glfw3.h>
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cctype>
 #include <cfloat>
@@ -27,7 +25,9 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_internal.h>
+#include <iterator>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -76,13 +76,20 @@ struct Guest {
     std::atomic<bool> done = false;
     std::uint32_t code = 0;
     std::exception_ptr error;
+    // what its process printed and the window has not taken yet
+    std::mutex mutex;
+    std::string output;
+    void printed(std::string_view piece) {
+        const std::lock_guard lock(mutex);
+        for (const char c : piece)
+            if (c != '\r')
+                output += c;
+    }
 };
 std::string utf8(const std::filesystem::path &path) {
     const auto text = path.u8string();
     return {text.begin(), text.end()};
 }
-
-void *native_window(GLFWwindow *window) { return glfwGetWin32Window(window); }
 
 class Desktop {
   public:
@@ -119,23 +126,17 @@ class Desktop {
             guest_->thread.detach();
     }
     int exit_code() const { return exit_code_; }
-    // A key of the main window, before the interface sees it. This is the "window"
-    // capture method: the keys go to the title unless the options are open, where the
-    // next key pressed becomes a binding instead.
+    // A key of the main window, before the interface sees it: with the options waiting
+    // for one, the next key pressed becomes a binding.
     void key(int glfw_key, bool pressed) {
         const int code = ui::virtual_key(glfw_key);
-        if (!code)
-            return;
-        if (settings_.wants_key() && pressed) {
+        if (code && pressed && settings_.wants_key())
             settings_.key(code);
-            return;
-        }
-        if (!settings_.input_shown() || !pressed)
-            input::window_key(code, pressed);
     }
-    // something on screen moves without input: the loading bar
+    // something on screen moves without input: the loading bar. Not while a title runs:
+    // it has a window of its own, and this one is at rest.
     bool animating() const {
-        return loading_.valid() || discovery_.valid() || logos_.loading() || (guest_ && !showing());
+        return loading_.valid() || discovery_.valid() || logos_.loading() || properties_.loading();
     }
     // the native dialog is modal: the window stays open until it is dismissed
     bool dialog_open() const { return dialog_.valid(); }
@@ -147,6 +148,7 @@ class Desktop {
             return;
         notice_.clear();
         outcome_.clear();
+        ran_ = false;
         title_.reset();
         name_ = utf8(path.filename());
         if (const auto it = std::find_if(titles_.begin(), titles_.end(),
@@ -174,12 +176,14 @@ class Desktop {
         if (title_->status != LaunchStatus::runnable)
             return;
         // shared so that a guest outliving the window still has somewhere to report to
-        if (hooks_.starting)
-            hooks_.starting();
+        log_.clear();
+        log_extent_.reset();
+        started_ = std::chrono::steady_clock::now();
         guest_ = std::make_shared<Guest>();
         guest_->thread = std::thread([guest = guest_, run = hooks_.run, path] {
             try {
-                guest->code = run(path);
+                guest->code =
+                    run(path, [&guest](std::string_view piece) { guest->printed(piece); });
             } catch (...) {
                 guest->error = std::current_exception();
             }
@@ -191,47 +195,21 @@ class Desktop {
         poll();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_RouteGlobal))
             pick();
-        if (guest_ && hooks_.close_running &&
-            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_W, ImGuiInputFlags_RouteGlobal))
-            close_running();
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_W, ImGuiInputFlags_RouteGlobal))
+            close_app();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, ImGuiInputFlags_RouteGlobal))
             glfwSetWindowShouldClose(window_, true);
         menu();
-        measure();
         status_bar();
         content();
         settings_.draw(ui_.fonts, settings_host_,
                        {libraries_, titles_.size(), discovery_.valid(), library_notice_}, console_);
-        // the title is a native window over the interface: out of the way of what is open
-        // Menus and popups are cut out of it instead, so the title shows around them.
-        std::vector<std::array<int, 4>> holes;
-        bool popup = false;
-        for (const auto *window : ImGui::GetCurrentContext()->Windows) {
-            if (!window->WasActive || window->Hidden ||
-                !(window->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu |
-                                   ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Modal)))
-                continue;
-            popup = true;
-            holes.push_back({static_cast<int>(window->Pos.x), static_cast<int>(window->Pos.y),
-                             static_cast<int>(std::ceil(window->Size.x)),
-                             static_cast<int>(std::ceil(window->Size.y))});
-        }
-        if (hooks_.holes && holes != holes_) {
-            holes_ = holes;
-            hooks_.holes(holes);
-        }
-        const bool covered = settings_.shown() || (popup && !hooks_.holes);
-        if (covered != covered_ && hooks_.covered) {
-            covered_ = covered;
-            hooks_.covered(covered);
-        }
+        properties_.draw(ui_.fonts);
     }
 
   private:
     bool busy() const { return guest_ || dialog_.valid() || loading_.valid(); }
     enum class Dialog { file, folder, add_library, replace_library };
-    // the title has frames on screen, in the area left for it
-    bool showing() const { return guest_ && hooks_.showing && hooks_.showing(); }
     void pick() {
         if (!busy()) {
             dialog_kind_ = Dialog::file;
@@ -269,12 +247,21 @@ class Desktop {
             refresh_library();
         }
     }
-    // the user closed the running title: straight back to the library once it is gone
-    void close_running() {
-        closing_ = true;
-        hooks_.close_running();
+    // Close App: ends the title that runs, whose log stays on screen; with none running,
+    // puts away the one that was opened, log and all, and goes back to the library.
+    bool can_close_app() const {
+        return guest_ ? static_cast<bool>(hooks_.close_running) : title_ && !busy();
+    }
+    void close_app() {
+        if (!can_close_app())
+            return;
+        if (guest_)
+            hooks_.close_running();
+        else
+            close_title();
     }
     void close_title() {
+        ran_ = false;
         title_.reset();
         notice_.clear();
         exit_code_ = 0;
@@ -320,24 +307,45 @@ class Desktop {
         if (loading_.valid() &&
             loading_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
             start();
+        if (guest_) {
+            const std::lock_guard lock(guest_->mutex);
+            if (!guest_->output.empty()) {
+                log_ += guest_->output;
+                guest_->output.clear();
+                // a title that prints without end: the oldest half goes, at a line
+                if (log_.size() > log_limit)
+                    log_.erase(0, log_.find('\n', log_.size() / 2) + 1);
+                log_extent_.reset();
+            }
+        }
         if (guest_ && guest_->done) {
             guest_->thread.join();
+            // The log stays on screen, and says how the title ended as its last line: the
+            // exit code, what it means (the runtime's own codes, the host's name for an
+            // exception or a status) and how long the title ran.
+            const auto ran = duration(
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count());
+            if (!log_.empty() && log_.back() != '\n')
+                log_ += '\n';
             try {
                 if (guest_->error)
                     std::rethrow_exception(guest_->error);
                 char code[16];
-                std::snprintf(code, sizeof code, "0x%x", guest_->code);
+                std::snprintf(code, sizeof code, "0x%08X", guest_->code);
                 outcome_ = std::string("Exited with code ") + code;
                 ended_badly_ = false;
                 exit_code_ = static_cast<int>(guest_->code);
+                log_ += "[Launcher] " + exit_description(guest_->code) + ": exit code " + code +
+                        ", after " + ran + "\n";
             } catch (const std::exception &e) {
                 outcome_ = std::string("Stopped: ") + e.what();
                 ended_badly_ = true;
                 exit_code_ = 1;
+                log_ += std::string("[Launcher] The title could not be run: ") + e.what() + "\n";
             }
+            log_extent_.reset();
+            ran_ = true;
             guest_.reset();
-            if (std::exchange(closing_, false))
-                close_title();
         }
         if (!dropped_.empty() && !busy())
             open(dropped_);
@@ -351,10 +359,8 @@ class Desktop {
                 pick();
             if (ImGui::MenuItem("Open Folder...", nullptr, false, !busy()))
                 pick_folder(Dialog::folder);
-            if (ImGui::MenuItem("Close", nullptr, false, title_ && !busy()))
-                close_title();
-            if (ImGui::MenuItem("Close Title", "Ctrl+W", false, guest_ && hooks_.close_running))
-                close_running();
+            if (ImGui::MenuItem("Close App", "Ctrl+W", false, can_close_app()))
+                close_app();
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Ctrl+Q"))
                 glfwSetWindowShouldClose(window_, true);
@@ -378,22 +384,6 @@ class Desktop {
         }
         ImGui::EndMainMenuBar();
     }
-    // The frame rate of the title on screen, from how many frames it presented over the
-    // last half second or so. None while there is no title or nothing to go by yet.
-    void measure() {
-        if (!hooks_.frames || !showing()) {
-            sample_.reset();
-            rate_.reset();
-            return;
-        }
-        const Sample now{ImGui::GetTime(), hooks_.frames()};
-        if (!sample_)
-            sample_ = now;
-        else if (now.time - sample_->time >= .5) {
-            rate_ = static_cast<double>(now.frames - sample_->frames) / (now.time - sample_->time);
-            sample_ = now;
-        }
-    }
     const char *state() const {
         if (!notice_.empty())
             return notice_.c_str();
@@ -402,7 +392,7 @@ class Desktop {
         if (!title_)
             return "Ready";
         if (guest_)
-            return showing() ? "Running" : "Starting";
+            return "Running";
         if (!outcome_.empty())
             return outcome_.c_str();
         return "Not started";
@@ -423,29 +413,10 @@ class Desktop {
             ImGui::Text("%s  -  %s", name_.c_str(), state());
         else
             ImGui::TextUnformatted(state());
-        // from the right: the version, then what the keys do on this screen
-        const auto &style = ImGui::GetStyle();
-        const auto origin = ImGui::GetWindowPos();
-        float right = origin.x + ImGui::GetWindowWidth() - style.FramePadding.x -
-                      ImGui::CalcTextSize(version).x;
-        ImGui::SameLine(right - origin.x);
+        // on the right, the version
+        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().FramePadding.x -
+                        ImGui::CalcTextSize(version).x);
         ImGui::TextDisabled("%s", version);
-        if (rate_) {
-            char text[32];
-            std::snprintf(text, sizeof text, "%.0f FPS", *rate_);
-            right -= 18 + ImGui::CalcTextSize(text).x;
-            ImGui::SameLine(right - origin.x);
-            ImGui::TextUnformatted(text);
-        }
-        if (library_shown() && notice_.empty()) {
-            const float y = origin.y + (height - ui_.fonts.small->FontSize - 4) / 2;
-            for (const auto &[key, action] :
-                 {std::pair{"Ctrl+O", "Open file"}, std::pair{"Enter", "Play"},
-                  std::pair{"Arrows", "Select"}}) {
-                right -= 18 + ui::key_hint(nullptr, ui_.fonts, {}, key, action);
-                ui::key_hint(ImGui::GetWindowDrawList(), ui_.fonts, {right, y}, key, action);
-            }
-        }
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
@@ -467,10 +438,18 @@ class Desktop {
         if (title.package)
             at.x += ui::badge(list, ui_.fonts, at, ui::badges::package) + 6;
         auto *const font = ui_.fonts.small;
-        const auto size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, title.version.c_str());
-        if (at.x + 2 + size.x <= end)
+        // the version and the title ID; the ID alone, then nothing, where they do not fit
+        const auto both = title.title_id.empty() || title.version.empty()
+                              ? title.version + title.title_id
+                              : title.version + "  " + title.title_id;
+        for (const auto *text : {&both, &title.title_id}) {
+            const auto size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, text->c_str());
+            if (text->empty() || at.x + 2 + size.x > end)
+                continue;
             list->AddText(font, font->FontSize, {at.x + 2, at.y + (ui::badge_height - size.y) / 2},
-                          ui::color::muted, title.version.c_str());
+                          ui::color::muted, text->c_str());
+            break;
+        }
     }
     // The logo of a title scaled to fit inside the rectangle, or its initial where there
     // is none. `rounding` is that of the rectangle's corners in `corners`.
@@ -516,6 +495,27 @@ class Desktop {
         if ((entered || twice) && !busy())
             open(title.path);
     }
+    // What a right click on the item just submitted for a title offers.
+    void context_menu(const LibraryTitle &title) {
+        if (!ImGui::BeginPopupContextItem("title"))
+            return;
+        selected_ = title.path;
+        if (ImGui::MenuItem("Run", "Enter", false, !busy()))
+            open(title.path);
+        if (ImGui::MenuItem("Open Directory"))
+            host::show_in_file_manager(title.path);
+        // read again from its files, pictures included, whatever the cache says
+        if (ImGui::MenuItem("Refresh Cache", nullptr, false, !discovery_.valid())) {
+            forget_cached_title(library_cache_file(), title.path);
+            for (const auto &picture : {title.logo, title.splash})
+                logos_.forget(picture);
+            refresh_library();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Properties"))
+            properties_.show(title.path, title.name);
+        ImGui::EndPopup();
+    }
     // The console's way of showing where the focus is: a ring a little outside the item.
     // `focus` goes from 0 (none) to 1.
     static void focus_ring(ImDrawList *list, ImVec2 min, ImVec2 max, float rounding, float focus) {
@@ -543,6 +543,7 @@ class Desktop {
         ImGui::InvisibleButton("card", {width, width + card_text});
         ImGui::PopStyleColor();
         interact(title);
+        context_menu(title);
         const bool hovered = ImGui::IsItemHovered(), selected = title.path == selected_;
         // the selected card comes forward a little
         const float focus = ui::animate(ImGui::GetItemID(), selected ? 1.f : 0.f);
@@ -570,6 +571,7 @@ class Desktop {
         ImGui::InvisibleButton("row", {width, row_height});
         ImGui::PopStyleColor();
         interact(title);
+        context_menu(title);
         const bool hovered = ImGui::IsItemHovered(), selected = title.path == selected_;
         const float focus = ui::animate(ImGui::GetItemID(), selected ? 1.f : 0.f);
         auto *const list = ImGui::GetWindowDrawList();
@@ -615,9 +617,9 @@ class Desktop {
                                       black(.8f));
         return true;
     }
-    // What stays on screen from the moment a title is opened until its first frame: its
-    // splash picture with the name and the progress at the bottom, or the logo in the
-    // middle for a title without one.
+    // What stays on screen from the moment a title is opened until it starts: its splash
+    // picture with the name and the progress at the bottom, or the logo in the middle for
+    // a title without one.
     void loading_screen(const char *step) {
         const ImVec2 origin = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
         auto *const list = ImGui::GetWindowDrawList();
@@ -635,7 +637,7 @@ class Desktop {
         }
         ui::centered_text(list, heading, center, y, ui::color::text, name_.c_str());
         y += heading->FontSize + 22;
-        // how long a title takes to start is not known, so the bar only shows activity
+        // how long a title takes to read is not known, so the bar only shows activity
         const float width = std::min(360.f, size.x - 64), left = center - width / 2;
         const float phase = static_cast<float>(std::fmod(ImGui::GetTime() * .8, 1.0));
         const float head = left + (phase * 1.35f - .35f) * width;
@@ -645,6 +647,57 @@ class Desktop {
         list->PopClipRect();
         y += 4 + 16;
         ui::centered_text(list, ui_.fonts.small, center, y, ui::color::muted, step);
+    }
+    // Everything the title's process printed, in what is left of the window. It is text
+    // that can be selected and copied (drag, Ctrl+A, Ctrl+C): a field that cannot be
+    // written to, as large as the text, inside the part that scrolls.
+    void log_view() {
+        ImGui::PushFont(ui_.fonts.small);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
+        if (ImGui::BeginChild("Log", {0, 0}, ImGuiChildFlags_None,
+                              ImGuiWindowFlags_HorizontalScrollbar)) {
+            // stays at the end while it is there; scrolled up, it stays where it was put
+            const bool at_end = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1;
+            if (!log_extent_)
+                log_extent_ = ImGui::CalcTextSize(log_.data(), log_.data() + log_.size());
+            const auto &style = ImGui::GetStyle();
+            const ImVec2 size{std::max(ImGui::GetContentRegionAvail().x,
+                                       log_extent_->x + 2 * style.FramePadding.x + 16),
+                              log_extent_->y + 2 * style.FramePadding.y +
+                                  ImGui::GetTextLineHeight()};
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, 0);
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(205, 205, 214, 255));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+            ImGui::InputTextMultiline("##log", log_.data(), log_.size() + 1, size,
+                                      ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+            if (at_end)
+                ImGui::SetScrollHereY(1);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    // What is on screen while a title runs, which it does in a window of its own, and
+    // after it has ended: everything its process printed, as it comes, over the title's
+    // splash picture. Close App, or Escape once the title is gone, puts it away.
+    void running_screen() {
+        title_background(.82f);
+        log_view();
+        if (!guest_ && ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::IsAnyItemActive())
+            close_title();
+    }
+    static std::string duration(double seconds) {
+        char text[48];
+        const auto whole = static_cast<long long>(seconds);
+        if (whole >= 3600)
+            std::snprintf(text, sizeof text, "%lld h %lld min", whole / 3600, whole % 3600 / 60);
+        else if (whole >= 60)
+            std::snprintf(text, sizeof text, "%lld min %lld s", whole / 60, whole % 60);
+        else
+            std::snprintf(text, sizeof text, "%.1f s", seconds);
+        return text;
     }
     // what went wrong with the opened title, in a few words
     const char *problem() const {
@@ -737,17 +790,6 @@ class Desktop {
         ui::backdrop(ui_.fonts, screen->WorkPos,
                      {screen->WorkPos.x + size.x, screen->WorkPos.y + size.y},
                      library_shown() ? .09f : 0);
-        if (hooks_.area) {
-            // the largest 16:9 rectangle between the menu and the status bar, centered
-            const auto scale = ImGui::GetIO().DisplayFramebufferScale;
-            const float room_x = size.x * scale.x, room_y = size.y * scale.y;
-            const float width = std::min(room_x, room_y * 16 / 9), height = width * 9 / 16;
-            hooks_.area(static_cast<int>(screen->WorkPos.x * scale.x + (room_x - width) / 2),
-                        static_cast<int>(screen->WorkPos.y * scale.y + (room_y - height) / 2),
-                        static_cast<int>(width), static_cast<int>(height));
-        }
-        if (showing())
-            return; // the title draws there
         ImGui::SetNextWindowPos(screen->WorkPos);
         ImGui::SetNextWindowSize(size);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {24, 18});
@@ -758,7 +800,9 @@ class Desktop {
         if (loading_.valid())
             loading_screen("Reading the title");
         else if (guest_)
-            loading_screen("Starting the title");
+            running_screen();
+        else if (title_ && ran_)
+            running_screen();
         else if (title_)
             title_screen();
         else if (titles_.empty())
@@ -935,8 +979,11 @@ class Desktop {
     std::filesystem::path splash_; // the splash picture of what was opened, if it has one
     std::string notice_;           // frontend problem unrelated to title_
     std::shared_ptr<Guest> guest_;
-    std::vector<std::array<int, 4>> holes_;
-    bool closing_ = false;
+    static constexpr std::size_t log_limit = 1 << 20;
+    std::string log_;                  // what the process of the title that runs, or ran, printed
+    std::optional<ImVec2> log_extent_; // how large it is as text; worked out again when it grows
+    std::chrono::steady_clock::time_point started_; // when the title was
+    bool ran_ = false; // the title opened ran and has ended: its log is what is on screen
     std::future<LaunchResult> loading_;
     std::filesystem::path path_; // what loading_ is reading
     std::future<std::filesystem::path> dialog_;
@@ -953,16 +1000,10 @@ class Desktop {
     char search_[64] = "";
     Logos logos_;
     LogoImage empty_logo_;
-    struct Sample {
-        double time; // ImGui::GetTime()
-        std::uint64_t frames;
-    };
-    std::optional<Sample> sample_; // where the current measurement started
-    std::optional<double> rate_;   // frames per second
     ui::Settings settings_;
     ui::Settings::Host settings_host_;
+    ui::Properties properties_;
     int exit_code_ = 0;
-    bool covered_ = false; // what hooks_.covered was last told
 };
 } // namespace
 
@@ -989,13 +1030,7 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
             desktop && action != GLFW_REPEAT)
             desktop->key(key, action == GLFW_PRESS);
     });
-    glfwSetWindowFocusCallback(window.get(), [](GLFWwindow *, int focused) {
-        if (!focused)
-            input::window_focus_lost();
-    });
     Interface ui(window.get());
-    if (hooks.host)
-        hooks.host(native_window(window.get()));
     Desktop desktop(window.get(), ui, hooks);
     if (!initial.empty())
         desktop.open(initial);

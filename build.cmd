@@ -73,7 +73,7 @@ if "%RUN_TESTS%"=="1" (
     ctest --test-dir build\win -C %CONFIG% --output-on-failure --parallel %JOBS%
     if errorlevel 1 goto fail
 )
-echo Built: %CD%\build\win\%CONFIG%\xvalkyrie.exe
+echo Built: %CD%\build\win\%CONFIG%\xvalkyrie.exe and xvboot.exe
 popd
 exit /b 0
 

@@ -1,4 +1,4 @@
-#include "app/ui/logo.hpp"
+#include "app/gui/logo.hpp"
 #include <glad/gl.h>
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -17,6 +17,14 @@ Logos::~Logos() {
     for (const auto &[path, image] : cache_)
         if (image.texture)
             glDeleteTextures(1, &image.texture);
+}
+void Logos::forget(const std::filesystem::path &path) {
+    const auto it = cache_.find(path);
+    if (it == cache_.end())
+        return;
+    if (it->second.texture)
+        glDeleteTextures(1, &it->second.texture);
+    cache_.erase(it);
 }
 const LogoImage &Logos::get(const std::filesystem::path &path) {
     static const LogoImage none;

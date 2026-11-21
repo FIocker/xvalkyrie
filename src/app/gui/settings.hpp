@@ -1,5 +1,5 @@
 #pragma once
-#include "app/ui/theme.hpp"
+#include "app/gui/theme.hpp"
 #include "launcher/config.hpp"
 #include <cstddef>
 #include <functional>

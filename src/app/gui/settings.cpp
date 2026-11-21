@@ -1,5 +1,5 @@
-#include "app/ui/settings.hpp"
-#include "app/ui/widgets.hpp"
+#include "app/gui/settings.hpp"
+#include "app/gui/widgets.hpp"
 #include "app/version.hpp"
 #include "backends/graphics/backend.hpp"
 #include "backends/input/input.hpp"
@@ -226,6 +226,24 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
                 } catch (const std::exception &e) {
                     graphics_notice_ = std::string("Not saved: ") + e.what();
                 }
+            }
+        }
+        const auto fullscreen = graphics::fullscreen_mode();
+        setting(fonts, "Full screen",
+                fullscreen == graphics::Fullscreen::native
+                    ? "Native: F11 gives the display to the title, where the host can."
+                    : "Borderless: F11 makes the title's window as large as the display.");
+        static constexpr const char *modes[] = {"Borderless", "Native"};
+        int mode = fullscreen == graphics::Fullscreen::native ? 1 : 0;
+        if (segmented("fullscreen", modes, mode)) {
+            graphics::select_fullscreen_mode(mode ? graphics::Fullscreen::native
+                                                  : graphics::Fullscreen::borderless);
+            graphics_notice_.clear();
+            try {
+                if (host.graphics_saved)
+                    host.graphics_saved();
+            } catch (const std::exception &e) {
+                graphics_notice_ = std::string("Not saved: ") + e.what();
             }
         }
         end_settings();

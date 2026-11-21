@@ -18,6 +18,8 @@ class Logos {
     Logos(const Logos &) = delete;
     Logos &operator=(const Logos &) = delete;
     const LogoImage &get(const std::filesystem::path &path);
+    // lets go of a picture that was read, so that it is read again the next time
+    void forget(const std::filesystem::path &path);
     // some picture asked for is still being read
     bool loading() const { return !pending_.empty(); }
 

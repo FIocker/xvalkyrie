@@ -1,4 +1,4 @@
-#include "app/ui/widgets.hpp"
+#include "app/gui/widgets.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>

@@ -230,6 +230,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         }
         return result;
     }
+    graphics::drawing_with(vulkan ? "Vulkan" : "Direct3D 11");
     if (context && *context)
         *context =
             static_cast<ID3D11DeviceContext *>(d3d11x::wrap(*context, d3d11x::Kind::context));

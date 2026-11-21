@@ -1,4 +1,4 @@
-#include "app/ui/theme.hpp"
+#include "app/gui/theme.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -24,8 +24,8 @@ Fonts load_fonts() {
                                           ranges);
     };
     // pairs of first and last character; the atlas keeps the pointer
-    static const ImWchar letters[] = {'S', 'S', 'X', 'X', 'a', 'a', 'c', 'c', 'e',
-                                      'e', 'l', 'l', 'r', 'r', 't', 't', 0};
+    static const ImWchar letters[] = {'V', 'V', 'X', 'X', 'a', 'a', 'e', 'e', 'i',
+                                      'i', 'k', 'l', 'r', 'r', 'y', 'y', 0};
     Fonts fonts;
     fonts.body = add(16);
     fonts.small = add(13);

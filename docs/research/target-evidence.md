@@ -9,10 +9,10 @@ the file actually contains before implementing anything for it.
 3. Run:
 
    ```
-   xvalkyrie inspect title.exe
-   xvalkyrie inspect-config MicrosoftGame.config
-   xvalkyrie assess title.exe --config MicrosoftGame.config --entry title.exe
-   xvalkyrie bind title.exe
+   xvboot inspect title.exe
+   xvboot inspect-config MicrosoftGame.config
+   xvboot assess title.exe --config MicrosoftGame.config --entry title.exe
+   xvboot bind title.exe
    ```
 
 4. Compare with a desktop or Xbox One build of the same source if there is one.

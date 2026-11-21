@@ -85,6 +85,7 @@ nlohmann::json inspect_config(std::span<const std::uint8_t> bytes) {
             {"logo", attribute(visuals, "Square150x150Logo")},
             {"store_logo", attribute(visuals, "StoreLogo")},
             {"large_logo", attribute(visuals, "Square480x480Logo")},
+            {"small_logo", attribute(visuals, "Square44x44Logo")},
             {"splash_screen", attribute(visuals, "SplashScreenImage")},
             {"title_id", text("TitleId")},
             {"store_id", text("StoreId")},

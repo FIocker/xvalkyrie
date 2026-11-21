@@ -64,7 +64,7 @@ const char *control_id(Control control);   // for the settings file
 
 // How key and gamepad state is obtained.
 enum class Capture {
-    window, // from the events of the xvalkyrie window: keyboard only, while it has the focus
+    window, // from the events of the title's window: keyboard only, while it has the focus
     direct  // from the system: host gamepad (XInput) and keyboard, without going through
             // the window
 };
@@ -89,8 +89,4 @@ Settings settings();
 void window_key(int key, bool pressed);
 void window_focus_lost();
 GamepadState poll();
-// direct capture: a window of another process that counts as in the foreground too, the
-// launcher's when the title runs in a process of its own. A native handle.
-void set_foreground_window(void *window);
-void *foreground_window();
 } // namespace xv::input

@@ -1,4 +1,5 @@
 #include "formats/appx/manifest.hpp"
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <pugixml.hpp>
 #include <stdexcept>
@@ -43,21 +44,26 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
     if (applications.empty())
         throw std::runtime_error("Package manifest has no applications");
     const auto prerequisites = root.child("Prerequisites");
-    auto logo = text(root.child("Properties").child("Logo"));
-    if (logo.is_null()) {
-        for (auto application : root.child("Applications").children("Application")) {
-            for (auto child : application.children()) {
-                const auto square = child.attribute("Square150x150Logo");
-                const auto small = child.attribute("Square44x44Logo");
-                if (square || small) {
-                    logo = square ? json(square.value()) : json(small.value());
-                    break;
-                }
-            }
-            if (!logo.is_null())
-                break;
+    // Every picture the visual elements of the applications name (Square150x150Logo, Logo,
+    // SmallLogo, those of the tiles...), in the order written, whatever namespace prefix
+    // the manifest version gives the elements. <Properties><Logo> is not one of them: it is
+    // the small mark of the store's lists, and is kept apart.
+    auto logos = json::array();
+    const auto collect = [&](pugi::xml_node node) {
+        for (auto attr : node.attributes())
+            if (std::string_view(attr.name()).ends_with("Logo") && *attr.value() &&
+                logos.size() < 32 &&
+                std::find(logos.begin(), logos.end(), json(attr.value())) == logos.end())
+                logos.push_back(attr.value());
+    };
+    for (auto application : root.child("Applications").children("Application"))
+        for (auto visual : application.children()) {
+            collect(visual);
+            for (auto child : visual.children())
+                collect(child);
         }
-    }
+    auto store_logo = text(root.child("Properties").child("Logo"));
+    auto logo = logos.empty() ? store_logo : logos[0];
     // <SplashScreen Image="..."/> inside the visual elements of an application, whatever
     // namespace prefix the manifest version gives either of them
     auto splash = json(nullptr);
@@ -102,6 +108,8 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
             {"architecture", attribute(identity, "ProcessorArchitecture")},
             {"display_name", text(root.child("Properties").child("DisplayName"))},
             {"logo", std::move(logo)},
+            {"logos", std::move(logos)},
+            {"store_logo", std::move(store_logo)},
             {"splash", std::move(splash)},
             {"os_name", text(prerequisites.child("mx:OSName"))},
             {"environment", text(prerequisites.child("mx:ApplicationEnvironment"))},

@@ -40,6 +40,7 @@ struct Settings {
     input::Settings input = input::default_settings();
     LibrarySettings library;
     std::optional<graphics::Backend> backend;
+    graphics::Fullscreen fullscreen = graphics::Fullscreen::borderless;
     ConsoleSettings console;
 };
 std::optional<std::uint32_t> number(const std::string &value) {
@@ -101,6 +102,9 @@ Settings read() {
         } else if (section == "graphics") {
             if (key == "backend")
                 result.backend = graphics::parse_backend(value);
+            else if (key == "fullscreen")
+                result.fullscreen =
+                    graphics::parse_fullscreen(value).value_or(graphics::Fullscreen::borderless);
         } else if (section == "console") {
             auto &console = result.console;
             if (key == "gamertag" && valid_gamertag(json_string(value)))
@@ -142,8 +146,10 @@ void write(const Settings &settings) {
         for (std::size_t i = 0; i < input::control_count; ++i)
             file << input::control_id(static_cast<input::Control>(i)) << " = "
                  << settings.input.keys[i] << '\n';
+        file << "\n[graphics]\n";
         if (settings.backend)
-            file << "\n[graphics]\nbackend = " << graphics::backend_name(*settings.backend) << '\n';
+            file << "backend = " << graphics::backend_name(*settings.backend) << '\n';
+        file << "fullscreen = " << graphics::fullscreen_name(settings.fullscreen) << '\n';
         const auto &console = settings.console;
         file << "\n[console]\ngamertag = " << nlohmann::json(console.gamertag).dump()
              << "\nxbox_user_id = " << console.xbox_user_id
@@ -169,14 +175,16 @@ void save_input_settings() {
     write(settings);
 }
 void load_graphics_settings() {
-    const auto backend = read().backend;
-    if (backend)
-        graphics::select_backend(*backend);
+    const auto settings = read();
+    if (settings.backend)
+        graphics::select_backend(*settings.backend);
+    graphics::select_fullscreen_mode(settings.fullscreen);
 }
 void save_graphics_settings() {
     auto settings = read();
     settings.input = input::settings();
     settings.backend = graphics::selected_backend();
+    settings.fullscreen = graphics::fullscreen_mode();
     write(settings);
 }
 bool valid_gamertag(const std::string &gamertag) {

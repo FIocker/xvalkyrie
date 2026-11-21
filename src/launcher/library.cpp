@@ -4,6 +4,7 @@
 #include "formats/xvd/identify.hpp"
 #include "host/files.hpp"
 #include "launcher/launch.hpp"
+#include "runtime/common/runtime.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -11,6 +12,8 @@
 #include <map>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <string_view>
+#include <utility>
 
 namespace xv {
 namespace {
@@ -37,12 +40,76 @@ std::filesystem::path logo_asset(const std::filesystem::path &directory, const s
     const auto dot = name.find_last_of('.');
     if (dot == std::string::npos)
         return {};
-    for (const auto *scale : {".scale-100", ".scale-200", ".scale-400"}) {
+    // the largest of the sizes it comes in
+    for (const auto *scale :
+         {".scale-400", ".scale-200", ".scale-150", ".scale-125", ".scale-100"}) {
         if (const auto path = asset(directory, name.substr(0, dot) + scale + name.substr(dot));
             !path.empty())
             return path;
     }
     return {};
+}
+// width and height of a PNG, from its header; 0 for anything else
+std::pair<std::uint32_t, std::uint32_t> picture_size(const std::filesystem::path &path) {
+    unsigned char header[24] = {};
+    std::ifstream file(path, std::ios::binary);
+    if (!file.read(reinterpret_cast<char *>(header), sizeof header) ||
+        std::string_view(reinterpret_cast<char *>(header), 8) != "\x89PNG\r\n\x1a\n" ||
+        std::string_view(reinterpret_cast<char *>(header) + 12, 4) != "IHDR")
+        return {0, 0};
+    const auto number = [&](int at) {
+        return std::uint32_t{header[at]} << 24 | std::uint32_t{header[at + 1]} << 16 |
+               std::uint32_t{header[at + 2]} << 8 | header[at + 3];
+    };
+    return {number(16), number(20)};
+}
+// The pictures of a title, out of the ones its manifest names (`info` is what
+// title_manifest gives; they are files under `directory`). A manifest says what each is
+// for, not what it looks like, and packagers put anything anywhere, so the files decide:
+// the cover is the largest picture that is about square, the icon the smallest one of at
+// least 32 pixels. A picture whose size cannot be told counts as a small square. The
+// store's logo is neither, unless the title has nothing else.
+struct Pictures {
+    std::filesystem::path cover, icon;
+};
+Pictures pictures(const std::filesystem::path &directory, const nlohmann::json &info) {
+    struct Candidate {
+        std::filesystem::path path;
+        std::uint32_t side; // the shorter one
+        bool square;
+    };
+    std::vector<Candidate> found;
+    const auto add = [&](const nlohmann::json &name) {
+        if (!name.is_string())
+            return;
+        const auto path = logo_asset(directory, name.get<std::string>());
+        if (path.empty() || std::any_of(found.begin(), found.end(),
+                                        [&](const auto &other) { return other.path == path; }))
+            return;
+        const auto [width, height] = picture_size(path);
+        const auto low = std::min(width, height), high = std::max(width, height);
+        found.push_back({path, std::max(low, 1u), high <= low + low / 4});
+    };
+    if (info.contains("logos") && info.at("logos").is_array())
+        for (const auto &name : info.at("logos"))
+            add(name);
+    else if (info.contains("logo"))
+        add(info.at("logo"));
+    if (found.empty() && info.contains("store_logo"))
+        add(info.at("store_logo"));
+    Pictures result;
+    const Candidate *cover = nullptr, *icon = nullptr;
+    for (const auto &candidate : found) {
+        if (!cover ||
+            std::pair(candidate.square, candidate.side) > std::pair(cover->square, cover->side))
+            cover = &candidate;
+        if (candidate.square && candidate.side >= 32 && (!icon || candidate.side < icon->side))
+            icon = &candidate;
+    }
+    if (cover)
+        result.cover = cover->path;
+    result.icon = icon ? icon->path : result.cover;
+    return result;
 }
 // the file that describes the title in `directory`, empty if it has none
 std::filesystem::path manifest_file(const std::filesystem::path &directory) {
@@ -77,12 +144,21 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
             title.name = info.at("display_name").is_string()
                              ? info.at("display_name").get<std::string>()
                              : title.identity;
-            if (title.name.empty() || title.name.starts_with("ms-resource:"))
-                title.name = utf8(path.filename());
+            // A name that is a reference into the package's resources cannot be read here:
+            // the name of the package, without its publisher, says more than the folder.
+            if (title.name.empty() || title.name.starts_with("ms-resource:")) {
+                const auto dot = title.identity.find('.');
+                title.name = title.identity.empty()            ? utf8(path.filename())
+                             : dot + 1 < title.identity.size() ? title.identity.substr(dot + 1)
+                                                               : title.identity;
+            }
             title.version =
                 info.at("version").is_string() ? info.at("version").get<std::string>() : "";
-            if (info.at("logo").is_string())
-                title.logo = logo_asset(manifest.parent_path(), info.at("logo").get<std::string>());
+            if (info.at("title_id").is_string())
+                title.title_id = info.at("title_id").get<std::string>();
+            const auto chosen = pictures(manifest.parent_path(), info);
+            title.logo = chosen.cover;
+            title.icon = chosen.icon;
             if (info.at("splash").is_string())
                 title.splash =
                     logo_asset(manifest.parent_path(), info.at("splash").get<std::string>());
@@ -117,7 +193,7 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
 }
 
 // ---- the cache: what a scan found, and the size and time of the files it was read from
-constexpr int cache_format = 2;
+constexpr int cache_format = 4;
 using Stamp = std::array<std::int64_t, 4>; // manifest or package size and time, executable's
 void stamp_file(const std::filesystem::path &path, std::int64_t *into) {
     std::error_code error;
@@ -163,9 +239,11 @@ Cache read_cache(const std::filesystem::path &file) {
             title.path = path_of(entry.at("path"));
             title.executable = path_of(entry.at("executable"));
             title.logo = path_of(entry.at("logo"));
+            title.icon = path_of(entry.at("icon"));
             title.splash = path_of(entry.at("splash"));
             title.name = entry.at("name").get<std::string>();
             title.identity = entry.at("identity").get<std::string>();
+            title.title_id = entry.at("title_id").get<std::string>();
             title.version = entry.at("version").get<std::string>();
             title.package = entry.at("package").get<bool>();
             if (entry.at("target") == "durango")
@@ -190,9 +268,11 @@ void write_cache(const std::filesystem::path &file, const std::vector<Cached> &t
             list.push_back({{"path", utf8(title.path)},
                             {"executable", utf8(title.executable)},
                             {"logo", utf8(title.logo)},
+                            {"icon", utf8(title.icon)},
                             {"splash", utf8(title.splash)},
                             {"name", title.name},
                             {"identity", title.identity},
+                            {"title_id", title.title_id},
                             {"version", title.version},
                             {"package", title.package},
                             {"target", title.target ? nlohmann::json(target_id(*title.target))
@@ -243,6 +323,32 @@ std::filesystem::path title_splash(const std::filesystem::path &path) {
     } catch (const std::exception &) {
         return {};
     }
+}
+std::filesystem::path title_icon(const std::filesystem::path &path) {
+    try {
+        std::error_code error;
+        auto directory = std::filesystem::is_directory(path, error) ? path : path.parent_path();
+        // an executable deep inside its package
+        if (manifest_file(directory).empty())
+            directory = runtime::package_directory(directory);
+        const auto manifest = manifest_file(directory);
+        if (manifest.empty())
+            return {};
+        std::filesystem::path folder;
+        return pictures(manifest.parent_path(), title_manifest(directory, folder)).icon;
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+void forget_cached_title(const std::filesystem::path &cache_file,
+                         const std::filesystem::path &title) {
+    auto cache = read_cache(cache_file);
+    if (!cache.erase(title))
+        return;
+    std::vector<Cached> rest;
+    for (auto &[path, entry] : cache)
+        rest.push_back(std::move(entry));
+    write_cache(cache_file, rest);
 }
 std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::path> &roots,
                                            const std::filesystem::path &cache_file) {

@@ -1,5 +1,4 @@
 #include "backends/input/input.hpp"
-#include <atomic>
 #include <algorithm>
 #include <bitset>
 #include <chrono>
@@ -262,9 +261,4 @@ GamepadState read() {
     return from_keys(bindings, [&](int key) { return keys[static_cast<std::size_t>(key)]; });
 }
 } // namespace
-namespace {
-std::atomic<void *> extra_foreground{nullptr};
-}
-void set_foreground_window(void *window) { extra_foreground = window; }
-void *foreground_window() { return extra_foreground; }
 } // namespace xv::input

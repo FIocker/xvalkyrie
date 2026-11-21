@@ -1,9 +1,10 @@
 # Architecture
 
 Quick tour of the code. Everything lives under `src/`, one static library per
-directory, each with its own `CMakeLists.txt`. There is a single executable,
-`xvalkyrie`, that runs both Xbox One and Xbox Series X|S titles: it looks at the
-import table of the title and picks the console runtime to use.
+directory, each with its own `CMakeLists.txt`. There are two executables.
+`xvboot` runs both Xbox One and Xbox Series X|S titles: it looks at the import
+table of the title and picks the console runtime to use. `xvalkyrie` is the
+window, which starts `xvboot` for each title (see "Processes").
 
 Two words are used with one meaning each. The **host** is the machine xvalkyrie
 runs on, always 64-bit Windows. A **console** is what the title was built for:
@@ -28,8 +29,10 @@ src/
     scarlett/      Xbox Series X|S only
     console.*      picks durango or scarlett for a title
   launcher/        whether a title can start, game library, saved configuration
-  app/             main.cpp: the CLI
-    ui/            the window
+  app/             the two executables
+    cli/           the commands that look at a title without running it
+    bootstrap/     xvboot: starts a title, in a process and a window of its own
+    gui/           xvalkyrie: the window
   tools/           developer executables
 ```
 
@@ -47,8 +50,10 @@ rules on top:
   `runtime/durango/d3d11x/` (see "Host objects" below).
 - `runtime/durango` and `runtime/scarlett` do not include each other. What
   both need goes to `runtime/modules`.
-- `launcher/` has no window and prints nothing. `app/ui` uses `launcher`;
+- `launcher/` has no window and prints nothing. `app` uses `launcher`;
   `launcher` never includes `app`.
+- `app/gui` never includes `app/bootstrap` or `app/cli`, nor the other way round:
+  the two executables only meet at the command line of `xvboot`.
 - Code in `backends/` sits in a subdirectory named after the technology it uses
   (`win32/`, `wasapi/`, `xinput/`, `d3d11/`, `dxvk/`, `vulkan/`).
 
@@ -113,7 +118,7 @@ three kinds of console module:
   (`AllocateTitlePhysicalPages`, `MapTitlePhysicalPages`) are 64 KiB views of
   one 16 GiB section committed as it is used. Also XMem and its
   hooks, `D3DAllocateGraphicsMemory` and the `Apu*` memory of `acphal.dll`.
-- `window.cpp`: a GDK title's own windows stay hidden; its frames go to the title surface.
+- `window.cpp`: a GDK title's own windows stay hidden; its frames go to the title window.
 - `d3d12x/`: `d3d12_x.dll` and `d3d12_xs.dll` on the host's Direct3D 12 (`device.cpp`),
   and `PresentX` with the frame events (`present.cpp`).
 - `placement.cpp`: resources on memory the title owns.
@@ -167,14 +172,50 @@ three kinds of console module:
   and `CoreDispatcher`. `CoreApplication::Run` drives the title's view on the
   calling thread, and the window is a `TitleWindow` from `backends/surface`.
 
-### Executable
+### Executables
 
-| Directory | Library | What it does |
+| Directory | Target | What it does |
 |---|---|---|
 | `runtime` | `xv_runtime` | `console_registry(Target)`: the registry of one console |
 | `launcher` | `xv_launcher` | `launch_title`, the game library, `config.ini` |
-| `app/ui` | `xv_ui` | GLFW + ImGui main window, native file dialog |
-| `app` | `xvalkyrie` | CLI |
+| `app/cli` | `xv_cli` | `inspect`, `assess`, `map`, `bind`...: JSON on stdout, nothing runs |
+| `app/bootstrap` | `xvboot` | `exec`: from a path to a running title (`bootstrap::run`), and the CLI |
+| `app/gui` | `xv_gui`, `xvalkyrie` | GLFW + ImGui main window, native file dialog |
+
+### Processes
+
+`xvalkyrie` is a window program and never runs a title. For each title it starts
+`xvboot exec <title>`, the executable next to it (`host::run_beside`), waits for
+its exit code on a thread of its own, and can end it (File > Close App). The
+child is in a job that ends it if the window goes first. Closing the title's
+window ends the title too: a console has no such event, so `xvboot` ends itself
+two seconds later if the title has not left by then. What `xvboot` and the
+title print comes back through a pipe: the window shows it while the title runs
+and prints it itself, so it is in the window's log and console too. The two
+share nothing but that command line, that pipe and `config.ini`, which `xvboot`
+reads when it starts: no window, no graphics device and no input state
+is in both. `xvboot` links none of the interface, so what it loads, where its
+image sits and how it is built can follow what titles need.
+
+`bootstrap::run` is the one way a title starts, from the window or from a
+person's `xvboot exec`: it picks the saved games folder, the shader cache and
+the console settings, and gives the title window its caption,
+`<title> | <video driver> | <n> FPS | XValkyrie <version> <commit>`. The caption
+is asked for again every second on the window's thread
+(`surface::set_title_caption`); the driver is what the device was created on
+(`graphics::drawing_with`), and the frame rate comes from
+`graphics::frames_presented`.
+
+F11 in the title window is full screen, handled by `backends/surface`. Borderless
+is the window's own doing: no frame, the size of its display. Native
+(`[graphics] fullscreen = native`, Options > Graphics) needs whoever owns the
+swap chain: it offers with `surface::offer_exclusive_fullscreen`, looks at
+`exclusive_fullscreen_wanted` at every frame on the thread that presents, and
+calls `SetFullscreenState` and `ResizeBuffers` to match, so the window's thread
+and the presenting one never wait for each other. Only `d3d12x/present.cpp`
+offers, since it owns its chain's buffers; a title that holds its own back
+buffers (Direct3D 11.X) cannot have them resized under it and gets borderless,
+as does a host that refuses.
 
 ### Where new code goes
 
@@ -205,7 +246,7 @@ provides Direct3D 11 (or 12) interfaces, not a second copy of `d3d11x`.
 
 ### The window
 
-`app/ui` is Dear ImGui, in four layers that only use the ones before them:
+`app/gui` is Dear ImGui, in four layers that only use the ones before them:
 
 - `theme`: fonts, colors, the pixel-art wordmark and the backdrop. The only
   place with color values and font sizes.
@@ -215,7 +256,10 @@ provides Direct3D 11 (or 12) interfaces, not a second copy of `d3d11x`.
   A new page is an entry in `pages` and a function. It asks its owner for
   anything outside itself through `Settings::Host`.
 - `desktop`: the window itself: what is loaded or running, and the library,
-  loading and title screens.
+  loading and running screens. The running one is the log of the title's process,
+  which stays after the title ends, closed by a line that says how it did.
+- `properties`: the Properties window of a title, which draws what
+  `title_properties` of the launcher reports (`xvboot properties` prints it).
 
 The library is scanned on a worker thread. `discover_library` keeps what it
 found in `cache/library.json` in the configuration folder, with the size and
@@ -223,6 +267,13 @@ time of each title's manifest and executable: a title whose files did not
 change is not read again. The window shows `cached_library` (the last scan,
 without reading anything) the moment it opens, and replaces it when the new
 scan is done. Library pictures are decoded off the window thread too.
+
+A manifest says what each picture is for, not what it looks like, so the files
+decide (`pictures` in `launcher/library.cpp`): of the logos the visual elements
+name, the cover is the largest that is about square and the icon the smallest of
+at least 32 pixels, by their PNG headers. The store's logo is used only by a
+title with nothing else. `xvboot` gives the icon to the title's window
+(`surface::set_title_icon`).
 
 ## Target detection
 
@@ -274,19 +325,18 @@ Every import goes through one place (`runtime/common`). The order is:
 4. A small generated stub. If the game calls it, the process prints the name
    of the import and exits with `0xE0585301`.
 
-`xvalkyrie bind` prints which of these each import would get.
+`xvboot bind` prints which of these each import would get.
 
 ## Threads
 
 Nothing a title does runs on the thread that handles a window, and the other
 way round:
 
-- the window thread runs the interface and the messages of the main window and
-  of the title surface inside it;
-- a worker thread reads and checks a title when it is opened;
-- the guest thread runs the title, which presents straight into the surface;
-- with `exec` there is no main window, and the title's own window gets a
-  thread of its own for its messages.
+- in `xvalkyrie`, the window thread runs the interface, a worker thread reads
+  and checks a title when it is opened, and another waits for the `xvboot`
+  that runs it;
+- in `xvboot`, the guest thread runs the title, and the title's window gets a
+  thread of its own for its messages and its caption.
 
 So dragging or resizing a window does not stop the title, and a title that is
 busy or stuck does not freeze the window. `CoreDispatcher::ProcessEvents` has
@@ -298,17 +348,18 @@ nothing to pump for that reason.
 (`input::poll()`), and it does not depend on the window or on the runtime.
 Where the reading comes from is the capture method:
 
-- `window`: the main window (or the title's own) reports its key events, and
+- `window`: the title's window reports its key events, and
   the bindings turn the keys that are down into buttons, triggers and stick
   directions.
 - `direct`: the state of the keyboard and of the host's first gamepad
   (XInput) is read from the system at the moment the title asks, without any
   window or message loop involved. It only counts while a window
-  of xvalkyrie is in the foreground.
+  of the title's process is in the foreground.
 
 Bindings are Windows virtual-key codes. Options > Input in the
-window changes the method and the bindings, which apply at once and are saved
-by `launcher/config` to `config.ini` in the per-user configuration folder.
+window changes the method and the bindings, which are saved by
+`launcher/config` to `config.ini` in the per-user configuration folder and
+read by `xvboot` for the next title.
 `runtime/durango/winrt/gamepad.cpp` is the console side: one
 `Windows.Xbox.Input.Gamepad`, always connected, whose raw reading is
 `input::poll()`.
@@ -326,21 +377,21 @@ about every title DLL, not only the executable.
 
 ## Running
 
-The guest runs inside the xvalkyrie process on its own thread. Since guest and
+The guest runs inside the xvboot process on its own thread. Since guest and
 host use the same calling convention, a bound import is just a
 function pointer.
 
 Running in-process means a few things have to be faked:
 
 - `GetModuleHandle(NULL)` and `GetModuleFileName` return the guest image
-  instead of `xvalkyrie.exe`.
+  instead of `xvboot.exe`.
 - `_CxxThrowException` is reimplemented. The CRT looks up the module that owns
   a thrown type in the loader's module list, and a manually mapped image is
   not in it, so `catch` would never match.
 - The image's unwind table is registered with `RtlAddFunctionTable`.
 
 - The command line (`GetCommandLine`, `__p___argv`, `Platform::GetCmdArguments`)
-  is the title's path alone, not xvalkyrie's.
+  is the title's path alone, not xvboot's.
 - Static TLS: the system loader only gives TLS to what it loads itself, so
   `runtime/common/static_tls.cpp` writes a small DLL with the image's
   TLS template (and one import, without which the loader skips its TLS) and
@@ -348,8 +399,8 @@ Running in-process means a few things have to be faked:
 - A title's own DLLs are looked for from the executable's folder up to its
   package root, the folder with the `AppxManifest.xml`.
 
-Things that do not work yet: delay-load imports. There is no isolation of any
-kind.
+Things that do not work yet: delay-load imports. The title has a process of its
+own, away from the window, but no isolation from the host of any kind.
 
 ## Graphics
 
@@ -359,7 +410,7 @@ and holds the one selected for the process (Options > Graphics, saved in
 
 - `d3d11`, the host's Direct3D 11. The default.
 - `vulkan`, Direct3D 11 translated to Vulkan by DXVK. `backends/graphics/dxvk`
-  loads `xv_dxgi.dll` and `xv_d3d11.dll` from the folder of `xvalkyrie.exe`,
+  loads `xv_dxgi.dll` and `xv_d3d11.dll` from the folder of `xvboot.exe`,
   takes the first adapter of the DXVK factory and creates the device on it, so
   DXVK never goes looking for the system's `dxgi.dll`. The DLLs are DXVK's
   `dxgi.dll` and `d3d11.dll` renamed, so they never clash with the system ones
@@ -367,7 +418,7 @@ and holds the one selected for the process (Options > Graphics, saved in
 
 `cmake/Dxvk.cmake` (`-DXV_DXVK=ON`) fetches DXVK at a fixed commit, applies
 `cmake/dxvk.patch`, builds it with Meson and copies the two DLLs next to
-`xvalkyrie.exe`. The patch makes DXVK behave the way console titles expect:
+`xvboot.exe`. The patch makes DXVK behave the way console titles expect:
 
 - `SetResourceMinLOD` and `GetResourceMinLOD` work for textures created with
   `D3D11_RESOURCE_MISC_RESOURCE_CLAMP`, through `VK_EXT_image_view_min_lod`.
@@ -420,15 +471,13 @@ messages after the call that caused them, `XV_FRAME_DUMP=file.bmp` (with
 `runtime/modules/xg.cpp` is `xg_x.dll`, which tells titles how a texture is
 laid out in memory. There is one layout here, the plain one.
 
-The window (`xv_ui`) uses OpenGL through GLFW for its own interface and
-gets everything else from `app/main.cpp` as callbacks, so it does not link
-against the runtime. Opening a title reads and checks it on a worker thread while the
-window shows a loading screen, then runs it on a guest thread. The title does
-not draw through the interface: `backends/surface` creates a child window
-(the title surface) inside the main one, the interface tells it which rectangle
-is free, and the title's swap chain presents straight into it. The surface is
-shown at the title's first frame, which is also when the loading screen goes
-away. With `exec` there is no main window and the title gets one of its own.
+The window (`xv_gui`) uses OpenGL through GLFW for its own interface and
+gets everything else from `app/gui/main.cpp` as callbacks. Opening a title reads
+and checks it on a worker thread while the window shows a loading screen, then
+starts `xvboot` for it. The title does not draw through the interface, nor in
+its process: `backends/surface` gives it a `TitleWindow`, a top-level window of
+`xvboot` that the title's swap chain presents into and that is shown at its
+first frame.
 
 ## Tests
 

@@ -1,4 +1,5 @@
 #include "runtime/modules/d3d12x.hpp"
+#include "backends/graphics/backend.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/console_shader.hpp"
 #include "runtime/modules/d3d12x/internal.hpp"
@@ -3397,8 +3398,10 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     ID3D12Device *host = nullptr;
     const auto result =
         create ? create(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&host)) : E_NOTIMPL;
-    if (SUCCEEDED(result))
+    if (SUCCEEDED(result)) {
         d3d12_device = host;
+        graphics::drawing_with("Direct3D 12");
+    }
     if (ID3D12InfoQueue *queue = nullptr;
         SUCCEEDED(result) && SUCCEEDED(host->QueryInterface(IID_PPV_ARGS(&queue))))
         debug_messages = queue;

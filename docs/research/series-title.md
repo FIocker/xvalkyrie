@@ -9,7 +9,7 @@ from. Addresses are offsets into the image.
 ## How to run it
 
 ```
-xvalkyrie exec <title>\Mount --allow-missing --mute
+xvboot exec <title>\Mount --allow-missing --mute
 ```
 
 What helped, all environment variables:

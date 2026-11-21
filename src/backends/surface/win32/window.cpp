@@ -1,18 +1,18 @@
 #include "backends/input/input.hpp"
 #include "backends/surface/surface.hpp"
-#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
-#include <vector>
+#include <utility>
 #include <windows.h>
 
 namespace xv::surface {
-// The thread that owns a title window of its own and runs its message loop.
+// The thread that owns a title window and runs its message loop.
 struct TitleWindow::Thread {
     std::thread thread;
     std::mutex mutex;
@@ -22,23 +22,102 @@ struct TitleWindow::Thread {
 };
 namespace {
 constexpr wchar_t class_name[] = L"XValkyrieTitle";
-std::atomic<HWND> surface{nullptr};
+constexpr UINT_PTR caption_timer = 1;
 std::atomic<bool> shown{false};
 std::atomic<HWND> latest{nullptr};
-std::atomic<bool> covered{false};
+std::mutex caption_mutex;
+std::function<std::wstring()> caption;
+std::function<void()> closed;
+
+std::function<std::wstring()> current_caption() {
+    const std::lock_guard lock(caption_mutex);
+    return caption;
+}
+std::function<void()> current_closed() {
+    const std::lock_guard lock(caption_mutex);
+    return closed;
+}
+
+// Full screen. `exclusive_wanted` is what whoever presents goes by; it never waits for
+// this thread, nor this thread for it.
+constexpr UINT go_borderless = WM_APP + 1;
+std::atomic<bool> exclusive_mode{false}, exclusive_offered{false}, exclusive_wanted{false};
+// the window that is borderless, and what it was like before; the window's thread only
+struct {
+    HWND window = nullptr;
+    LONG_PTR style = 0;
+    WINDOWPLACEMENT placement{sizeof(WINDOWPLACEMENT)};
+} windowed;
+void set_borderless(HWND handle, bool on) {
+    if (on == (windowed.window == handle))
+        return;
+    if (!on) {
+        SetWindowLongPtrW(handle, GWL_STYLE, windowed.style);
+        SetWindowPlacement(handle, &windowed.placement);
+        SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+                         SWP_FRAMECHANGED);
+        windowed.window = nullptr;
+        return;
+    }
+    MONITORINFO monitor{sizeof monitor};
+    if (!GetMonitorInfoW(MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST), &monitor))
+        return;
+    windowed.style = GetWindowLongPtrW(handle, GWL_STYLE);
+    GetWindowPlacement(handle, &windowed.placement);
+    windowed.window = handle;
+    SetWindowLongPtrW(handle, GWL_STYLE, (windowed.style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+    const auto &area = monitor.rcMonitor;
+    SetWindowPos(handle, HWND_TOP, area.left, area.top, area.right - area.left,
+                 area.bottom - area.top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+}
+void toggle_fullscreen(HWND handle) {
+    if (windowed.window == handle)
+        set_borderless(handle, false);
+    else if (exclusive_mode && exclusive_offered)
+        exclusive_wanted = !exclusive_wanted;
+    else
+        set_borderless(handle, true);
+}
 
 LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wide, LPARAM value) {
     switch (message) {
     case WM_CLOSE:
         ShowWindow(handle, SW_HIDE);
         PostQuitMessage(0);
+        if (const auto notify = current_closed())
+            notify();
         return 0;
-    // window capture for a title window of its own; inside a parent the parent sees the keys
+    case WM_TIMER:
+        if (wide == caption_timer) {
+            if (const auto text = current_caption())
+                SetWindowTextW(handle, text().c_str());
+            return 0;
+        }
+        break;
+    case go_borderless:
+        set_borderless(handle, true);
+        return 0;
+    // the display goes back to the desktop when another program comes to the front
+    case WM_ACTIVATEAPP:
+        if (!wide)
+            exclusive_wanted = false;
+        break;
+    // window capture
     case WM_KEYDOWN:
+        if (wide == VK_F11) {
+            if (!(value & (LPARAM{1} << 30))) // not while it is held
+                toggle_fullscreen(handle);
+            return 0;
+        }
+        [[fallthrough]];
     case WM_SYSKEYDOWN:
         input::window_key(static_cast<int>(wide), true);
         break;
     case WM_KEYUP:
+        if (wide == VK_F11)
+            return 0;
+        [[fallthrough]];
     case WM_SYSKEYUP:
         input::window_key(static_cast<int>(wide), false);
         break;
@@ -46,8 +125,7 @@ LRESULT CALLBACK procedure(HWND handle, UINT message, WPARAM wide, LPARAM value)
         input::window_focus_lost();
         break;
     case WM_LBUTTONDOWN:
-        if (!GetParent(handle))
-            SetFocus(handle);
+        SetFocus(handle);
         break;
     }
     return DefWindowProcW(handle, message, wide, value);
@@ -64,116 +142,40 @@ void register_class() {
 }
 } // namespace
 
-namespace {
-int area_x = 0, area_y = 0, area_width = 0, area_height = 0;
-std::vector<Rectangle> cut;
-HWND make_surface(HWND parent) {
-    const auto window =
-        CreateWindowExW(0, class_name, L"", WS_CHILD | WS_CLIPSIBLINGS, area_x, area_y,
-                        std::max(area_width, 16), std::max(area_height, 16), parent, nullptr,
-                        GetModuleHandleW(nullptr), nullptr);
-    if (!window)
-        throw std::runtime_error("Cannot create the title surface");
-    return window;
+void set_title_caption(std::function<std::wstring()> text) {
+    const std::lock_guard lock(caption_mutex);
+    caption = std::move(text);
 }
-} // namespace
-void set_title_parent(void *window) {
-    const auto parent = static_cast<HWND>(window);
-    if (!parent || surface.load())
-        return;
-    register_class();
-    // or the parent would paint over the title every time it redraws itself
-    SetWindowLongPtrW(parent, GWL_STYLE, GetWindowLongPtrW(parent, GWL_STYLE) | WS_CLIPCHILDREN);
-    surface = make_surface(parent);
+void on_title_closed(std::function<void()> notify) {
+    const std::lock_guard lock(caption_mutex);
+    closed = std::move(notify);
 }
-namespace {
-// the surface's region: all of it but the holes
-void apply_holes() {
-    const auto handle = surface.load();
-    if (!handle)
-        return;
-    if (cut.empty()) {
-        SetWindowRgn(handle, nullptr, TRUE);
-        return;
-    }
-    const auto region = CreateRectRgn(0, 0, area_width, area_height);
-    for (const auto &hole : cut) {
-        const auto piece = CreateRectRgn(hole.x - area_x, hole.y - area_y,
-                                         hole.x - area_x + hole.width,
-                                         hole.y - area_y + hole.height);
-        CombineRgn(region, region, piece, RGN_DIFF);
-        DeleteObject(piece);
-    }
-    SetWindowRgn(handle, region, TRUE); // the window owns the region from here on
-}
-} // namespace
-void set_title_holes(const std::vector<Rectangle> &holes) {
-    const auto same = [](const Rectangle &a, const Rectangle &b) {
-        return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
-    };
-    if (holes.size() == cut.size() && std::equal(holes.begin(), holes.end(), cut.begin(), same))
-        return;
-    cut = holes;
-    apply_holes();
-}
-void set_title_area(int x, int y, int width, int height) {
-    const bool moved = x != area_x || y != area_y || width != area_width || height != area_height;
-    area_x = x, area_y = y, area_width = width, area_height = height;
-    if (moved && !cut.empty())
-        apply_holes();
-    if (const auto handle = surface.load())
-        SetWindowPos(handle, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-}
-void renew_title_surface() {
-    const auto old = surface.load();
-    if (!old)
-        return;
-    const auto parent = GetParent(old);
-    shown = false;
-    surface = make_surface(parent);
-    DestroyWindow(old);
-    apply_holes();
-}
-void *title_surface() { return surface.load(); }
-void use_title_surface(void *window) { surface = static_cast<HWND>(window); }
-void *title_surface_owner() {
-    const auto handle = surface.load();
-    return handle ? GetAncestor(handle, GA_ROOT) : nullptr;
-}
-void hide_title_surface() {
-    shown = false;
-    if (const auto handle = surface.load())
-        ShowWindowAsync(handle, SW_HIDE);
-}
-// a title in another process shows the surface itself: seen here when it has
-bool title_window_shown() {
-    const auto handle = surface.load();
-    if (!shown && !covered && handle && IsWindowVisible(handle))
-        shown = true;
-    return shown;
-}
-void set_title_covered(bool hidden) {
-    const auto handle = surface.load();
-    if (covered.exchange(hidden) != hidden && handle && shown)
-        ShowWindowAsync(handle, hidden ? SW_HIDE : SW_SHOWNA);
+void use_exclusive_fullscreen(bool exclusive) { exclusive_mode = exclusive; }
+void offer_exclusive_fullscreen() { exclusive_offered = true; }
+bool exclusive_fullscreen_wanted() { return exclusive_wanted; }
+void exclusive_fullscreen_failed() {
+    exclusive_offered = false;
+    if (exclusive_wanted.exchange(false))
+        if (const auto handle = latest.load())
+            PostMessageW(handle, go_borderless, 0, 0);
 }
 
 TitleWindow::TitleWindow(const std::wstring &title, int width, int height) {
-    if (const auto handle = surface.load()) {
-        handle_ = handle;
-        owned_ = false;
-        latest = handle;
-        return;
-    }
     register_class();
     thread_ = new Thread;
     thread_->thread = std::thread([state = thread_, title, width, height] {
         RECT frame{0, 0, width, height};
         AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
-        const auto handle =
-            CreateWindowExW(0, class_name, title.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                            CW_USEDEFAULT, frame.right - frame.left, frame.bottom - frame.top,
-                            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        const auto text = current_caption();
+        const auto handle = CreateWindowExW(0, class_name, (text ? text() : title).c_str(),
+                                            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                                            frame.right - frame.left, frame.bottom - frame.top,
+                                            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (handle)
+            SetTimer(handle, caption_timer, 1000, nullptr);
+        if (auto *const icon = detail::title_icon(); handle && icon)
+            for (const auto size : {ICON_BIG, ICON_SMALL})
+                SendMessageW(handle, WM_SETICON, size, reinterpret_cast<LPARAM>(icon));
         {
             const std::lock_guard lock(state->mutex);
             state->handle = handle;
@@ -210,50 +212,33 @@ void *detail::title_owner() {
 }
 TitleWindow::~TitleWindow() {
     shown = false;
-    if (!owned_) {
-        ShowWindowAsync(static_cast<HWND>(handle_), SW_HIDE);
-        return;
-    }
     PostThreadMessageW(GetThreadId(thread_->thread.native_handle()), WM_QUIT, 0, 0);
     thread_->thread.join();
     delete thread_;
 }
 void TitleWindow::show() {
-    if (!shown.exchange(true) && (owned_ || !covered))
-        ShowWindowAsync(static_cast<HWND>(handle_), SW_SHOWNA);
+    if (!shown.exchange(true)) {
+        ShowWindowAsync(static_cast<HWND>(handle_), SW_SHOW);
+        SetForegroundWindow(static_cast<HWND>(handle_));
+    }
 }
 bool TitleWindow::open() const {
-    if (!owned_)
-        return true;
     const std::lock_guard lock(thread_->mutex);
     return !thread_->closed;
 }
 void TitleWindow::wait_closed() const {
-    if (!owned_) {
-        Sleep(INFINITE); // the parent ends the process
-        return;
-    }
     std::unique_lock lock(thread_->mutex);
     thread_->changed.wait(lock, [&] { return thread_->closed; });
 }
 std::string TitleWindow::describe() const {
     const auto handle = static_cast<HWND>(handle_);
-    RECT client{}, parent_client{};
+    RECT client{};
     GetClientRect(handle, &client);
     POINT origin{0, 0};
-    const auto parent = GetParent(handle);
-    if (parent) {
-        MapWindowPoints(handle, parent, &origin, 1);
-        GetClientRect(parent, &parent_client);
-    }
-    char text[160];
-    std::snprintf(text, sizeof text, "%ldx%ld at %ld,%ld %s%s", client.right, client.bottom,
-                  origin.x, origin.y, parent ? "inside the main window" : "in a window of its own",
-                  IsWindowVisible(handle) ? ", visible" : ", hidden");
-    std::string result = text;
-    if (parent)
-        result += " (main window " + std::to_string(parent_client.right) + "x" +
-                  std::to_string(parent_client.bottom) + ")";
-    return result;
+    ClientToScreen(handle, &origin);
+    char text[96];
+    std::snprintf(text, sizeof text, "%ldx%ld at %ld,%ld%s", client.right, client.bottom, origin.x,
+                  origin.y, IsWindowVisible(handle) ? ", visible" : ", hidden");
+    return text;
 }
 } // namespace xv::surface

@@ -3,6 +3,7 @@
 #include "formats/appx/manifest.hpp"
 #include "formats/gdk/game_config.hpp"
 #include "formats/pe/inspect.hpp"
+#include "formats/pri/resources.hpp"
 #include "formats/xvd/identify.hpp"
 #include "host/files.hpp"
 #include "launcher/config.hpp"
@@ -10,8 +11,10 @@
 #include "runtime/console.hpp"
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <vector>
 
 namespace xv {
 namespace {
@@ -62,9 +65,18 @@ nlohmann::json config_manifest(const nlohmann::json &config) {
             chosen = &executable;
             break;
         }
+    auto logos = nlohmann::json::array();
+    for (const auto *key : {"large_logo", "logo", "small_logo"})
+        if (config.at(key).is_string())
+            logos.push_back(config.at(key));
     return {{"name", config.at("name")},
             {"display_name", config.at("display_name")},
             {"version", config.at("version")},
+            {"publisher", config.at("publisher_display_name")},
+            {"title_id", config.at("title_id")},
+            {"store_id", config.at("store_id")},
+            {"logos", std::move(logos)},
+            {"store_logo", config.at("store_logo")},
             {"logo",
              config.at("large_logo").is_string() ? config.at("large_logo") : config.at("logo")},
             {"splash", config.at("splash_screen")},
@@ -78,10 +90,42 @@ nlohmann::json title_manifest(const std::filesystem::path &path,
     if (manifest.empty())
         return nullptr;
     directory = manifest.parent_path();
-    if (named(manifest, config_name))
-        return config_manifest(
-            gdk::inspect_config(host::read_snapshot(manifest, gdk::config_limit)));
-    return appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+    auto info = named(manifest, config_name)
+                    ? config_manifest(
+                          gdk::inspect_config(host::read_snapshot(manifest, gdk::config_limit)))
+                    : appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+    // A display name that is a reference into the package's resources ("ms-resource:AppName")
+    // is replaced by what it stands for, from the resource index next to the manifest; the
+    // reference is kept beside it. A package without a readable index keeps the reference.
+    if (const auto &name = info.at("display_name");
+        name.is_string() && name.get_ref<const std::string &>().starts_with("ms-resource:")) {
+        try {
+            const auto reference = name.get<std::string>();
+            const auto index = directory / "resources.pri";
+            if (std::filesystem::is_regular_file(index))
+                if (const auto value = pri::resolve(
+                        pri::strings(host::read_snapshot(index, pri::limit)), reference);
+                    value && !value->empty()) {
+                    info["display_name_reference"] = reference;
+                    info["display_name"] = *value;
+                }
+        } catch (const std::exception &) {
+        }
+    }
+    // the Xbox Live title ID, which either kind of manifest has under a name of its own, as
+    // eight hexadecimal digits in capitals
+    auto id = info.contains("title_id") && info.at("title_id").is_string()
+                  ? info.at("title_id")
+                  : info.contains("xbox_live_title_id") ? info.at("xbox_live_title_id")
+                                                        : nlohmann::json(nullptr);
+    if (id.is_string()) {
+        auto text = id.get<std::string>();
+        for (auto &c : text)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        id = text;
+    }
+    info["title_id"] = std::move(id);
+    return info;
 }
 
 namespace {
@@ -112,16 +156,49 @@ std::filesystem::path title_executable(const std::filesystem::path &path) {
     return manifest.is_null() ? path : executable_of(manifest, directory);
 }
 
-std::filesystem::path title_save_directory(const std::filesystem::path &path) {
+namespace {
+// the manifest of the title `path` stands for: an executable is the same title as the
+// package it is in
+nlohmann::json own_manifest(const std::filesystem::path &path) {
     std::filesystem::path directory;
     auto manifest = read_manifest(path, directory);
-    // an executable is the same title as the package it is in
     if (manifest.is_null()) {
         const auto package = runtime::package_directory(path.parent_path());
         if (std::filesystem::is_regular_file(package / manifest_name) ||
             std::filesystem::is_regular_file(package / config_name))
             manifest = read_manifest(package, directory);
     }
+    return manifest;
+}
+} // namespace
+
+std::string title_name(const std::filesystem::path &path) {
+    try {
+        const auto manifest = own_manifest(path);
+        if (manifest.is_object() && manifest.at("display_name").is_string())
+            if (const auto name = manifest.at("display_name").get<std::string>();
+                !name.empty() && !name.starts_with("ms-resource:"))
+                return name;
+    } catch (const std::exception &) {
+    }
+    std::error_code error;
+    const auto file = std::filesystem::is_directory(path, error) ? path.filename() : path.stem();
+    const auto name = (file.empty() ? path.parent_path().filename() : file).u8string();
+    return {name.begin(), name.end()};
+}
+
+std::string title_id(const std::filesystem::path &path) {
+    try {
+        const auto manifest = own_manifest(path);
+        if (manifest.is_object() && manifest.at("title_id").is_string())
+            return manifest.at("title_id").get<std::string>();
+    } catch (const std::exception &) {
+    }
+    return {};
+}
+
+std::filesystem::path title_save_directory(const std::filesystem::path &path) {
+    const auto manifest = own_manifest(path);
     const auto stem = path.stem().u8string();
     std::string name = manifest.is_object() && manifest.at("name").is_string()
                            ? manifest.at("name").get<std::string>()
@@ -255,5 +332,123 @@ LaunchResult launch_title(const std::filesystem::path &path) {
         result.detail = e.what();
     }
     return result;
+}
+
+nlohmann::json title_properties(const std::filesystem::path &path) {
+    const auto text = [](const std::filesystem::path &value) {
+        const auto utf8 = value.u8string();
+        return std::string(utf8.begin(), utf8.end());
+    };
+    nlohmann::json report{{"path", text(path)}, {"errors", nlohmann::json::object()}};
+    // each part on its own: what one cannot tell does not hide the others
+    const auto part = [&](const char *name, const auto &work) {
+        try {
+            work();
+            return true;
+        } catch (const std::exception &e) {
+            report["errors"][name] = e.what();
+            return false;
+        }
+    };
+    std::filesystem::path file = path;
+    part("manifest", [&] {
+        std::filesystem::path directory;
+        const auto manifest = read_manifest(path, directory);
+        if (manifest.is_null())
+            return;
+        report["manifest"] = manifest;
+        report["manifest_directory"] = text(directory);
+        file = executable_of(manifest, directory);
+    });
+    report["executable"] = text(file);
+    part("folders", [&] {
+        report["save_directory"] = text(title_save_directory(path));
+        report["system_directory"] = text(runtime::console_system_directory(file));
+    });
+    std::vector<std::uint8_t> bytes;
+    nlohmann::json image, profile;
+    if (!part("image", [&] {
+            bytes = host::read_snapshot(file, 256 * 1024 * 1024);
+            image = pe::inspect(bytes, pe::Detail::light);
+            report["image"] = nlohmann::json::object();
+            for (const auto *key :
+                 {"format", "architecture", "machine", "image_base", "size_of_image",
+                  "size_of_headers", "entry_rva", "section_alignment", "file_alignment",
+                  "subsystem", "characteristics", "dll_characteristics"})
+                if (image.contains(key))
+                    report["image"][key] = image.at(key);
+            report["image"]["file_size"] = bytes.size();
+        }))
+        return report;
+    std::optional<Target> target;
+    part("target", [&] {
+        profile = analysis::import_profile(image);
+        target = analysis::console_target(profile);
+        report["target"] = target ? nlohmann::json(target_name(*target)) : nlohmann::json(nullptr);
+        report["target_indication"] = profile.at("target_indication");
+    });
+    part("mapping", [&] {
+        loader::MapOptions options;
+        if (!image.at("directory_contents").contains("base_relocations"))
+            options.guest_base = image.at("image_base").get<std::uint64_t>();
+        const loader::MappedImage mapped(bytes, image, options);
+        const auto &map = mapped.report();
+        report["mapping"] = nlohmann::json::object();
+        for (const auto *key : {"preferred_base", "guest_base", "size_of_image", "entry_va",
+                                "relocation", "sections", "tls"})
+            if (map.contains(key))
+                report["mapping"][key] = map.at(key);
+    });
+    part("imports", [&] {
+        const auto plan = runtime::bind_plan(
+            bytes, target ? runtime::console_registry(*target) : runtime::title_registry(bytes),
+            std::filesystem::absolute(file).parent_path(), runtime::console_system_directory(file));
+        report["imports"] = plan.at("imports");
+        // the modules in the order the image imports them, with what the profile calls each
+        auto modules = nlohmann::json::array();
+        std::map<std::string, std::size_t> index;
+        const auto entry = [&](const std::string &name) -> nlohmann::json & {
+            const auto [it, added] = index.try_emplace(name, modules.size());
+            if (added)
+                modules.push_back({{"module", name},
+                                   {"category", nullptr},
+                                   {"imports", 0},
+                                   {"own", 0},
+                                   {"host", 0},
+                                   {"title", 0},
+                                   {"system", 0},
+                                   {"missing", 0}});
+            return modules[it->second];
+        };
+        if (profile.is_object())
+            for (const auto &module : profile.at("modules")) {
+                auto &line = entry(module.at("module").get<std::string>());
+                line["category"] = module.at("category");
+                line["delay_load"] = module.at("delay_load");
+            }
+        for (const auto &import : plan.at("imports")) {
+            auto &line = entry(import.at("module").get<std::string>());
+            line["imports"] = line["imports"].get<int>() + 1;
+            const auto &origin = import.at("origin").get_ref<const std::string &>();
+            if (line.contains(origin) && line[origin].is_number())
+                line[origin] = line[origin].get<int>() + 1;
+        }
+        report["modules"] = std::move(modules);
+        for (const auto *key : {"own", "host", "title", "system", "missing"})
+            report["bound"][key] = plan.at(key);
+    });
+    return report;
+}
+
+std::string exit_description(std::uint32_t code) {
+    if (code == 0)
+        return "The title ended";
+    if (code == runtime::exit_unimplemented_import)
+        return "The title called an import that is not implemented";
+    if (code == runtime::exit_guest_fault)
+        return "The title's code faulted";
+    if (const auto name = host::status_text(code); !name.empty())
+        return name;
+    return "The title ended with a code of its own";
 }
 } // namespace xv
