@@ -115,3 +115,32 @@ Unreal holds its game thread until the frames before were shown. It asks
 `GetFrameStatisticsX` for each token `WaitFrameEventX` gave, and waits for the objects it
 gave `ScheduleFrameEventX`. Answering neither stops the title after a few frames with no
 error at all, and its own hang detector then ends it with a write to address 3.
+
+## The translator (`console_shader_rdna.cpp`)
+
+Each register is a variable, each instruction a statement on 32-bit patterns, and the shader
+runs for one lane of a wave: a mask of lanes is all ones or zero, and what the hardware does
+for the lanes of EXEC is done if this lane's is set. Branches forward set `next` and the
+blocks they jump over are guarded by it; a branch back makes a `for` loop from its target to
+itself. The instruction table (`console_shader_rdna_ops.inc`) was read off LLVM's
+disassembly of the shaders of two titles, so it has the instructions those use and no others.
+
+State on the first title it was run on (82 shaders up to its title screen):
+46 are translated and all of those compile; the title screen is drawn right. Not done:
+cube maps sampled by face, the `ds_*` instructions (memory shared by a thread group),
+buffer stores and atomics, `s_getpc_b64` tables, geometry shaders. A shader with any of
+these gets the stand-in that draws nothing, and `console_shader_source` says which.
+
+What had to be right on the host for translated shaders to draw:
+
+- Samplers the title writes as hardware descriptors (S#) are made on the host from their
+  four words. A sampler slot left empty hangs the host's GPU as soon as it is sampled with.
+- Constant buffers the title writes as hardware descriptors (V#) carry the address the
+  title has for the buffer, which is not the host's.
+- Textures are read out of the title's memory with the console's own `xg_xs.dll`
+  (`XGCreateTextureComputer` from the description the title gave, then
+  `CopyFromSubresource`), since they are stored swizzled.
+
+Tools used, outside the tree: a corpus harness that translates and compiles every shader of
+a folder dumped with `XS_SHADER_CODE` and counts what stopped the others, and
+`XS_SHADER_STAND_INS=<stages>` / `XS_SHADER_SKIP=<text>` to find which shader breaks a run.
