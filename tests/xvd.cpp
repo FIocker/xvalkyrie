@@ -7,7 +7,7 @@
 namespace {
 // fake header built by hand, see docs/research/packages.md for the layout
 std::vector<std::uint8_t> header() {
-    std::vector<std::uint8_t> bytes(xs::xvd::header_size);
+    std::vector<std::uint8_t> bytes(xv::xvd::header_size);
     std::memcpy(bytes.data() + 0x200, "msft-xvd", 8);
     bytes[0x208] = 0x41;     // ReadOnly | RegionIdInXts
     bytes[0x20c] = 3;        // format version
@@ -25,7 +25,7 @@ std::vector<std::uint8_t> header() {
 
 TEST_CASE("xvd header fields") {
     auto bytes = header();
-    const auto report = xs::xvd::identify(bytes, 1ull << 36);
+    const auto report = xv::xvd::identify(bytes, 1ull << 36);
     CHECK(report.at("file_size") == 1ull << 36);
     CHECK(report.at("format_version") == 3);
     CHECK(report.at("volume_flag_names") == nlohmann::json::array({"ReadOnly", "RegionIdInXts"}));
@@ -47,7 +47,7 @@ TEST_CASE("xvd header fields") {
     bytes[0x209] = 0x01; // a flag bit without a cross-checked name
     bytes[0x284] = 0x30;
     bytes[0x100] = 1;
-    const auto other = xs::xvd::identify(bytes, bytes.size());
+    const auto other = xv::xvd::identify(bytes, bytes.size());
     CHECK(other.at("encryption") == "disabled by volume flag; contents still not read");
     CHECK(other.at("data_integrity") == "disabled by volume flag");
     CHECK(other.at("unnamed_volume_flag_bits") == 0x100);
@@ -58,9 +58,9 @@ TEST_CASE("xvd header fields") {
 
 TEST_CASE("xvd bad input") {
     auto bytes = header();
-    CHECK_FALSE(xs::xvd::has_magic(std::span(bytes).first(0x207)));
-    CHECK_THROWS(xs::xvd::identify(std::span(bytes).first(0xfff), 0xfff));
+    CHECK_FALSE(xv::xvd::has_magic(std::span(bytes).first(0x207)));
+    CHECK_THROWS(xv::xvd::identify(std::span(bytes).first(0xfff), 0xfff));
     bytes[0x200] = 'M';
-    CHECK_FALSE(xs::xvd::has_magic(bytes));
-    CHECK_THROWS(xs::xvd::identify(bytes, bytes.size()));
+    CHECK_FALSE(xv::xvd::has_magic(bytes));
+    CHECK_THROWS(xv::xvd::identify(bytes, bytes.size()));
 }

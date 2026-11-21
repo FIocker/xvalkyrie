@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-namespace xs::pe {
+namespace xv::pe {
 namespace {
 using json = nlohmann::json;
 
@@ -253,4 +253,4 @@ nlohmann::json decode_directories(const Image &image, Bytes descriptors, std::ui
     }
     return result;
 }
-} // namespace xs::pe
+} // namespace xv::pe

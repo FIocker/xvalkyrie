@@ -10,7 +10,7 @@
 #include <stb_image.h>
 #include <vector>
 
-namespace xs {
+namespace xv {
 Logos::~Logos() {
     for (auto &[path, decoding] : pending_)
         decoding.wait();
@@ -70,4 +70,4 @@ const LogoImage &Logos::get(const std::filesystem::path &path) {
         }));
     return none;
 }
-} // namespace xs
+} // namespace xv

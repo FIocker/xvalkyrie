@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace xs::loader {
+namespace xv::loader {
 // Unresolved import slots get this tag + their index. It is a non-canonical
 // address (also with 5-level paging), so calling it always faults.
 inline constexpr std::uint64_t unresolved_tag = 0x4000'0000'0000'0000;
@@ -49,4 +49,4 @@ class MappedImage {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readable_;
     nlohmann::json report_;
 };
-} // namespace xs::loader
+} // namespace xv::loader

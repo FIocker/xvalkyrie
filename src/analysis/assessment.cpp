@@ -4,7 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
-namespace xs::analysis {
+namespace xv::analysis {
 namespace {
 using json = nlohmann::json;
 struct Reference {
@@ -111,4 +111,4 @@ json compare_declaration(const json &pe, const json &config, std::string_view na
                                             : arch_matches ? "consistent"
                                                            : "conflict"}};
 }
-} // namespace xs::analysis
+} // namespace xv::analysis

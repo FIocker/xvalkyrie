@@ -21,7 +21,7 @@
 #include <windows.h>
 #include <winstring.h>
 
-namespace xs::runtime::durango {
+namespace xv::runtime::durango {
 namespace {
 // Host classes that behave the same in any process. The rest of the host's classes want a
 // packaged application around them, so the console versions are ours.
@@ -141,4 +141,4 @@ void install_winrt(Registry &registry) {
     registry.add("combase.dll", "RoActivateInstance",
                  reinterpret_cast<void *>(&ro_activate_instance));
 }
-} // namespace xs::runtime::durango
+} // namespace xv::runtime::durango

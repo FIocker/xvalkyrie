@@ -2,7 +2,7 @@
 #include <string>
 #include <string_view>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // What the console knows about the running title from its package manifest: that of the
 // package the current directory (the executable's folder while it runs) is in:
 //   title_id           the Xbox Live title ID, in decimal as the console gives it
@@ -10,4 +10,4 @@ namespace xs::runtime::durango::winrt {
 //   sandbox_id         always RETAIL
 // Empty for what the manifest does not say.
 std::wstring title_info(std::wstring_view key);
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

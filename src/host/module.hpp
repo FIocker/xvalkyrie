@@ -1,7 +1,7 @@
 #pragma once
 #include <filesystem>
 
-namespace xs::host {
+namespace xv::host {
 // Loading runs host module initializers. Only pass trusted host-owned paths.
 class NativeModule {
   public:
@@ -15,4 +15,4 @@ class NativeModule {
   private:
     void *handle_;
 };
-} // namespace xs::host
+} // namespace xv::host

@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 FormatSize format_size(std::uint32_t format) {
     const auto within = [&](std::uint32_t first, std::uint32_t last) {
         return format >= first && format <= last;
@@ -143,4 +143,4 @@ void install_xg(Registry &registry, std::string_view module) {
     registry.add(module, "XGComputeOptimalDepthStencilTileModes",
                  reinterpret_cast<void *>(&optimal_depth_stencil_tile_modes));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

@@ -7,7 +7,7 @@
 #include <utility>
 #include <windows.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 // GetAt takes the whole register: see Items::GetAt
 struct IObjectVectorView : IInspectable {
@@ -274,4 +274,4 @@ void *make_vector_view(std::vector<IInspectable *> items) {
     return static_cast<IObjectVectorView *>(new VectorView(std::move(items)));
 }
 void *make_vector() { return static_cast<IObjectVector *>(new Vector); }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

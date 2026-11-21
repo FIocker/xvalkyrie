@@ -23,7 +23,7 @@
 // the device's frame events. The host shows pictures through a swap chain, so there is one
 // here, on the title surface, of the size and format of what the title presents: each
 // PresentX copies the title's resource into its back buffer and presents that.
-namespace xs::runtime::modules::d3d12x {
+namespace xv::runtime::modules::d3d12x {
 namespace {
 // D3D12XBOX_PRESENT_PLANE_PARAMETERS
 struct PlaneParameters {
@@ -159,10 +159,10 @@ D3D12_RESOURCE_BARRIER transition(ID3D12Resource *resource, D3D12_RESOURCE_STATE
     barrier.Transition = {resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, before, after};
     return barrier;
 }
-// XS_D3D_PROBE=<frame>: what the title presents at that frame, and its render targets
+// XV_D3D_PROBE=<frame>: what the title presents at that frame, and its render targets
 void probe(ID3D12Resource *picture) {
     static const int at = [] {
-        const auto *const text = std::getenv("XS_D3D_PROBE");
+        const auto *const text = std::getenv("XV_D3D_PROBE");
         const int frame = text ? std::atoi(text) : 0;
         return !text ? 0 : frame > 1 ? frame : 300;
     }();
@@ -176,10 +176,10 @@ void probe(ID3D12Resource *picture) {
         report_picture(
             data.data(), pitch, width, height, format,
             ("back buffer (" + std::to_string(draws_into_target(picture)) + " draws)").c_str());
-    // XS_D3D_PROBE_TARGETS: the render targets as well. Not by default: a title may have let
+    // XV_D3D_PROBE_TARGETS: the render targets as well. Not by default: a title may have let
     // go of one that is still listed, and reading that back takes the process down.
     int index = 0;
-    if (std::getenv("XS_D3D_PROBE_TARGETS"))
+    if (std::getenv("XV_D3D_PROBE_TARGETS"))
     for (auto *const target : bound_render_targets())
         if (target != picture && read_back(target, data, pitch, width, height, format,
                       tracked_state(target, D3D12_RESOURCE_STATE_RENDER_TARGET)))
@@ -227,9 +227,9 @@ struct Shown {
     }
 };
 
-// XS_FRAME_TRACE: how the title paces its frames, the first calls of each kind
+// XV_FRAME_TRACE: how the title paces its frames, the first calls of each kind
 bool frame_trace(std::atomic<int> &shown, int most = 12) {
-    static const bool enabled = std::getenv("XS_FRAME_TRACE") != nullptr;
+    static const bool enabled = std::getenv("XV_FRAME_TRACE") != nullptr;
     return enabled && shown++ < most;
 }
 
@@ -520,7 +520,7 @@ void report_picture(const std::uint8_t *data, unsigned pitch, unsigned width, un
         }
     if (const auto *folder = std::getenv("TEMP"); folder && format != DXGI_FORMAT_D32_FLOAT)
         if (auto *file =
-                std::fopen((std::string(folder) + "\\xs_" + what + ".bmp").c_str(), "wb")) {
+                std::fopen((std::string(folder) + "\\xv_" + what + ".bmp").c_str(), "wb")) {
             const std::uint32_t pixels = width * height * 4;
             std::uint8_t header[54]{'B', 'M'};
             const std::uint32_t size = 54 + pixels, offset = 54, info = 40,
@@ -547,4 +547,4 @@ void report_picture(const std::uint8_t *data, unsigned pitch, unsigned width, un
                  height, static_cast<unsigned>(format), sum[0] / count, sum[1] / count,
                  sum[2] / count, sum[3] / count);
 }
-} // namespace xs::runtime::modules::d3d12x
+} // namespace xv::runtime::modules::d3d12x

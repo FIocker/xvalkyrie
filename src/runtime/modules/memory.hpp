@@ -8,7 +8,7 @@
 // Console memory: reservations in the console's page sizes, and the title's physical pages,
 // which are views of one section. ERA titles reach it through kernelx.dll, GDK titles
 // through xmem.dll and the API sets.
-namespace xs::runtime {
+namespace xv::runtime {
 class Registry;
 namespace modules {
 // by the names kernelx.dll has for them
@@ -23,4 +23,4 @@ HRESULT WINAPI allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 ad
                                         void **result);
 HRESULT WINAPI free_graphics_memory(void *address);
 } // namespace modules
-} // namespace xs::runtime
+} // namespace xv::runtime

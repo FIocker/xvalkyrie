@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace xs::surface {
+namespace xv::surface {
 struct TextRequest {
     std::wstring title, description, text;
     bool password = false, digits = false;
@@ -74,4 +74,4 @@ namespace detail {
 // HWND of the top-level window of the last title window
 void *title_owner();
 } // namespace detail
-} // namespace xs::surface
+} // namespace xv::surface

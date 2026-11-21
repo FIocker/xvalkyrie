@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace xs::graphics {
+namespace xv::graphics {
 using Rgba8 = std::array<std::uint8_t, 4>;
 
 struct RectClear {
@@ -19,4 +19,4 @@ struct ClearPass {
     std::vector<RectClear> rectangles;
     std::size_t validated_pixel_count() const;
 };
-} // namespace xs::graphics
+} // namespace xv::graphics

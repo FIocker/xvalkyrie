@@ -6,7 +6,7 @@
 // the ones the public static libraries of two kits call (June 2020 and October 2026): a
 // table only grew between them, and a later kit asks for it under another interface ID.
 // XPackage is the exception, where three functions moved: both places are listed.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 constexpr Method user_methods[] = {
     {3, "XUserDuplicateHandle"}, {4, "XUserCloseHandle"}, {5, "XUserCompare"},
@@ -379,4 +379,4 @@ constexpr Interface interfaces[] = {
 } // namespace
 
 std::span<const Interface> known_interfaces() { return interfaces; }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

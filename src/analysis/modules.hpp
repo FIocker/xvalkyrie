@@ -4,7 +4,7 @@
 #include <optional>
 #include <string_view>
 
-namespace xs::analysis {
+namespace xv::analysis {
 struct ModuleClass {
     std::string_view category; // "api_set", "d3d_scarlett", "game_os_only", "unknown", ...
     bool os_surface;           // system DLL, its imports get checked against the API list
@@ -19,4 +19,4 @@ bool is_game_os_api(std::string_view symbol);
 nlohmann::json import_profile(const nlohmann::json &pe_report);
 // The console an import profile points to. Empty for PC, mixed and unknown images.
 std::optional<Target> console_target(const nlohmann::json &profile);
-} // namespace xs::analysis
+} // namespace xv::analysis

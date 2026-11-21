@@ -4,7 +4,7 @@
 #include <cstring>
 #include <guiddef.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // What a method of a console interface does when the feature behind it is absent.
 // Signatures come from how titles call them: the arguments passed and the size of the
 // result read back.
@@ -68,4 +68,4 @@ inline constexpr GUID direct{
 // null if nothing is known about this method of `type`. Methods are numbered from
 // 0 = QueryInterface.
 const InertMethod *inert_method(const wchar_t *type, const GUID &iid, std::size_t method);
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

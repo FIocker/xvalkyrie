@@ -13,37 +13,37 @@ TEST_CASE("pe headers") {
     std::vector<std::uint8_t> data{std::istreambuf_iterator<char>(f), {}};
     REQUIRE(data.size() == 1024);
     SECTION("basic fields") {
-        const auto result = xs::pe::inspect(data);
+        const auto result = xv::pe::inspect(data);
         CHECK(result.at("image_base") == 0x140000000ull);
         CHECK(result.at("architecture") == "x86_64");
         CHECK(result.at("sections")[0].at("name") == ".rdata");
         CHECK(result.at("directory_descriptors")[4].contains("file_offset"));
         CHECK(result.at("console_target_verified") == false);
         data[152 + 68] = 14;
-        CHECK(xs::pe::inspect(data).at("platform_indicator") ==
+        CHECK(xv::pe::inspect(data).at("platform_indicator") ==
               "Xbox subsystem; generation unknown");
     }
     SECTION("truncated file") {
         for (std::size_t n : {0, 63, 151, 391, 431, 511, 1023})
-            CHECK_THROWS(xs::pe::inspect(std::span(data).first(n)));
+            CHECK_THROWS(xv::pe::inspect(std::span(data).first(n)));
     }
     SECTION("too many directories") {
         data[152 + 108] = 17;
-        CHECK_THROWS(xs::pe::inspect(data));
+        CHECK_THROWS(xv::pe::inspect(data));
     }
     SECTION("section offset out of range") {
         data[392 + 23] = 0xff;
-        CHECK_THROWS(xs::pe::inspect(data));
+        CHECK_THROWS(xv::pe::inspect(data));
     }
 }
 TEST_CASE("settings") {
     std::istringstream partial(R"({"vsync":false})");
-    const auto settings = xs::read_settings(partial);
+    const auto settings = xv::read_settings(partial);
     CHECK_FALSE(settings.vsync);
     std::istringstream defaults("{}");
-    CHECK(xs::read_settings(defaults).vsync);
+    CHECK(xv::read_settings(defaults).vsync);
     for (auto invalid : {"[]", R"({"vsync":"false"})", R"({"typo":true})", "{"}) {
         std::istringstream input(invalid);
-        CHECK_THROWS(xs::read_settings(input));
+        CHECK_THROWS(xv::read_settings(input));
     }
 }

@@ -18,7 +18,7 @@
 
 // The audio processor without SHAPE: commands are acknowledged and audio frames ticked so
 // the title's mixer runs, nothing is decoded. ABI as FMOD Ex calls it.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 std::atomic<bool> early_kit{false};
 struct ApuRegion {
@@ -232,7 +232,7 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
         std::fprintf(stderr, "[Runtime] audio processor command 0x%x\n", type);
         std::fflush(stderr);
     }
-    if (static std::atomic<int> shown{0}; std::getenv("XS_ACP_TRACE") && shown++ < 40) {
+    if (static std::atomic<int> shown{0}; std::getenv("XV_ACP_TRACE") && shown++ < 40) {
         const auto *words = static_cast<const std::uint32_t *>(data);
         std::fprintf(stderr,
                      "[Runtime] audio command %u id %llx frame %u data %x %x %x %x from %s\n",
@@ -253,7 +253,7 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
 bool STDMETHODCALLTYPE pop(Hal *self, Message *message) {
     if (!message)
         return false;
-    if (static std::atomic<int> shown{0}; std::getenv("XS_ACP_TRACE") && shown++ < 1)
+    if (static std::atomic<int> shown{0}; std::getenv("XV_ACP_TRACE") && shown++ < 1)
         std::fprintf(stderr, "[Runtime] PopMessage from %s\n",
                      detail::guest_location(_ReturnAddress()).c_str());
     const std::lock_guard lock(self->mutex);
@@ -457,4 +457,4 @@ void install_acphal(Registry &registry) {
                  erase(create_state_monitor));
 }
 void early_audio_processor(bool yes) { early_kit = yes; }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

@@ -1,10 +1,10 @@
-# XScarlet
+# XValkyrie
 
 [![build](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml)
 
 Experimental Xbox One and Xbox Series X|S compatibility layer for Windows, written in C++20.
 
-Both consoles are x86-64 machines running a trimmed-down Windows, so XScarlet
+Both consoles are x86-64 machines running a trimmed-down Windows, so XValkyrie
 does not emulate a CPU. The idea is closer to a compatibility layer than to a classic emulator:
 load the game's executable, run its code natively and provide our own versions
 of the console libraries it expects (`d3d12_x.dll` on Xbox One, `d3d12_xs.dll`
@@ -50,7 +50,7 @@ Series comes after those.
 
 ## Building
 
-XScarlet builds and runs on 64-bit Windows. You need Visual Studio 2022
+XValkyrie builds and runs on 64-bit Windows. You need Visual Studio 2022
 with the "Desktop development with C++" workload, CMake 3.25+ and Python 3.
 Dependencies are fetched by CMake on the first configure.
 
@@ -58,38 +58,38 @@ Dependencies are fetched by CMake on the first configure.
 build.cmd --test
 ```
 
-The executable is `build\win\Release\xscarlet.exe`. `build.cmd` builds Release
+The executable is `build\win\Release\xvalkyrie.exe`. `build.cmd` builds Release
 by default; pass `Debug` for a debug build, `--test` to run CTest and `--vulkan`
 to build the Vulkan backend as well. Set `JOBS` to control parallel builds
 (default: 4).
 
 The Vulkan backend also needs [Meson](https://mesonbuild.com) (`pip install meson`)
 and `glslang` (it comes with the Vulkan SDK) on the `PATH`. CMake fetches DXVK at a
-fixed commit, applies `cmake/dxvk.patch` and puts `xs_d3d11.dll` and
-`xs_dxgi.dll` next to `xscarlet.exe`.
+fixed commit, applies `cmake/dxvk.patch` and puts `xv_d3d11.dll` and
+`xv_dxgi.dll` next to `xvalkyrie.exe`.
 
 Extra CMake options:
 
 | Option | What it does |
 |---|---|
-| `-DXS_DXVK=ON` | Builds Direct3D 11 on Vulkan for the `vulkan` backend (needs Meson and glslang) |
-| `-DXS_VULKAN=ON` | Builds the offscreen Vulkan test (needs the Vulkan SDK) |
+| `-DXV_DXVK=ON` | Builds Direct3D 11 on Vulkan for the `vulkan` backend (needs Meson and glslang) |
+| `-DXV_VULKAN=ON` | Builds the offscreen Vulkan test (needs the Vulkan SDK) |
 | `-DBUILD_TESTING=OFF` | Skips the tests |
 
 ## Usage
 
 ```
-xscarlet                           open the window; load a title with File > Open File
-xscarlet <file>                    open the window and try to launch a title
-xscarlet <folder>                  same, for an unpacked title (folder with AppxManifest.xml)
-xscarlet inspect-manifest <file>   read an AppxManifest.xml
-xscarlet inspect <file>            dump PE headers and directories as JSON
-xscarlet assess <file>             classify imports and guess the build target
-xscarlet map <file> [--base HEX]   load the image in memory and print the layout
-xscarlet bind <file>               show which imports we can resolve
-xscarlet inspect-package <file>    print XVD/XVC header fields
-xscarlet inspect-config <file>     read a MicrosoftGame.config
-xscarlet exec <file> [--allow-missing] [--trace] [--mute] [--backend d3d11|vulkan]
+xvalkyrie                           open the window; load a title with File > Open File
+xvalkyrie <file>                    open the window and try to launch a title
+xvalkyrie <folder>                  same, for an unpacked title (folder with AppxManifest.xml)
+xvalkyrie inspect-manifest <file>   read an AppxManifest.xml
+xvalkyrie inspect <file>            dump PE headers and directories as JSON
+xvalkyrie assess <file>             classify imports and guess the build target
+xvalkyrie map <file> [--base HEX]   load the image in memory and print the layout
+xvalkyrie bind <file>               show which imports we can resolve
+xvalkyrie inspect-package <file>    print XVD/XVC header fields
+xvalkyrie inspect-config <file>     read a MicrosoftGame.config
+xvalkyrie exec <file> [--allow-missing] [--trace] [--mute] [--backend d3d11|vulkan]
                                    run it through the runtime (Windows)
 ```
 
@@ -100,8 +100,8 @@ be changed there. Defaults: left stick WASD, right stick arrows, A Space,
 B Backspace, X Q, Y E, Menu Enter, View Tab.
 
 Each session of the window, and each `exec`, writes everything it prints to
-`logs/yyyy-mm-dd_hh-mm-ss.log` under the per-user `xscarlet` configuration directory
-(`%APPDATA%/xscarlet`). Controls, the graphics backend, game library folders and
+`logs/yyyy-mm-dd_hh-mm-ss.log` under the per-user `xvalkyrie` configuration directory
+(`%APPDATA%/xvalkyrie`). Controls, the graphics backend, game library folders and
 grid/list preference live in `config.ini` there. Lines from the window
 start with `[Launcher]`, lines from running a title with `[Runtime]`. That
 file is what to attach when reporting a problem.
@@ -113,20 +113,20 @@ names. Put your own titles in `samples/`, which git ignores.
 The window has a File menu with native dialogs for files (Ctrl+O) and folders,
 and Options > Game Libraries lets you add, change, remove and rescan game roots.
 The start screen is the game library over a backdrop with the pixel-art
-XScarlet logo. It shows unpacked titles with their name, logo (if available)
+XValkyrie logo. It shows unpacked titles with their name, logo (if available)
 and console; switch between grid and list, or search by name, in the line
 above them. A click selects a title, a double click or Enter starts it.
 XVD/XVC packages appear but
 cannot be mounted or played yet. You can
 also drop an executable or a title folder on it. A title that can start runs
 inside the window, after a loading screen; otherwise the window says why not.
-`xscarlet --version` prints the version and commit that the window shows.
+`xvalkyrie --version` prints the version and commit that the window shows.
 
 Options > Graphics picks what the title's Direct3D calls end up on for the next
 title started: "Direct3D 11", the host's own driver (the default), or "Vulkan",
-Direct3D 11 translated to Vulkan by `xs_d3d11.dll` and `xs_dxgi.dll`.
+Direct3D 11 translated to Vulkan by `xv_d3d11.dll` and `xv_dxgi.dll`.
 
-`exec` is a developer command. It runs the file's code inside the xscarlet
+`exec` is a developer command. It runs the file's code inside the xvalkyrie
 process with no sandbox at all, so only use it with things you built yourself.
 Add `--allow-missing` to start even if some imports are not implemented; the
 process exits naming the import as soon as one of them gets called. `--trace`
@@ -157,7 +157,7 @@ No.
 No idea. This is a spare time project.
 
 **Where do I get games or keys?**
-Not here. XScarlet does not include or link to games, keys, firmware or SDK
+Not here. XValkyrie does not include or link to games, keys, firmware or SDK
 files, and it has no way of decrypting retail packages. Please don't ask.
 
 ## Contributing
@@ -166,7 +166,7 @@ Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Legal
 
-XScarlet is not affiliated with or endorsed by Microsoft. Xbox, Xbox One and
+XValkyrie is not affiliated with or endorsed by Microsoft. Xbox, Xbox One and
 Xbox Series X|S are trademarks of Microsoft Corporation. The project is written from
 public documentation and public source code.
 

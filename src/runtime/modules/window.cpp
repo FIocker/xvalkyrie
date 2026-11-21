@@ -7,7 +7,7 @@
 #include <set>
 #include <windows.h>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 std::mutex mutex;
 std::set<HWND> title_windows;
@@ -55,7 +55,7 @@ surface::TitleWindow &title_window() {
     static surface::TitleWindow window = [] {
         std::error_code error;
         auto name = std::filesystem::current_path(error).filename().wstring();
-        return surface::TitleWindow(name.empty() ? L"XScarlet" : name, 1280, 720);
+        return surface::TitleWindow(name.empty() ? L"XValkyrie" : name, 1280, 720);
     }();
     return window;
 }
@@ -65,4 +65,4 @@ void install_window(Registry &registry) {
     registry.add_api("CreateWindowExA", reinterpret_cast<void *>(&create_window_ex_a));
     registry.add_api("ShowWindow", reinterpret_cast<void *>(&show_window));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

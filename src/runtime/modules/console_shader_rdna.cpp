@@ -17,7 +17,7 @@
 // loads are followed while it is translated, to the root signature's register they stand
 // for; a shader that gets at one in a way that is not followed is given up on, as is one
 // with an instruction that is not known here. `why` then names the first such thing.
-namespace xs::runtime::modules::rdna {
+namespace xv::runtime::modules::rdna {
 namespace {
 enum class F {
     sop2, sopk, sop1, sopc, sopp, smem, vop2, vop1, vopc, vop3, vop3p, vintrp, ds, flat, mubuf,
@@ -842,9 +842,9 @@ class Translator {
             }
         }
         if (!vertex_id_)
-            line(v(0) + " = input.xs_vertex;");
+            line(v(0) + " = input.xv_vertex;");
         if (!instance_id_)
-            line(v(3) + " = input.xs_instance;");
+            line(v(3) + " = input.xv_instance;");
         fetched_ = true;
     }
     // component `channel` of the input in register `reg`, as bits
@@ -1545,8 +1545,8 @@ class Translator {
         }
         std::string more;
         if (stage_ == Stage::vertex) {
-            if (!vertex_id_) more += "    uint xs_vertex : SV_VertexID;\n";
-            if (!instance_id_) more += "    uint xs_instance : SV_InstanceID;\n";
+            if (!vertex_id_) more += "    uint xv_vertex : SV_VertexID;\n";
+            if (!instance_id_) more += "    uint xv_instance : SV_InstanceID;\n";
         }
         const bool no_input = shader_.inputs.empty() && more.empty();
         if (!no_input)
@@ -1614,4 +1614,4 @@ std::optional<std::string> translate(Stage stage, const Shader &shader, std::str
     }
     return std::nullopt;
 }
-} // namespace xs::runtime::modules::rdna
+} // namespace xv::runtime::modules::rdna

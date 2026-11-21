@@ -9,7 +9,7 @@
 #include <windows.h>
 #include <winstring.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 // IAsyncOperation<T> and IAsyncAction have the same shape; only GetResults differs.
 struct IOperation : IInspectable {
@@ -205,4 +205,4 @@ void *make_text_operation(std::function<void(std::function<void(std::wstring)>)>
     });
     return static_cast<IOperation *>(operation);
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

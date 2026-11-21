@@ -11,7 +11,7 @@
 // The small APIs of the Gaming Runtime: what the title is (XGame, XPackage), what it runs on
 // (XSystem, XDisplay, XNetworking), where it may keep files (XPersistentLocalStorage), and the
 // ones that only register for events the host never raises.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 std::atomic<std::uint64_t> tokens{0};
 const char port_identity[] = "XNetworkingQueryPreferredLocalUdpMultiplayerPortAsync";
@@ -106,7 +106,7 @@ HRESULT WINAPI launch_uri(void *, void *, const char *uri) {
 std::string local_storage() {
     auto root = save_directory();
     if (root.empty())
-        root = std::filesystem::temp_directory_path() / "xscarlet-saves";
+        root = std::filesystem::temp_directory_path() / "xvalkyrie-saves";
     const auto folder = root / "LocalStorage";
     std::error_code error;
     std::filesystem::create_directories(folder, error);
@@ -133,7 +133,7 @@ HRESULT WINAPI storage_space(void *, std::uint64_t *info) {
 // XPackage: the title is one package, all of it installed, mounted where it was unpacked
 std::string package_identifier() {
     const auto name = config_text("name");
-    return name.empty() ? "XScarlet.Title_1.0.0.0_x64__0000000000000" : name + "_x64__title";
+    return name.empty() ? "XValkyrie.Title_1.0.0.0_x64__0000000000000" : name + "_x64__title";
 }
 HRESULT WINAPI package_identifier_of_process(void *, std::size_t size, char *buffer) {
     return copy_text(package_identifier(), size, buffer, nullptr);
@@ -270,4 +270,4 @@ void install_system() {
     implement("XGameStreamingIsStreaming", &no);
     implement("XAppBroadcastIsAppBroadcasting", &no);
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

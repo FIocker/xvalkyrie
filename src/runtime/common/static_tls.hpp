@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <nlohmann/json_fwd.hpp>
 
-namespace xs::runtime {
+namespace xv::runtime {
 // Gives a manually mapped image the static thread-local storage the system loader would
 // give it: a block for every thread, those that exist and those to come, at the index the
 // image reads from its _tls_index. `tls` is the "tls" entry of its pe::inspect report,
@@ -12,4 +12,4 @@ namespace xs::runtime {
 // An `executable` gets index 0 instead (see static_tls.cpp).
 void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint64_t image_base,
                         bool executable = false);
-} // namespace xs::runtime
+} // namespace xv::runtime

@@ -9,20 +9,20 @@ from. Addresses are offsets into the image.
 ## How to run it
 
 ```
-xscarlet exec <title>\Mount --allow-missing --mute
+xvalkyrie exec <title>\Mount --allow-missing --mute
 ```
 
 What helped, all environment variables:
 
 | Variable | What it gives |
 |---|---|
-| `XS_SHADER_WHY=1` | Every shader made anew (the shader cache is neither read nor written), and at 256, 512, 1024... shaders a count of what stopped the ones with a stand-in, by stage |
-| `XS_D3D_PROBE=<frame>` | The back buffer at that frame as a BMP in the temporary folder, its average colour and how many draws went into it |
-| `XS_FRAME_TRACE=1` | The first `ScheduleFrameEventX`, `WaitFrameEventX`, `PresentX` and `GetFrameStatisticsX` calls |
-| `XS_D3D_DEBUG=1` | The host's debug layer. The title runs with it, and the device is not removed in 200 s |
+| `XV_SHADER_WHY=1` | Every shader made anew (the shader cache is neither read nor written), and at 256, 512, 1024... shaders a count of what stopped the ones with a stand-in, by stage |
+| `XV_D3D_PROBE=<frame>` | The back buffer at that frame as a BMP in the temporary folder, its average colour and how many draws went into it |
+| `XV_FRAME_TRACE=1` | The first `ScheduleFrameEventX`, `WaitFrameEventX`, `PresentX` and `GetFrameStatisticsX` calls |
+| `XV_D3D_DEBUG=1` | The host's debug layer. The title runs with it, and the device is not removed in 200 s |
 
 A run ends on its own only when it fails: wrap it in `timeout`. Killing the shell that
-started it leaves `xscarlet.exe` running, and the next build then cannot write the
+started it leaves `xvalkyrie.exe` running, and the next build then cannot write the
 executable (`LNK1104`): end the process first.
 
 ## What was fixed
@@ -41,7 +41,7 @@ executable (`LNK1104`): end the process first.
 
 The back buffer has 0 draws at frames 200 and 1500, average colour 0. Of the 2048 shaders
 the title asks for before that, 46 translate and 2002 get a stand-in that draws nothing.
-What stopped them (`XS_SHADER_WHY=1`):
+What stopped them (`XV_SHADER_WHY=1`):
 
 | Reason | Shaders |
 |---|---|
@@ -61,7 +61,7 @@ In order of what they would unlock:
    only knows a resource that a shader loads from a descriptor table of the root signature.
    This title has 2 root signatures in all, so its shaders reach their resources another
    way: through a root descriptor, or through a pointer held in a constant buffer or in the
-   memory a root parameter points at. To find out: dump a few with `XS_SHADER_CODE=<folder>`,
+   memory a root parameter points at. To find out: dump a few with `XV_SHADER_CODE=<folder>`,
    disassemble (`llvm-objdump -d --triple=amdgcn --mcpu=gfx1013`, see
    [console-shaders.md](console-shaders.md)) and follow where the base register of the
    failing load comes from, next to the two root signatures the title makes.
@@ -92,10 +92,10 @@ handle the failure; `CreateCommandListX` returns the same code right before).
 | Run | Shader cache | Ended |
 |---|---|---|
 | first, with `--trace` | empty | device removed, time not taken |
-| `XS_D3D_PROBE=200` | warm | still running at 300 s, when it was stopped |
-| `XS_SHADER_WHY=1` | not used | 203 s, an access violation inside the NVIDIA driver (`nvwgf2umx.dll+0x209bc0`) under `CopyDescriptorsSimple`, called from `resolve` in `decode_written_heaps` from `execute_command_lists` |
-| `XS_SHADER_WHY=1`, after the fixes above | not used | 375 s, device removed |
-| `XS_D3D_DEBUG=1` | warm | still running at 200 s; an earlier one ran for several minutes |
+| `XV_D3D_PROBE=200` | warm | still running at 300 s, when it was stopped |
+| `XV_SHADER_WHY=1` | not used | 203 s, an access violation inside the NVIDIA driver (`nvwgf2umx.dll+0x209bc0`) under `CopyDescriptorsSimple`, called from `resolve` in `decode_written_heaps` from `execute_command_lists` |
+| `XV_SHADER_WHY=1`, after the fixes above | not used | 375 s, device removed |
+| `XV_D3D_DEBUG=1` | warm | still running at 200 s; an earlier one ran for several minutes |
 
 What is known:
 
@@ -115,9 +115,9 @@ What is known:
 
 What to try, cheapest first:
 
-1. `XS_D3D_DEBUG=3` (the debug layer without serialized queues). If the device goes again,
+1. `XV_D3D_DEBUG=3` (the debug layer without serialized queues). If the device goes again,
    the serialization is what hides it, and the layer's messages at that moment say more.
-2. `XS_D3D_SYNC=1` (the GPU done with each `ExecuteCommandLists` before the title goes on).
+2. `XV_D3D_SYNC=1` (the GPU done with each `ExecuteCommandLists` before the title goes on).
    If the device stays, it is the cross-queue race.
 3. A warm-cache run of 10 minutes, to know whether making shaders matters.
 4. One lock around `decode_written_heaps` and the uploads.

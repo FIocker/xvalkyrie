@@ -1,9 +1,9 @@
 #pragma once
 #include <iosfwd>
 
-namespace xs {
+namespace xv {
 struct Settings {
     bool vsync = true;
 };
 Settings read_settings(std::istream &input);
-} // namespace xs
+} // namespace xv

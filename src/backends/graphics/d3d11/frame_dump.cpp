@@ -8,10 +8,10 @@
 #include <vector>
 #include <wrl/client.h>
 
-// XS_FRAME_DUMP=<file.bmp> writes the back buffer of one presented frame (number
-// XS_FRAME_DUMP_AT, 60 if unset) to a file: a way to see what a title draws without
+// XV_FRAME_DUMP=<file.bmp> writes the back buffer of one presented frame (number
+// XV_FRAME_DUMP_AT, 60 if unset) to a file: a way to see what a title draws without
 // looking at the window.
-namespace xs::graphics::d3d11 {
+namespace xv::graphics::d3d11 {
 namespace {
 using Microsoft::WRL::ComPtr;
 
@@ -73,7 +73,7 @@ bool write_bitmap(const char *path, IDXGISwapChain *swap_chain) {
 } // namespace
 
 void frame_presented(IDXGISwapChain *swap_chain) {
-    static const char *const path = std::getenv("XS_FRAME_DUMP");
+    static const char *const path = std::getenv("XV_FRAME_DUMP");
     static std::atomic<long> frames{0};
     const auto frame = ++frames;
     frame_counted();
@@ -85,7 +85,7 @@ void frame_presented(IDXGISwapChain *swap_chain) {
     if (!path)
         return;
     static const long wanted = [] {
-        const auto *const text = std::getenv("XS_FRAME_DUMP_AT");
+        const auto *const text = std::getenv("XV_FRAME_DUMP_AT");
         return text ? std::atol(text) : 60;
     }();
     if (frame != wanted)
@@ -95,4 +95,4 @@ void frame_presented(IDXGISwapChain *swap_chain) {
                  written ? "written to" : "could not be written to", path);
     std::fflush(stderr);
 }
-} // namespace xs::graphics::d3d11
+} // namespace xv::graphics::d3d11

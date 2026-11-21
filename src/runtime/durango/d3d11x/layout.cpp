@@ -27,7 +27,7 @@
 
 // Where each method is. Host slots are the desktop vtable indices of d3d11_1.h; the
 // console positions come from how titles call them.
-namespace xs::runtime::durango::d3d11x {
+namespace xv::runtime::durango::d3d11x {
 namespace d3d12x = modules::d3d12x;
 using modules::placement_data, modules::readable_memory, modules::track_placement,
     modules::upload_placements;
@@ -336,7 +336,7 @@ HRESULT STDMETHODCALLTYPE create_placement_buffer(void *self, const D3D11_BUFFER
                                                   void *address, ID3D11Buffer **buffer) {
     if (!desc)
         return E_INVALIDARG;
-    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 4) {
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_TRACE") && shown++ < 4) {
         std::fprintf(stderr,
                      "[Runtime] placement buffer of %u bytes, usage %u bind 0x%x misc 0x%x at %p, "
                      "from %s\n",
@@ -540,14 +540,14 @@ void average(ID3D11Texture2D *texture, const char *what) {
     device->Release();
 }
 bool probing() {
-    static const bool enabled = std::getenv("XS_D3D_PROBE") != nullptr;
+    static const bool enabled = std::getenv("XV_D3D_PROBE") != nullptr;
     return enabled;
 }
 void probe(IDXGISwapChain *swap_chain) {
     static std::atomic<int> frames{0};
-    // XS_D3D_PROBE=<frame>, 300 when it is not a number
+    // XV_D3D_PROBE=<frame>, 300 when it is not a number
     static const int at = [] {
-        const auto *const text = std::getenv("XS_D3D_PROBE");
+        const auto *const text = std::getenv("XV_D3D_PROBE");
         const int frame = text ? std::atoi(text) : 0;
         return frame > 1 ? frame : 300;
     }();
@@ -1240,4 +1240,4 @@ bool kind_of(const GUID &iid, Kind &kind) {
         return false;
     return true;
 }
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xv::runtime::durango::d3d11x

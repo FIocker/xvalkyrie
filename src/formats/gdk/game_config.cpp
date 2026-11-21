@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string_view>
 
-namespace xs::gdk {
+namespace xv::gdk {
 namespace {
 using json = nlohmann::json;
 json attribute(pugi::xml_node node, const char *name) {
@@ -91,4 +91,4 @@ nlohmann::json inspect_config(std::span<const std::uint8_t> bytes) {
             {"executables", std::move(entries)},
             {"console_target_verified", false}};
 }
-} // namespace xs::gdk
+} // namespace xv::gdk

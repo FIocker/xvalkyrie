@@ -6,7 +6,7 @@
 
 // Layout from community notes on the container format.
 // Not checked against a real Series package yet.
-namespace xs::xvd {
+namespace xv::xvd {
 namespace {
 using json = nlohmann::json;
 constexpr std::string_view magic = "msft-xvd";
@@ -134,4 +134,4 @@ json identify(std::span<const std::uint8_t> prefix, std::uint64_t file_size) {
         {"scarlett_layout_verified", false},
         {"mount_supported", false}};
 }
-} // namespace xs::xvd
+} // namespace xv::xvd

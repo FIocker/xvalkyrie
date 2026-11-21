@@ -25,7 +25,7 @@
 #include <windows.h>
 #include <winstring.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 using modules::SaveSpace;
 constexpr std::size_t method_count = 32;
@@ -185,7 +185,7 @@ BYTE *bytes_of(IBufferRaw *buffer) {
 std::shared_ptr<SaveSpace> open_space(const char *kind) {
     auto root = save_directory();
     if (root.empty()) {
-        root = std::filesystem::temp_directory_path() / "xscarlet-saves";
+        root = std::filesystem::temp_directory_path() / "xvalkyrie-saves";
         std::fprintf(stderr, "[Runtime] no save folder was given; saves go to %ls\n", root.c_str());
     }
     std::fprintf(stderr, "[Runtime] connected storage: the %s space, in %ls\n", kind,
@@ -909,4 +909,4 @@ IInspectable *storage_class(std::wstring_view name) {
         make_object(std::make_shared<State>(State{Kind::statics, nullptr, {}})));
     return statics;
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

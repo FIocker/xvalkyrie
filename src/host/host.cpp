@@ -11,7 +11,7 @@
 #include <system_error>
 #include <windows.h>
 
-namespace xs::host {
+namespace xv::host {
 std::filesystem::path executable_directory() {
     std::wstring path(32768, L'\0');
     path.resize(GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size())));
@@ -237,4 +237,4 @@ NativeModule::Function NativeModule::function(const char *name) const {
         fail("GetProcAddress");
     return std::bit_cast<Function>(address);
 }
-} // namespace xs::host
+} // namespace xv::host

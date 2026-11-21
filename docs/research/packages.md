@@ -1,7 +1,7 @@
 # XVD / XVC packages
 
 Games are distributed as XVC packages, a variant of the XVD container. There
-is no official spec. What `xscarlet inspect-package` reads comes from
+is no official spec. What `xvalkyrie inspect-package` reads comes from
 community notes that document Xbox One era files:
 
 
@@ -36,7 +36,7 @@ The file starts with a 0x200 byte signature, then the header up to 0x1000.
 
 - Only the first 4 KiB are read. No signature or hash check, no decryption,
   no mounting.
-- Package data is encrypted and the keys are not in the file. XScarlet has no
+- Package data is encrypted and the keys are not in the file. XValkyrie has no
   keys and will not ship any.
 - The layout has only been tested against a header built by hand in
   `tests/xvd.cpp`. It has not been checked against a real Series package.

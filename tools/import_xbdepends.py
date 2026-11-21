@@ -52,7 +52,7 @@ def main():
         "#include <array>",
         "#include <string_view>",
         "",
-        "namespace xs::analysis::data {",
+        "namespace xv::analysis::data {",
     ]
     for upstream, (name, lower) in TABLES.items():
         body = re.search(r"const char\* " + upstream + r"\[\] =\s*\{(.*?)\};", text, re.S)
@@ -63,7 +63,7 @@ def main():
         lines.append(f"inline constexpr std::array<std::string_view, {len(values)}> {name}{{")
         lines += [f'    "{v}",' for v in values]
         lines.append("};")
-    lines.append("} // namespace xs::analysis::data")
+    lines.append("} // namespace xv::analysis::data")
     out.write_text("\n".join(lines) + "\n")
 
 

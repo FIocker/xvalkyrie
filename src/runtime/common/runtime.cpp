@@ -12,7 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <system_error>
 
-namespace xs::runtime {
+namespace xv::runtime {
 namespace {
 std::string lower(std::string_view text) {
     std::string result(text);
@@ -297,4 +297,4 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             {"modules_without_symbols", std::move(opaque)},
             {"delay_load_modules", std::move(delayed)}};
 }
-} // namespace xs::runtime
+} // namespace xv::runtime

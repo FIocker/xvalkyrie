@@ -5,7 +5,7 @@
 
 // The pieces the screens and the settings are put together from. Everything here is
 // stateless apart from animate(), which keeps its value in the current ImGui window.
-namespace xs::ui {
+namespace xv::ui {
 // `text` cut short with "..." so that it fits in `width` in the current font
 std::string fitted(const std::string &text, float width);
 
@@ -61,4 +61,4 @@ void setting(const Fonts &fonts, const char *title, const char *hint = nullptr);
 void end_settings();
 // a line of secondary text, wrapped
 void note(const Fonts &fonts, const char *text);
-} // namespace xs::ui
+} // namespace xv::ui

@@ -3,7 +3,7 @@
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ringbuffer_sink.h>
 
-namespace xs {
+namespace xv {
 class Log {
   public:
     Log();
@@ -14,4 +14,4 @@ class Log {
     std::shared_ptr<spdlog::sinks::ringbuffer_sink_mt> history_;
     spdlog::logger logger_;
 };
-} // namespace xs
+} // namespace xv

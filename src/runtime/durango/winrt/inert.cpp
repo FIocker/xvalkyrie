@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cwchar>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 struct Row {
     const wchar_t *type;
@@ -742,4 +742,4 @@ const InertMethod *inert_method(const wchar_t *type, const GUID &iid, std::size_
             return &row.behavior;
     return nullptr;
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

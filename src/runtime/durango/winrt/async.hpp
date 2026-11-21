@@ -4,7 +4,7 @@
 
 struct IUnknown;
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // An IAsyncOperation<T> that has already finished with `result`, taking over the caller's
 // reference to it. T is an object or a string; other result types need their own class.
 // A Completed handler runs as soon as it is set, as WinRT does for finished operations.
@@ -22,4 +22,4 @@ void *make_failed_operation(long error);
 void *make_failed_progress_operation(long error);
 // IAsyncOperation<HSTRING> finished by the function `start` gets, from any thread
 void *make_text_operation(std::function<void(std::function<void(std::wstring)>)> start);
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

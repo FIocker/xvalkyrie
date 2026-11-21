@@ -13,7 +13,7 @@
 #include <windows.h>
 
 // Physical pages: a 16 GiB section mapped in 64 KiB views over placeholders.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 constexpr DWORD mem_large_pages = 0x20000000;
 constexpr DWORD mem_4mb_pages = 0x80000000;
@@ -450,4 +450,4 @@ void install_xmem(Registry &registry) {
             if (std::string_view(known) == name)
                 registry.add_api(name, function);
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

@@ -6,7 +6,7 @@
 #include <functional>
 #include <vector>
 
-namespace xs {
+namespace xv {
 struct LaunchResult;
 struct DesktopHooks {
     // Decides whether a file can start. Called on a worker thread; never runs guest code.
@@ -50,4 +50,4 @@ struct DesktopHooks {
 // The result is the process exit code: that of the last title run, 1 if the last file opened
 // could not start, and 0 if nothing was opened.
 int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial);
-} // namespace xs
+} // namespace xv

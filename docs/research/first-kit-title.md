@@ -99,10 +99,10 @@ what they are: at 0x850 (0, pointer to constant data), 0x888 (an object, once
 per item of a list), and 0xa10 and 0xa18 around the loop that executes
 command lists.
 
-`XS_D3D_SEQ=<frame>` prints every forwarded Direct3D call of one frame in
+`XV_D3D_SEQ=<frame>` prints every forwarded Direct3D call of one frame in
 order, with the range of the bytes an `UpdateSubresource` uploads, which is
-how the video's planes were found. `XS_ACP_TRACE=1` prints the first audio
-processor commands, `XS_THREAD_DUMP=<frame>` the stack of every thread at
-that frame, `XS_THREAD_TRACE=1` the affinity masks the title asks for, and
-`XS_BREAK=<rva>,<rva>` the registers each time the title reaches an address
+how the video's planes were found. `XV_ACP_TRACE=1` prints the first audio
+processor commands, `XV_THREAD_DUMP=<frame>` the stack of every thread at
+that frame, `XV_THREAD_TRACE=1` the affinity masks the title asks for, and
+`XV_BREAK=<rva>,<rva>` the registers each time the title reaches an address
 of its image.

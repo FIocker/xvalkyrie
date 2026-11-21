@@ -5,7 +5,7 @@
 #include "runtime/scarlett/runtime.hpp"
 #include <nlohmann/json.hpp>
 
-namespace xs::runtime {
+namespace xv::runtime {
 Registry console_registry(Target target) {
     Registry registry;
     if (target == Target::durango)
@@ -30,4 +30,4 @@ Registry title_registry(std::span<const std::uint8_t> file) {
         registry.open_to_host();
     return registry;
 }
-} // namespace xs::runtime
+} // namespace xv::runtime

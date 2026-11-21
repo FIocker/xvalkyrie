@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string_view>
 
-namespace xs::appx {
+namespace xv::appx {
 namespace {
 using json = nlohmann::json;
 json attribute(pugi::xml_node node, const char *name) {
@@ -110,4 +110,4 @@ nlohmann::json inspect_manifest(std::span<const std::uint8_t> bytes) {
             {"service_config_id", attribute(live, "PrimaryServiceConfigId")},
             {"activatable_classes", std::move(classes)}};
 }
-} // namespace xs::appx
+} // namespace xv::appx

@@ -8,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-namespace xs::runtime {
+namespace xv::runtime {
 // exit codes produced by the runtime, not by the guest
 inline constexpr std::uint32_t exit_unimplemented_import = 0xE0585301;
 inline constexpr std::uint32_t exit_guest_fault = 0xE0585302;
@@ -134,4 +134,4 @@ void *guest_library(const wchar_t *path);
 void *guest_symbol(void *module, const char *symbol);
 bool host_policy_allows(std::string_view module, std::string_view symbol);
 } // namespace detail
-} // namespace xs::runtime
+} // namespace xv::runtime

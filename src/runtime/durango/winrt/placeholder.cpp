@@ -22,7 +22,7 @@
 #include <windows.h>
 #include <winstring.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 constexpr std::size_t method_count = 96;
 struct Placeholder {
@@ -297,8 +297,8 @@ long unknown_method(const wchar_t *type, const char *iid, unsigned method, void 
                  iid, method, detail::guest_location(caller).c_str(),
                  event ? " (arguments look like an event registration)" : "");
     std::fflush(stderr);
-    // XS_WINRT_GUESS: keep going on that guess to collect several unknown methods per run
-    static const bool guess = std::getenv("XS_WINRT_GUESS") != nullptr;
+    // XV_WINRT_GUESS: keep going on that guess to collect several unknown methods per run
+    static const bool guess = std::getenv("XV_WINRT_GUESS") != nullptr;
     if (event && guess) {
         *static_cast<std::int64_t *>(second) = ++tokens;
         return S_OK;
@@ -346,4 +346,4 @@ void *make_placeholder(const wchar_t *name, const GUID &iid) {
     return new Placeholder{(iid == activation_factory ? factory_vtable : vtable).data(), 1, name,
                            iid};
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

@@ -7,7 +7,7 @@
 #include <exception>
 #include <wrl/client.h>
 
-namespace xs::graphics::dxvk {
+namespace xv::graphics::dxvk {
 namespace {
 using Microsoft::WRL::ComPtr;
 using CreateFactory = HRESULT(WINAPI *)(REFIID, void **);
@@ -60,4 +60,4 @@ HRESULT create_device(UINT flags, const D3D_FEATURE_LEVEL *levels, UINT level_co
     }
     return result;
 }
-} // namespace xs::graphics::dxvk
+} // namespace xv::graphics::dxvk

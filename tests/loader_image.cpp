@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace {
-using xs::loader::MappedImage;
+using xv::loader::MappedImage;
 constexpr std::uint64_t preferred = 0x140000000;
 std::vector<std::uint8_t> fixture() {
     std::ifstream input("synthetic.pe", std::ios::binary);
@@ -65,7 +65,7 @@ TEST_CASE("import slots") {
         CHECK(imports.at("unresolved")[1].at("slot_va") == preferred + 0x1058);
         for (std::uint64_t i = 0; i < 2; ++i) {
             const auto value = image.read64(0x1050 + 8 * i);
-            CHECK(value == (xs::loader::unresolved_tag | i));
+            CHECK(value == (xv::loader::unresolved_tag | i));
             // non-canonical with 48 and 57 bit addresses
             CHECK((value >> 47) != 0);
             CHECK((value >> 56) != 0);
@@ -83,7 +83,7 @@ TEST_CASE("import slots") {
                             return std::nullopt;
                         }});
         CHECK(image.read64(0x1058) == 0x7000'0000'1000);
-        CHECK(image.read64(0x1050) == xs::loader::unresolved_tag);
+        CHECK(image.read64(0x1050) == xv::loader::unresolved_tag);
         CHECK(image.report().at("imports").at("resolved") == 1);
         CHECK(image.report().at("imports").at("unresolved").size() == 1);
     }

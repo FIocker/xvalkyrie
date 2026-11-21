@@ -4,7 +4,7 @@ Xbox One (Durango) comes first, Xbox Series X|S (Scarlett) after it. Both are
 x86-64 consoles running a trimmed-down Windows, so most of the work is shared
 and the Series runtime is built on top of what the Xbox One one needs.
 
-XScarlet runs on 64-bit Windows. Nothing here counts as "a game boots" until a
+XValkyrie runs on 64-bit Windows. Nothing here counts as "a game boots" until a
 real title shows its own output.
 
 ## Phase 1: PE loader
@@ -36,7 +36,7 @@ The test program is an unpacked ERA title kept outside the repository, in
 `samples/`. What it needs is listed in
 [docs/research/era-title.md](docs/research/era-title.md).
 
-- [x] Find out exactly what it imports (`xscarlet bind`)
+- [x] Find out exactly what it imports (`xvalkyrie bind`)
 - [x] `kernelx.dll`: the Win32 subset goes to the host, plus `XMemAllocDefault` / `XMemFreeDefault`
 - [x] `combase.dll` and `ws2_32.dll` go to the host, also by ordinal
 - [x] `etwplus.dll` as no-ops
@@ -58,7 +58,7 @@ The test program is an unpacked ERA title kept outside the repository, in
   when first asked for: Xbox Live and game chat run their own code
 - [x] Achievements (`AchievementNotifier`), chat sessions without a microphone and the store
   statics (dialogs, privilege checks) of `Windows.Xbox.*`
-- [x] Session logs: everything xscarlet and the title print also goes to
+- [x] Session logs: everything xvalkyrie and the title print also goes to
   `logs/yyyy-mm-dd_hh-mm-ss.log` next to the executable; lines start with `[Launcher]` or
   `[Runtime]`
 - [x] Options > Console: gamertag, user ID, gamerscore, age group, headset and how the system
@@ -72,11 +72,11 @@ The test program is an unpacked ERA title kept outside the repository, in
 - [ ] `XGCreateTextureComputer`: the layout of `XG_RESOURCE_DESC` is not known
 - [ ] `D3D11XCreateDeviceX` and `DXGIXPresentArray` (Unity titles)
 - [ ] Connected storage that stores: reads say "no such blob", writes succeed and are dropped
-- [x] The title draws inside the xscarlet window (16:9 between the menu and the status
+- [x] The title draws inside the xvalkyrie window (16:9 between the menu and the status
   bar); `exec` still gives it a window of its own
 - [x] Opening a title does not block the window: it is read on a worker thread, with a
   loading screen until its first frame
-- [ ] Closing a running title without closing xscarlet
+- [ ] Closing a running title without closing xvalkyrie
 - [x] DLLs shipped with the title (`xcompress.dll`), loaded from its folder
 - [x] Finished async operations and actions (`winrt/async.cpp`)
 - [x] `CoreWindow` in the console layout (bounds, dispatcher, activate; the rest unknown)
@@ -116,11 +116,11 @@ ERA titles like the test program use `d3d11_x.dll` (Direct3D 11.X).
 - [x] State the title writes into the context object instead of calling a method (input
   layout, shaders, topology), applied at each draw
 - [x] The test program presents frames: splash screens and its main menu scene
-- [x] `XS_FRAME_DUMP` writes a presented frame to a file; `XS_D3D_DEBUG` prints what the
+- [x] `XV_FRAME_DUMP` writes a presented frame to a file; `XV_D3D_DEBUG` prints what the
   host's debug layer says after each call
 - [ ] The methods of the context whose place is still a guess (see `d3d11x/layout.cpp`)
 - [ ] Check the picture against the console's, frame by frame
-- [x] Vulkan backend: Direct3D 11 on a patched DXVK (`-DXS_DXVK=ON`), chosen in
+- [x] Vulkan backend: Direct3D 11 on a patched DXVK (`-DXV_DXVK=ON`), chosen in
   Options > Graphics and saved in `config.ini`
 - [ ] The test program on the Vulkan backend, checked against the `d3d11` one
 - [ ] `d3d12_x.dll`, and a D3D12 to Vulkan translation for it
@@ -158,6 +158,6 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
 ## Other
 
 - [x] C++20 project, CMake, tests, CI on Windows
-- [x] `xscarlet <file>` entry point with a window that explains why launch failed
+- [x] `xvalkyrie <file>` entry point with a window that explains why launch failed
 - [ ] Window test on Windows
 - [ ] Retail titles are out of scope until packages can be handled legitimately

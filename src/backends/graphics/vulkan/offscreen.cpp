@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <vulkan/vulkan.hpp>
 
-namespace xs::graphics::vulkan {
+namespace xv::graphics::vulkan {
 namespace {
 constexpr auto format = vk::Format::eR8G8B8A8Unorm;
 constexpr auto color_layout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -114,7 +114,7 @@ Readback render(const ClearPass &pass) {
     const auto pixels = pass.validated_pixel_count();
     static_assert(sizeof(Rgba8) == 4);
     const auto size = pixels * sizeof(Rgba8);
-    const vk::ApplicationInfo app{"XScarlet host graphics check", 1, nullptr, 0,
+    const vk::ApplicationInfo app{"XValkyrie host graphics check", 1, nullptr, 0,
                                   VK_API_VERSION_1_0};
     auto instance = vk::createInstanceUnique(vk::InstanceCreateInfo{}.setPApplicationInfo(&app));
     const auto [gpu, family] = select_adapter(*instance, {pass.width, pass.height});
@@ -174,4 +174,4 @@ Readback render(const ClearPass &pass) {
     device->unmapMemory(*buffer_memory);
     return output;
 }
-} // namespace xs::graphics::vulkan
+} // namespace xv::graphics::vulkan

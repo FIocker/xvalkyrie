@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace xs::pe {
+namespace xv::pe {
 namespace {
 constexpr std::array names{
     "exports", "imports",      "resources",  "exceptions", "certificates", "base_relocations",
@@ -93,4 +93,4 @@ nlohmann::json inspect(std::span<const std::uint8_t> bytes, Detail detail) {
              subsystem == 14 ? "Xbox subsystem; generation unknown" : "none established"},
             {"console_target_verified", false}};
 }
-} // namespace xs::pe
+} // namespace xv::pe

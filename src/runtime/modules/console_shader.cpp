@@ -22,7 +22,7 @@
 
 #include <unknwn.h>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
 constexpr int translator_version = 9;
@@ -526,9 +526,9 @@ namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container) {
     const char letter = "vpc123"[static_cast<int>(stage)];
     const auto hash = hash_name(container);
-    // XS_SHADER_STAND_INS: no translation, to tell what a translated shader breaks; with a
+    // XV_SHADER_STAND_INS: no translation, to tell what a translated shader breaks; with a
     // value, the letters of the stages that are still translated (v, p, c)
-    static const char *const stand_ins = std::getenv("XS_SHADER_STAND_INS");
+    static const char *const stand_ins = std::getenv("XV_SHADER_STAND_INS");
     const char stage_letter = "vpc123"[static_cast<int>(stage)];
     const bool stand_ins_only = stand_ins && !std::strchr(stand_ins, stage_letter);
     const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) +
@@ -538,15 +538,15 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         return found->second;
     const auto &folder = shader_cache_directory();
     std::vector<std::uint8_t> shader;
-    // XS_SHADER_WHY: every shader made anew, and what stopped the ones with a stand-in
-    static const bool asking = std::getenv("XS_SHADER_WHY") != nullptr;
+    // XV_SHADER_WHY: every shader made anew, and what stopped the ones with a stand-in
+    static const bool asking = std::getenv("XV_SHADER_WHY") != nullptr;
     static std::map<std::string, unsigned> reasons;
     if (!folder.empty() && !asking)
         shader = read_file(folder / name);
     const auto code = console_shader_code(container);
-    // XS_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin), the
+    // XV_SHADER_CODE=<folder>: of every console shader met, the machine code (.bin), the
     // whole of what it was stored in (.fssm) and the shader itself (.dxbc)
-    if (const auto *const dump = std::getenv("XS_SHADER_CODE")) {
+    if (const auto *const dump = std::getenv("XV_SHADER_CODE")) {
         const auto base = std::filesystem::path(dump) / (hash + "-" + letter);
         if (!code.empty())
             write_file(base.wstring() + L".bin",
@@ -557,9 +557,9 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     if (shader.empty()) {
         std::string why = "stand-ins asked for";
         auto source = stand_ins_only ? std::nullopt : translated_source(stage, container, &why);
-        // XS_SHADER_SKIP=<text>[,<text>...]: a stand-in for the shaders whose HLSL has any
+        // XV_SHADER_SKIP=<text>[,<text>...]: a stand-in for the shaders whose HLSL has any
         // of these in it, to find which kind of shader breaks something
-        if (const auto *const skip = std::getenv("XS_SHADER_SKIP"); skip && source) {
+        if (const auto *const skip = std::getenv("XV_SHADER_SKIP"); skip && source) {
             const std::string list = skip;
             for (std::size_t at = 0; at <= list.size() && source;) {
                 const auto end = std::min(list.find(',', at), list.size());
@@ -568,8 +568,8 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                 at = end + 1;
             }
         }
-        // XS_SHADER_CODE: the HLSL made for it as well
-        if (const auto *const dump = std::getenv("XS_SHADER_CODE"); dump && source) {
+        // XV_SHADER_CODE: the HLSL made for it as well
+        if (const auto *const dump = std::getenv("XV_SHADER_CODE"); dump && source) {
             const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");
             write_file(text, {reinterpret_cast<const std::uint8_t *>(source->data()),
                               source->size()});
@@ -582,7 +582,7 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
             if (asking)
                 ++reasons[std::string(1, letter) + ": " + (source ? "the host's compiler" : why)];
             const auto text = stand_in(stage, container);
-            if (const auto *const dump = std::getenv("XS_SHADER_CODE"))
+            if (const auto *const dump = std::getenv("XV_SHADER_CODE"))
                 write_file(std::filesystem::path(dump) / (hash + "-" + letter + ".stand-in.hlsl"),
                            {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});
             shader = compile(stage, text);
@@ -607,4 +607,4 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
 std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container) {
     return make_host_shader(stage, container);
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

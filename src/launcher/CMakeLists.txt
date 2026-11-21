@@ -1,4 +1,4 @@
 # What a title is and whether it can start, the game library and the saved configuration.
 # No window and no console output: the CLI and the interface both sit on this.
-add_library(xs_launcher launch.cpp config.cpp library.cpp)
-target_link_libraries(xs_launcher PUBLIC xs_input nlohmann_json::nlohmann_json PRIVATE xs_options xs_graphics xs_host xs_appx xs_game_config xs_pe xs_analysis xs_xvd xs_loader xs_runtime)
+add_library(xv_launcher launch.cpp config.cpp library.cpp)
+target_link_libraries(xv_launcher PUBLIC xv_input nlohmann_json::nlohmann_json PRIVATE xv_options xv_graphics xv_host xv_appx xv_game_config xv_pe xv_analysis xv_xvd xv_loader xv_runtime)

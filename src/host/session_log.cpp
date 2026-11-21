@@ -12,7 +12,7 @@
 // which has a C runtime of its own, is caught too. A helper process reads the pipes and
 // copies what arrives to the log file and to where the stream went before. Being another
 // process, it keeps copying until the pipes are closed, which is when this one is gone.
-namespace xs::host {
+namespace xv::host {
 namespace {
 std::atomic<bool> active{false};
 std::filesystem::path log_path(const std::filesystem::path &directory) {
@@ -127,4 +127,4 @@ int session_log_helper(const std::vector<std::wstring> &arguments) {
     errors.join();
     return 0;
 }
-} // namespace xs::host
+} // namespace xv::host

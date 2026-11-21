@@ -9,7 +9,7 @@
 #include <mutex>
 #include <string_view>
 
-namespace xs::input {
+namespace xv::input {
 namespace detail {
 // state of the system's keyboard and first gamepad, read directly
 bool direct_key(int key);
@@ -210,12 +210,12 @@ void window_focus_lost() {
 
 namespace {
 GamepadState read();
-// XS_INPUT_PRESS=<control id>@<seconds>[,<control id>@<seconds>...]: holds each control
+// XV_INPUT_PRESS=<control id>@<seconds>[,<control id>@<seconds>...]: holds each control
 // for half a second, that long after the first reading. For checking that input reaches a
 // title, and for walking through its menus, without a person.
 GamepadState scripted() {
     using Clock = std::chrono::steady_clock;
-    static const char *const script = std::getenv("XS_INPUT_PRESS");
+    static const char *const script = std::getenv("XV_INPUT_PRESS");
     GamepadState state;
     if (!script)
         return state;
@@ -267,4 +267,4 @@ std::atomic<void *> extra_foreground{nullptr};
 }
 void set_foreground_window(void *window) { extra_foreground = window; }
 void *foreground_window() { return extra_foreground; }
-} // namespace xs::input
+} // namespace xv::input

@@ -6,7 +6,7 @@
 // Direct capture on Windows: the keyboard through GetAsyncKeyState and the first gamepad
 // through XInput. Neither needs a window or a message loop. Both only count while a
 // window of this process is in the foreground, so that typing elsewhere does not play.
-namespace xs::input::detail {
+namespace xv::input::detail {
 namespace {
 bool foreground() {
     DWORD process = 0;
@@ -54,4 +54,4 @@ bool direct_gamepad(GamepadState &state) {
     state.right_y = stick(g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
     return true;
 }
-} // namespace xs::input::detail
+} // namespace xv::input::detail

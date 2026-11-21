@@ -9,7 +9,7 @@
 // GPU reads it. Here the host's resource is a copy, created from that memory and brought up
 // to date before draws and presents once the title has written it again: the memory is kept
 // read-only, and the first write to it marks every resource in it dirty.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 // `resource` lives at `address`: linear (tile mode 0 or 1, the layout our XG computes) or in
 // a tiling the console's xg_x.dll copies out of, when the title's system folder has it
 void track_placement(ID3D11Resource *resource, const void *address, UINT tile_mode = 0,
@@ -35,4 +35,4 @@ std::vector<PlacementUpload> take_d3d12_uploads();
 void prepare_title_write(const void *address, std::size_t bytes);
 // every page of [address, address + bytes) is committed and readable
 bool readable_memory(std::uint64_t address, std::size_t bytes);
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

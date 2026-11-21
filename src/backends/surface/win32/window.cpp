@@ -11,7 +11,7 @@
 #include <vector>
 #include <windows.h>
 
-namespace xs::surface {
+namespace xv::surface {
 // The thread that owns a title window of its own and runs its message loop.
 struct TitleWindow::Thread {
     std::thread thread;
@@ -21,7 +21,7 @@ struct TitleWindow::Thread {
     bool failed = false, closed = false;
 };
 namespace {
-constexpr wchar_t class_name[] = L"XScarletTitle";
+constexpr wchar_t class_name[] = L"XValkyrieTitle";
 std::atomic<HWND> surface{nullptr};
 std::atomic<bool> shown{false};
 std::atomic<HWND> latest{nullptr};
@@ -256,4 +256,4 @@ std::string TitleWindow::describe() const {
                   std::to_string(parent_client.bottom) + ")";
     return result;
 }
-} // namespace xs::surface
+} // namespace xv::surface

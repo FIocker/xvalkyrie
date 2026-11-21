@@ -1,7 +1,7 @@
 #include "backends/graphics/clear_pass.hpp"
 #include <stdexcept>
 
-namespace xs::graphics {
+namespace xv::graphics {
 std::size_t ClearPass::validated_pixel_count() const {
     if (!width || !height || width > 2048 || height > 2048)
         throw std::invalid_argument("Offscreen extent must be 1..2048 texels per dimension");
@@ -14,4 +14,4 @@ std::size_t ClearPass::validated_pixel_count() const {
     }
     return static_cast<std::size_t>(width) * height;
 }
-} // namespace xs::graphics
+} // namespace xv::graphics

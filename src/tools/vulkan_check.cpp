@@ -5,7 +5,7 @@
 
 int main() {
     try {
-        using namespace xs::graphics;
+        using namespace xv::graphics;
         const Rgba8 background{13, 47, 73, 255}, first{191, 23, 87, 128}, last{37, 211, 83, 0};
         const ClearPass pass{37, 23, background, {{0, 3, 21, 20, first}, {10, 0, 27, 11, last}}};
         const auto result = vulkan::render(pass);

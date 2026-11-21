@@ -14,7 +14,7 @@
 
 #include <psapi.h> // after windows.h
 
-namespace xs::runtime::durango {
+namespace xv::runtime::durango {
 namespace {
 // xaudio2_9.dll: the console's creates the engine through CreateXAudio2Object, the host's
 // through XAudio2Create. The engine and its voices are the same interfaces. The processor
@@ -165,4 +165,4 @@ void install_kernelx(Registry &registry) {
                      reinterpret_cast<void *>(&modules::free_graphics_memory));
     }
 }
-} // namespace xs::runtime::durango
+} // namespace xv::runtime::durango

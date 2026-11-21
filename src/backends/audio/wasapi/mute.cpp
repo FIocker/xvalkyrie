@@ -4,7 +4,7 @@
 #include <windows.h>
 #include <wrl/client.h>
 
-namespace xs::audio {
+namespace xv::audio {
 // Mutes the audio session of this process on the default output, which is where a title's
 // sound ends up. The setting belongs to the session, so it can be made before any sound.
 bool mute_process() {
@@ -30,4 +30,4 @@ bool mute_process() {
         CoUninitialize();
     return muted;
 }
-} // namespace xs::audio
+} // namespace xv::audio

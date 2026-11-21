@@ -4,7 +4,7 @@
 #include <map>
 #include <vector>
 
-namespace xs {
+namespace xv {
 struct LogoImage {
     unsigned int texture = 0;
     int width = 0, height = 0;
@@ -29,4 +29,4 @@ class Logos {
     std::map<std::filesystem::path, LogoImage> cache_;
     std::map<std::filesystem::path, std::future<Pixels>> pending_;
 };
-} // namespace xs
+} // namespace xv

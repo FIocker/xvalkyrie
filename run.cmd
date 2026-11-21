@@ -34,7 +34,7 @@ shift
 goto collect
 
 :run
-call "%~dp0build.cmd" %CONFIG% --target xscarlet%BUILD_ARGS%
+call "%~dp0build.cmd" %CONFIG% --target xvalkyrie%BUILD_ARGS%
 if errorlevel 1 exit /b %errorlevel%
-"%~dp0build\win\%CONFIG%\xscarlet.exe"%ARGS%
+"%~dp0build\win\%CONFIG%\xvalkyrie.exe"%ARGS%
 exit /b %errorlevel%

@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-namespace xs::ui {
+namespace xv::ui {
 // The settings window: a list of pages on the left, the chosen one on the right. A new
 // page is an entry in `pages` (settings.cpp) and a function that draws it.
 class Settings {
@@ -60,4 +60,4 @@ class Settings {
     bool console_loaded_ = false;
     char gamertag_[64] = "", user_id_[32] = "";
 };
-} // namespace xs::ui
+} // namespace xv::ui

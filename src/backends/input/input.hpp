@@ -6,7 +6,7 @@
 
 // What the emulated gamepad reads, wherever it comes from. Console runtimes ask poll();
 // the window and the system feed it, depending on the capture method chosen.
-namespace xs::input {
+namespace xv::input {
 // Button bits as console titles get them (Windows.Xbox.Input.GamepadButtons).
 enum Button : std::uint32_t {
     menu = 0x4,
@@ -64,7 +64,7 @@ const char *control_id(Control control);   // for the settings file
 
 // How key and gamepad state is obtained.
 enum class Capture {
-    window, // from the events of the xscarlet window: keyboard only, while it has the focus
+    window, // from the events of the xvalkyrie window: keyboard only, while it has the focus
     direct  // from the system: host gamepad (XInput) and keyboard, without going through
             // the window
 };
@@ -93,4 +93,4 @@ GamepadState poll();
 // launcher's when the title runs in a process of its own. A native handle.
 void set_foreground_window(void *window);
 void *foreground_window();
-} // namespace xs::input
+} // namespace xv::input

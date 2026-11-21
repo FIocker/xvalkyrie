@@ -7,7 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 struct Info {
     std::wstring title_id, service_config_id;
@@ -43,4 +43,4 @@ std::wstring title_info(std::wstring_view key) {
         return L"RETAIL";
     return {};
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

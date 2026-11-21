@@ -39,5 +39,5 @@ waiting for the render thread until Unreal's 30 second timeout.
 
 The log says `the title reads the gamepad` on the first reading and
 `first gamepad button reached the title` on the first button.
-`XS_INPUT_PRESS=a@40` holds A for half a second, 40 seconds after the first
+`XV_INPUT_PRESS=a@40` holds A for half a second, 40 seconds after the first
 reading, which is enough to get past a title screen without a person.

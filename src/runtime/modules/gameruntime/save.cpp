@@ -12,7 +12,7 @@
 // with the cloud; here they are files under the title's save folder, in the same layout an
 // ERA title's connected storage has. XGameSaveFiles gives the title a folder to use as it
 // likes.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 constexpr HRESULT e_buffer_too_small = static_cast<HRESULT>(0x80830007);
 constexpr HRESULT e_blob_not_found = static_cast<HRESULT>(0x80830008);
@@ -27,7 +27,7 @@ constexpr std::int64_t quota = 256ll << 20;
 std::filesystem::path save_root() {
     auto root = save_directory();
     if (root.empty())
-        root = std::filesystem::temp_directory_path() / "xscarlet-saves";
+        root = std::filesystem::temp_directory_path() / "xvalkyrie-saves";
     return root;
 }
 struct Provider {
@@ -377,4 +377,4 @@ void install_save() {
     implement("XGameSaveFilesGetFolderWithUiResult", &files_folder_result);
     implement("XGameSaveFilesGetRemainingQuota", &files_remaining_quota);
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

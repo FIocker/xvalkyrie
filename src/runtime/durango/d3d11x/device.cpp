@@ -33,7 +33,7 @@
 // console layout (wrap.hpp). The DXGI device, adapter and factory are the same as on the
 // desktop and are passed through, except for the way to the swap chain: a console swap
 // chain is made for a CoreWindow, and ours is not one the host would accept.
-namespace xs::runtime::durango {
+namespace xv::runtime::durango {
 namespace d3d11x {
 HRESULT device_dxgi(IUnknown *host_device, REFIID iid, void **object);
 }
@@ -201,8 +201,8 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
         std::fprintf(stderr,
-                     "[Runtime] the vulkan backend needs xs_d3d11.dll and xs_dxgi.dll next to "
-                     "xscarlet.exe\n");
+                     "[Runtime] the vulkan backend needs xv_d3d11.dll and xv_dxgi.dll next to "
+                     "xvalkyrie.exe\n");
         std::fflush(stderr);
         return DXGI_ERROR_UNSUPPORTED;
     }
@@ -216,7 +216,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
     const auto result = vulkan ? graphics::dxvk::create_device(host_flags, levels, level_count,
                                                                &latest, level, context)
                                : graphics::d3d11::create_device(
-                                     host_flags, std::getenv("XS_D3D_DEBUG") != nullptr, levels,
+                                     host_flags, std::getenv("XV_D3D_DEBUG") != nullptr, levels,
                                      level_count, &latest, level, context, debug_layer);
     if (debug_layer)
         d3d11x::watch_debug_messages(latest);
@@ -302,4 +302,4 @@ void install_d3d11x(Registry &registry) {
             std::string_view(name) == "D3DMapEsramMemory")
             registry.add("d3d12_x.dll", name, function);
 }
-} // namespace xs::runtime::durango
+} // namespace xv::runtime::durango

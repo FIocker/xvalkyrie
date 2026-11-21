@@ -29,11 +29,11 @@ description of what a title links against.
 - `xgameruntime.dll` does not show up anywhere. The Gaming Runtime is linked
   statically; how it talks to the system at run time is not covered here.
 
-## How XScarlet uses it
+## How XValkyrie uses it
 
 `tools/import_xbdepends.py` downloads the three source files at a pinned
 commit, checks their hashes and generates `src/analysis/xbdepends_data.hpp`.
-`xscarlet assess` and `xscarlet bind` use those tables, and the runtime uses
+`xvalkyrie assess` and `xvalkyrie bind` use those tables, and the runtime uses
 the API list to decide which calls may be forwarded to Windows.
 
 One difference: the original tool searches its patterns anywhere in the DLL

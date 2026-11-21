@@ -4,7 +4,7 @@
 #include <string>
 #include <windows.h>
 
-namespace xs::runtime {
+namespace xv::runtime {
 class Registry;
 namespace modules {
 struct ApiFunction {
@@ -22,4 +22,4 @@ std::wstring console_file_path(const wchar_t *path);
 // GetProcAddress for modules of ours and of the title's, then the host's
 FARPROC get_proc_address(HMODULE module, const char *name);
 } // namespace modules
-} // namespace xs::runtime
+} // namespace xv::runtime

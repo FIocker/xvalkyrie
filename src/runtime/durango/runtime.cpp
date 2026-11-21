@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <initializer_list>
 
-namespace xs::runtime::durango {
+namespace xv::runtime::durango {
 namespace {
 // Never called with anything we use and returns "success" for every signature.
 std::uint64_t ignored() { return 0; }
@@ -44,4 +44,4 @@ void install(Registry &registry) {
          {"EtxRegister", "EtxUnregister", "EtxEventWrite", "EtxFillCommonFields_v7"})
         registry.add("etwplus.dll", name, reinterpret_cast<void *>(&ignored));
 }
-} // namespace xs::runtime::durango
+} // namespace xv::runtime::durango

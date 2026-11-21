@@ -1,7 +1,7 @@
 #include "backends/graphics/d3d11/host.hpp"
 #include <cstdio>
 
-namespace xs::graphics::d3d11 {
+namespace xv::graphics::d3d11 {
 HRESULT create_device(UINT flags, bool debug, const D3D_FEATURE_LEVEL *levels, UINT level_count,
                       ID3D11Device1 **device, D3D_FEATURE_LEVEL *level,
                       ID3D11DeviceContext **context, bool &debug_layer) {
@@ -29,4 +29,4 @@ HRESULT create_device(UINT flags, bool debug, const D3D_FEATURE_LEVEL *levels, U
         debug_layer = false;
     return result;
 }
-} // namespace xs::graphics::d3d11
+} // namespace xv::graphics::d3d11

@@ -13,7 +13,7 @@
 #include <vector>
 #include <windows.h>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 struct Placement {
     ID3D11Resource *resource; // one reference of ours, or null for a Direct3D 12 one
@@ -332,9 +332,9 @@ void upload_placements(ID3D11DeviceContext *context) {
     }
     dirty = std::move(kept);
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 // XGComputeOptimalTileMode(dimension, format, width, height, array size, samples, bind flags,
 // misc flags), by its code in the console's xg_x.dll: the tiling the console gives a texture
@@ -505,7 +505,7 @@ void track_placement(ID3D12Resource *resource, const void *address,
         if (computer)
             series_release(computer);
         const auto start = reinterpret_cast<std::uintptr_t>(address);
-        if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5)
+        if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_TRACE") && shown++ < 5)
             std::fprintf(stderr, "[Runtime] placement texture at %llx, layout 0x%x, %zu bytes%s\n",
                          static_cast<unsigned long long>(start), layout->Layout, bytes,
                          bytes && readable(start, bytes) ? "" : ", not readable");
@@ -553,7 +553,7 @@ void track_placement(ID3D12Resource *resource, const void *address,
             : 0;
     const auto start = reinterpret_cast<std::uintptr_t>(address);
     const auto bytes = placed_bytes(desc, tile_mode);
-    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5)
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_TRACE") && shown++ < 5)
         std::fprintf(stderr, "[Runtime] placement texture at %llx, tile mode %u, %zu bytes%s\n",
                      static_cast<unsigned long long>(start), tile_mode, bytes,
                      readable(start, bytes) ? "" : ", not all readable");
@@ -622,4 +622,4 @@ std::vector<PlacementUpload> take_d3d12_uploads() {
     dirty = std::move(kept);
     return uploads;
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

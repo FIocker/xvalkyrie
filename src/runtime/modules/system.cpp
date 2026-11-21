@@ -7,7 +7,7 @@
 
 #include <objbase.h> // after windows.h
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 HMODULE host_xaudio2() {
     static const auto library =
@@ -38,7 +38,7 @@ HRESULT WINAPI dxc_create_instance(const GUID *class_id, const GUID *iid, void *
             library = LoadLibraryExW(L"dxcompiler.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!library)
             std::fprintf(stderr, "[Runtime] the title asks for the shader compiler, and there "
-                                 "is no dxcompiler.dll next to xscarlet or in the system\n");
+                                 "is no dxcompiler.dll next to xvalkyrie or in the system\n");
         return library ? reinterpret_cast<Create>(GetProcAddress(library, "DxcCreateInstance"))
                        : nullptr;
     }();
@@ -102,4 +102,4 @@ void install_front_panel(Registry &registry) {
 void install_shader_compiler(Registry &registry, std::string_view module) {
     registry.add(module, "DxcCreateInstance", reinterpret_cast<void *>(&dxc_create_instance));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

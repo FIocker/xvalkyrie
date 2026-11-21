@@ -3,7 +3,7 @@
 #include <cfloat>
 #include <cmath>
 
-namespace xs::ui {
+namespace xv::ui {
 std::string fitted(const std::string &text, float width) {
     if (ImGui::CalcTextSize(text.c_str()).x <= width)
         return text;
@@ -152,4 +152,4 @@ void note(const Fonts &fonts, const char *text) {
     ImGui::PopStyleColor();
     ImGui::PopFont();
 }
-} // namespace xs::ui
+} // namespace xv::ui

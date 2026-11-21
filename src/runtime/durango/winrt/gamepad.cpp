@@ -10,14 +10,14 @@
 #include <windows.h>
 #include <winstring.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 constexpr wchar_t class_name[] = L"Windows.Xbox.Input.Gamepad";
 
 // What IGamepad's third method fills in, as titles read it back.
 struct RawReading {
     std::uint64_t timestamp;
-    std::uint32_t buttons; // xs::input::Button bits
+    std::uint32_t buttons; // xv::input::Button bits
     float left_trigger, right_trigger;
     float left_x, left_y, right_x, right_y;
 };
@@ -65,19 +65,19 @@ template <class Interface> class Object : public Interface {
 struct IGamepadReading : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE get_Timestamp(std::uint64_t *value) = 0;
     virtual HRESULT STDMETHODCALLTYPE get_Buttons(std::uint32_t *value) = 0;
-#define XS_PRESSED(Name) virtual HRESULT STDMETHODCALLTYPE get_Is##Name##Pressed(boolean *) = 0;
-    XS_PRESSED(DPadUp)
-    XS_PRESSED(DPadDown)
-    XS_PRESSED(DPadLeft)
-    XS_PRESSED(DPadRight)
-    XS_PRESSED(Menu)
-    XS_PRESSED(View) XS_PRESSED(LeftThumbstick) XS_PRESSED(RightThumbstick) XS_PRESSED(LeftShoulder)
-        XS_PRESSED(RightShoulder) XS_PRESSED(A) XS_PRESSED(B) XS_PRESSED(X) XS_PRESSED(Y)
-#undef XS_PRESSED
-#define XS_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
-            XS_AXIS(LeftTrigger) XS_AXIS(RightTrigger) XS_AXIS(LeftThumbstickX)
-                XS_AXIS(LeftThumbstickY) XS_AXIS(RightThumbstickX) XS_AXIS(RightThumbstickY)
-#undef XS_AXIS
+#define XV_PRESSED(Name) virtual HRESULT STDMETHODCALLTYPE get_Is##Name##Pressed(boolean *) = 0;
+    XV_PRESSED(DPadUp)
+    XV_PRESSED(DPadDown)
+    XV_PRESSED(DPadLeft)
+    XV_PRESSED(DPadRight)
+    XV_PRESSED(Menu)
+    XV_PRESSED(View) XV_PRESSED(LeftThumbstick) XV_PRESSED(RightThumbstick) XV_PRESSED(LeftShoulder)
+        XV_PRESSED(RightShoulder) XV_PRESSED(A) XV_PRESSED(B) XV_PRESSED(X) XV_PRESSED(Y)
+#undef XV_PRESSED
+#define XV_AXIS(Name) virtual HRESULT STDMETHODCALLTYPE get_##Name(float *) = 0;
+            XV_AXIS(LeftTrigger) XV_AXIS(RightTrigger) XV_AXIS(LeftThumbstickX)
+                XV_AXIS(LeftThumbstickY) XV_AXIS(RightThumbstickX) XV_AXIS(RightThumbstickY)
+#undef XV_AXIS
 };
 // GamepadButtons, the same bits as the raw reading
 class Reading final : public IGamepadReading {
@@ -112,25 +112,25 @@ class Reading final : public IGamepadReading {
     }
     STDMETHODIMP get_Timestamp(std::uint64_t *value) override { return put(value, raw_.timestamp); }
     STDMETHODIMP get_Buttons(std::uint32_t *value) override { return put(value, raw_.buttons); }
-#define XS_PRESSED(Name, Bit)                                                                      \
+#define XV_PRESSED(Name, Bit)                                                                      \
     STDMETHODIMP get_Is##Name##Pressed(boolean *value) override {                                  \
         return put<boolean>(value, (raw_.buttons & (Bit)) != 0);                                   \
     }
-    XS_PRESSED(DPadUp, 0x1)
-    XS_PRESSED(DPadDown, 0x2)
-    XS_PRESSED(DPadLeft, 0x4)
-    XS_PRESSED(DPadRight, 0x8)
-  XS_PRESSED(Menu, 0x10)
-  XS_PRESSED(View, 0x20) XS_PRESSED(LeftThumbstick, 0x40) XS_PRESSED(RightThumbstick, 0x80)
-      XS_PRESSED(LeftShoulder, 0x100) XS_PRESSED(RightShoulder, 0x200) XS_PRESSED(A, 0x1000)
-          XS_PRESSED(B, 0x2000) XS_PRESSED(X, 0x4000) XS_PRESSED(Y, 0x8000)
-#undef XS_PRESSED
-#define XS_AXIS(Name, Field)                                                                       \
+    XV_PRESSED(DPadUp, 0x1)
+    XV_PRESSED(DPadDown, 0x2)
+    XV_PRESSED(DPadLeft, 0x4)
+    XV_PRESSED(DPadRight, 0x8)
+  XV_PRESSED(Menu, 0x10)
+  XV_PRESSED(View, 0x20) XV_PRESSED(LeftThumbstick, 0x40) XV_PRESSED(RightThumbstick, 0x80)
+      XV_PRESSED(LeftShoulder, 0x100) XV_PRESSED(RightShoulder, 0x200) XV_PRESSED(A, 0x1000)
+          XV_PRESSED(B, 0x2000) XV_PRESSED(X, 0x4000) XV_PRESSED(Y, 0x8000)
+#undef XV_PRESSED
+#define XV_AXIS(Name, Field)                                                                       \
     STDMETHODIMP get_##Name(float *value) override { return put(value, raw_.Field); }
-              XS_AXIS(LeftTrigger, left_trigger) XS_AXIS(RightTrigger, right_trigger)
-                  XS_AXIS(LeftThumbstickX, left_x) XS_AXIS(LeftThumbstickY, left_y)
-                      XS_AXIS(RightThumbstickX, right_x) XS_AXIS(RightThumbstickY, right_y)
-#undef XS_AXIS
+              XV_AXIS(LeftTrigger, left_trigger) XV_AXIS(RightTrigger, right_trigger)
+                  XV_AXIS(LeftThumbstickX, left_x) XV_AXIS(LeftThumbstickY, left_y)
+                      XV_AXIS(RightThumbstickX, right_x) XV_AXIS(RightThumbstickY, right_y)
+#undef XV_AXIS
 
                           private : template <class T>
                                     static HRESULT put(T *value, T field) {
@@ -185,12 +185,12 @@ class Gamepad final : public Object<IGamepad> {
         *reading = new Reading(raw);
         return S_OK;
     }
-#define XS_UNKNOWN(Index)                                                                          \
+#define XV_UNKNOWN(Index)                                                                          \
     STDMETHODIMP unknown##Index(void *first, void *second) override {                              \
         return unknown_method(class_name, "IGamepad", Index, first, second, _ReturnAddress());     \
     }
-    XS_UNKNOWN(9) XS_UNKNOWN(10) XS_UNKNOWN(11)
-#undef XS_UNKNOWN
+    XV_UNKNOWN(9) XV_UNKNOWN(10) XV_UNKNOWN(11)
+#undef XV_UNKNOWN
 };
 Gamepad gamepad;
 
@@ -270,4 +270,4 @@ bool gamepad_interface(std::wstring_view name, const GUID &iid, void **object, l
 IInspectable *input_class(std::wstring_view name) {
     return name == class_name ? static_cast<IGamepadStatics *>(&statics) : nullptr;
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

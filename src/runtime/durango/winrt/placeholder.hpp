@@ -1,7 +1,7 @@
 #pragma once
 #include <guiddef.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // Stands in for a WinRT object nobody has implemented. Answers every QueryInterface, and
 // every method past IInspectable reports who called it and fails with E_NOTIMPL, which is
 // how the next missing piece gets found. `name` must outlive the object.
@@ -16,4 +16,4 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object);
 // a placeholder does and fails. `caller` is the return address into the title.
 long unknown_method(const wchar_t *type, const char *iid, unsigned method, void *first,
                     void *second, void *caller);
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

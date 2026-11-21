@@ -15,7 +15,7 @@
 // QueryApiImpl for the table of the function's API, and calls one slot of the table with
 // the table first and its own arguments after it. The system's half is that DLL, which is
 // what this is.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 constexpr std::size_t table_slots = 96, max_interfaces = 32;
 using Slot = void *;
@@ -138,9 +138,9 @@ HRESULT copy_text(const std::string &text, std::size_t size, char *buffer, std::
     std::memcpy(buffer, text.c_str(), text.size() + 1);
     return S_OK;
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 void install_gameruntime(Registry &registry) {
     using namespace gameruntime;
     const char *const module = "xgameruntime.dll";
@@ -151,4 +151,4 @@ void install_gameruntime(Registry &registry) {
     registry.add(module, "XErrorReport", reinterpret_cast<void *>(&error_report));
     registry.add(module, "DllCanUnloadNow", reinterpret_cast<void *>(&can_unload));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

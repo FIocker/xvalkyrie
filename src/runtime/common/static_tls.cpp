@@ -13,7 +13,7 @@
 
 #include <tlhelp32.h> // after windows.h
 
-namespace xs::runtime {
+namespace xv::runtime {
 namespace {
 constexpr std::uint64_t dll_base = 0x180000000;
 constexpr DWORD section_rva = 0x1000, file_alignment = 0x200, section_alignment = 0x1000;
@@ -148,8 +148,8 @@ std::wstring temporary_folder() {
         throw std::runtime_error("No temporary folder for the TLS module");
     return std::wstring(buffer, length);
 }
-// Executables built with /GA read their TLS at index 0, xscarlet.exe's. The title takes it
-// and xscarlet.exe moves to the module's index, in every thread: those that exist with the
+// Executables built with /GA read their TLS at index 0, xvalkyrie.exe's. The title takes it
+// and xvalkyrie.exe moves to the module's index, in every thread: those that exist with the
 // rest suspended, new ones from the module's TLS callback.
 ULONG title_index = 0;
 std::atomic<bool> traded{false};
@@ -222,7 +222,7 @@ bool give_index_zero(ULONG index) {
 // The modules of earlier runs; the ones still loaded somewhere cannot go and stay.
 void remove_old(const std::wstring &folder) {
     WIN32_FIND_DATAW found;
-    const auto search = FindFirstFileW((folder + L"xscarlet-tls-*.dll").c_str(), &found);
+    const auto search = FindFirstFileW((folder + L"xvalkyrie-tls-*.dll").c_str(), &found);
     if (search == INVALID_HANDLE_VALUE)
         return;
     do
@@ -252,7 +252,7 @@ void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint
     const auto folder = temporary_folder();
     remove_old(folder);
     static unsigned count = 0;
-    const auto path = folder + L"xscarlet-tls-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+    const auto path = folder + L"xvalkyrie-tls-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
                       std::to_wstring(count++) + L".dll";
     {
         std::ofstream file(std::filesystem::path(path), std::ios::binary | std::ios::trunc);
@@ -275,7 +275,7 @@ void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint
     if (executable && !traded && give_index_zero(index))
         index = 0;
     else if (executable)
-        std::fprintf(stderr, "[Runtime] static TLS: index 0 stays xscarlet's\n");
+        std::fprintf(stderr, "[Runtime] static TLS: index 0 stays xvalkyrie's\n");
     auto *const slot = reinterpret_cast<ULONG *>(at("index_va"));
     DWORD previous = 0;
     if (!VirtualProtect(slot, sizeof index, PAGE_READWRITE, &previous))
@@ -284,6 +284,6 @@ void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint
     VirtualProtect(slot, sizeof index, previous, &previous);
     std::fprintf(stderr, "[Runtime] static TLS: %llu bytes, %zu callbacks, index %lu%s\n",
                  static_cast<unsigned long long>(end - start), callbacks.size(), index,
-                 index != loaded ? " (traded with xscarlet's)" : "");
+                 index != loaded ? " (traded with xvalkyrie's)" : "");
 }
-} // namespace xs::runtime
+} // namespace xv::runtime

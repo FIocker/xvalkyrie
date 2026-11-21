@@ -149,13 +149,13 @@ their shaders the same way was not checked: there was none to look at.
 
 ## Results
 
-- The Series sample runs with `xscarlet exec <folder>`: 3840x2160 frames; the picture at
-  frame 120 (`XS_D3D_PROBE`) is the sample's triangle on its grey background; the scripted
-  View button (`XS_INPUT_PRESS=view@2`) ends the program, as the sample's code does on that
-  button. `xscarlet bind` shows no missing import. Opening it from the window, and a real
+- The Series sample runs with `xvalkyrie exec <folder>`: 3840x2160 frames; the picture at
+  frame 120 (`XV_D3D_PROBE`) is the sample's triangle on its grey background; the scripted
+  View button (`XV_INPUT_PRESS=view@2`) ends the program, as the sample's code does on that
+  button. `xvalkyrie bind` shows no missing import. Opening it from the window, and a real
   gamepad or the keyboard, were not tried.
 - Three more samples of the same repository, built the same way, present frames with
-  `xscarlet exec`: SimpleTexture (the picture at frame 120 is its photograph), Gamepad and
+  `xvalkyrie exec`: SimpleTexture (the picture at frame 120 is its photograph), Gamepad and
   SimpleMeshShader (non-black averages; their pictures were not looked at). They needed
   three things the triangle did not: the caller check has to look further back than 64
   bytes for the load of the slot (160 now); `D3D12XboxCreateDevice` has to answer the
@@ -170,7 +170,7 @@ their shaders the same way was not checked: there was none to look at.
   device, loads its packs, and stops at its first pipelines for the reason above. It never
   presents a frame.
 - Regression titles after the Direct3D 12 layer, placement textures, console memory and
-  the Win32 overrides moved to `runtime/modules`, 1000 frames each with `XS_D3D_PROBE`:
+  the Win32 overrides moved to `runtime/modules`, 1000 frames each with `XV_D3D_PROBE`:
   four present a non-black back buffer. The fifth (the Frostbite one) gives an average of
   1.1 0.0 1.1 at frames 1000 and 3000, three runs. Two logs from before this work, both
   runs from the window, differ in one thing: the one with 1.1 0.0 1.1 has no input, the
@@ -182,8 +182,8 @@ their shaders the same way was not checked: there was none to look at.
 
 66 samples of the public repository have a Series configuration. Built the same way, 40
 compile and 26 do not (why was not looked at for each; the first ones miss headers of kits
-the build script does not set up). Each of the 40 was run with `xscarlet exec` for 12
-seconds and `XS_D3D_PROBE=120`, and the average of the back buffer read. Pictures were
+the build script does not set up). Each of the 40 was run with `xvalkyrie exec` for 12
+seconds and `XV_D3D_PROBE=120`, and the average of the back buffer read. Pictures were
 looked at for SimpleTriangle, SimpleTexture, SimpleMSAA and SmokeSimulation only.
 
 36 present frames with a non-black average. What the ones that did not at first needed:
@@ -197,7 +197,7 @@ looked at for SimpleTriangle, SimpleTexture, SimpleMSAA and SmokeSimulation only
   which has the console's GPU write a value or its clock to the title's memory when it gets
   there. Here the write happens when the list is recorded, with the host's clock: the
   times are CPU times.
-- SimpleMSAA was broken by `XS_D3D_PROBE` itself, not by the layer: the probe read every
+- SimpleMSAA was broken by `XV_D3D_PROBE` itself, not by the layer: the probe read every
   render target back as if it were in the render target state, and tried to copy a
   multisampled one to a buffer, after which the host removed the device. It now uses the
   state the title's last barrier left and skips multisampled targets. The same mistake
@@ -260,5 +260,5 @@ not tried.
 - DXGI outputs past the desktop's methods (`GetRefreshRate` and the like).
 - Titles built with control flow guard call through a dispatch function; the device's
   caller check does not know that form.
-- The shader compiler is the host's `dxcompiler.dll` when one is next to `xscarlet.exe`;
+- The shader compiler is the host's `dxcompiler.dll` when one is next to `xvalkyrie.exe`;
   none is shipped or fetched by the build.

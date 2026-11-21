@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <system_error>
 
-namespace xs::graphics {
+namespace xv::graphics {
 namespace {
 std::atomic<Backend> selected{Backend::d3d11};
 std::atomic<std::uint64_t> frames{0};
@@ -32,4 +32,4 @@ Backend selected_backend() { return selected; }
 void select_backend(Backend backend) { selected = backend; }
 void frame_counted() { ++frames; }
 std::uint64_t frames_presented() { return frames; }
-} // namespace xs::graphics
+} // namespace xv::graphics

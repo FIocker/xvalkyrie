@@ -2,7 +2,7 @@
 
 Notes from looking at one unpacked ERA title (XDK era, built with Visual Studio
 2012, C++/CX). Everything here comes from its own import table, its strings
-and its `AppxManifest.xml`. `xscarlet assess`, `bind` and `inspect-manifest`
+and its `AppxManifest.xml`. `xvalkyrie assess`, `bind` and `inspect-manifest`
 print the same information.
 
 ## Layout on disk
@@ -69,7 +69,7 @@ found in the executable, by namespace:
 ## Start-up sequence
 
 What the title does before its first frame, in order, as seen with
-`xscarlet exec --allow-missing`:
+`xvalkyrie exec --allow-missing`:
 
 1. Static initializers: creates a `Windows.Xbox.Media.GameTransportControls`
    and enables its buttons; reads the license from

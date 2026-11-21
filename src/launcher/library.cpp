@@ -12,7 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 
-namespace xs {
+namespace xv {
 namespace {
 std::string utf8(const std::filesystem::path &path) {
     const auto bytes = path.u8string();
@@ -254,7 +254,7 @@ std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::pa
             if (const auto now = stamp(it->second.title); now == it->second.stamp)
                 return it->second;
         }
-        auto title = xs::inspect(path);
+        auto title = xv::inspect(path);
         if (!title)
             return {};
         auto stamped = stamp(*title);
@@ -338,4 +338,4 @@ std::vector<LibraryTitle> cached_library(const std::vector<std::filesystem::path
               [](const auto &a, const auto &b) { return a.name < b.name; });
     return titles;
 }
-} // namespace xs
+} // namespace xv

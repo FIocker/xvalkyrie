@@ -4,9 +4,9 @@
 #include <utility>
 #include <windows.h>
 
-namespace xs::surface {
+namespace xv::surface {
 namespace {
-constexpr wchar_t class_name[] = L"XScarletKeyboard";
+constexpr wchar_t class_name[] = L"XValkyrieKeyboard";
 constexpr int text_id = 100;
 struct Prompt {
     TextRequest request;
@@ -124,4 +124,4 @@ void ask_text(TextRequest request, std::function<void(std::optional<std::wstring
         done(std::move(prompt.result));
     }).detach();
 }
-} // namespace xs::surface
+} // namespace xv::surface

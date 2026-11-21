@@ -22,7 +22,7 @@
 // fence once everything before them is done. Here a queue does its work when it is
 // submitted, on the thread that submits it, in order. Reads may be inflated (zlib); the
 // console's texture compression (BCPack) is not known here, and such a request fails.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 constexpr GUID file_iid{0x43704f9f, 0x27c6, 0x4a9f, {0x88, 0x15, 0xd1, 0x65, 0x27, 0x89, 0x4d, 0xf4}};
 constexpr GUID factory_iid{0xfb3b54ac, 0xbf82, 0x463a, {0xb7, 0x77, 0x73, 0x19, 0x58, 0x37, 0x86, 0x4d}};
@@ -271,9 +271,9 @@ class Queue final : public Object<QueueInterface> {
         for (auto &entry : work) {
             if (auto *const request = std::get_if<Request>(&entry)) {
                 const auto result = read(*request);
-                // XS_FILE_TRACE: the first requests, and every one that fails
+                // XV_FILE_TRACE: the first requests, and every one that fails
                 if (static std::atomic<int> shown{0};
-                    std::getenv("XS_FILE_TRACE") && (FAILED(result) || shown < 24) && shown++ < 200)
+                    std::getenv("XV_FILE_TRACE") && (FAILED(result) || shown < 24) && shown++ < 200)
                     std::fprintf(stderr,
                                  "[Runtime] DirectStorage request: options 0x%llx, %u bytes at "
                                  "%llu to %u bytes (intermediate %u): 0x%08lx\n",
@@ -389,7 +389,7 @@ class Factory final : public Object<FactoryInterface> {
                              path, console_file_path(path).c_str(), error);
             return HRESULT_FROM_WIN32(error);
         }
-        if (static std::atomic<int> shown{0}; std::getenv("XS_FILE_TRACE") && shown++ < 40)
+        if (static std::atomic<int> shown{0}; std::getenv("XV_FILE_TRACE") && shown++ < 40)
             std::fprintf(stderr, "[Runtime] DirectStorage: opened %ls (%zu characters) from %s\n",
                          path, wcslen(path),
                          detail::guest_location(_ReturnAddress()).c_str());
@@ -423,4 +423,4 @@ void install_dstorage(Registry &registry) {
     for (const auto *module : {"dstorage_xs.dll", "xcrdapi.dll"})
         registry.add(module, "DStorageGetFactory", reinterpret_cast<void *>(&get_factory));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

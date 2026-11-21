@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace xs::host {
+namespace xv::host {
 // folder of the running executable
 std::filesystem::path executable_directory();
 // Runs this executable again with `arguments` and waits for it: its exit code. `process`
@@ -35,4 +35,4 @@ class FileMapping {
   private:
     std::span<const std::uint8_t> bytes_;
 };
-} // namespace xs::host
+} // namespace xv::host

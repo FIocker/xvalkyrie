@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace xs::runtime::durango::d3d11x {
+namespace xv::runtime::durango::d3d11x {
 // What to do with one argument of a method. Argument 0 is the object itself.
 struct Fix {
     enum Type : std::uint8_t {
@@ -50,4 +50,4 @@ void first_development_kits(bool yes);
 bool first_development_kits();
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xv::runtime::durango::d3d11x

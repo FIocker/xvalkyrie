@@ -7,7 +7,7 @@
 #include <array>
 #include <string_view>
 
-namespace xs::analysis::data {
+namespace xv::analysis::data {
 inline constexpr std::array<std::string_view, 35> core_os{
     "avrt.dll",
     "bcrypt.dll",
@@ -1844,4 +1844,4 @@ inline constexpr std::array<std::string_view, 3> additional_game_os_apis{
     "DStorageGetFactory",
     "MFResetDXGIDeviceManagerX",
 };
-} // namespace xs::analysis::data
+} // namespace xv::analysis::data

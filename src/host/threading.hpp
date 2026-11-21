@@ -4,7 +4,7 @@
 #include <mutex>
 #include <stop_token>
 
-namespace xs::host {
+namespace xv::host {
 // Slot values are non-owning. Join participating threads before destroying a slot.
 class ThreadSlot {
   public:
@@ -31,4 +31,4 @@ class ManualEvent {
     std::condition_variable_any changed_;
     bool signaled_ = false;
 };
-} // namespace xs::host
+} // namespace xv::host

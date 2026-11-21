@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <exception>
 
-namespace xs::ui {
+namespace xv::ui {
 namespace {
 struct PageEntry {
     Settings::Page page;
@@ -206,7 +206,7 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
     if (begin_settings("rendering")) {
         setting(fonts, "Backend",
                 backend == graphics::Backend::vulkan
-                    ? "Vulkan: Direct3D 11 translated to Vulkan, shipped with xscarlet."
+                    ? "Vulkan: Direct3D 11 translated to Vulkan, shipped with xvalkyrie."
                     : "Direct3D 11: the host's own driver.");
         static constexpr const char *backends[] = {"Direct3D 11", "Vulkan"};
         int chosen = backend == graphics::Backend::vulkan ? 1 : 0;
@@ -217,7 +217,7 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
                 graphics_notice_ = std::string("Vulkan needs ") +
                                    std::string(graphics::vulkan_d3d11_module) + " and " +
                                    std::string(graphics::vulkan_dxgi_module) +
-                                   " next to xscarlet.exe. Build with -DXS_DXVK=ON.";
+                                   " next to xvalkyrie.exe. Build with -DXV_DXVK=ON.";
             else {
                 graphics::select_backend(picked);
                 try {
@@ -398,4 +398,4 @@ void Settings::about(const Fonts &fonts) {
     note(fonts, "Session logs, the files to attach when reporting a problem");
     path_field("##logs", config_directory() / "logs");
 }
-} // namespace xs::ui
+} // namespace xv::ui

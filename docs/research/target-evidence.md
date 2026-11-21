@@ -9,10 +9,10 @@ the file actually contains before implementing anything for it.
 3. Run:
 
    ```
-   xscarlet inspect title.exe
-   xscarlet inspect-config MicrosoftGame.config
-   xscarlet assess title.exe --config MicrosoftGame.config --entry title.exe
-   xscarlet bind title.exe
+   xvalkyrie inspect title.exe
+   xvalkyrie inspect-config MicrosoftGame.config
+   xvalkyrie assess title.exe --config MicrosoftGame.config --entry title.exe
+   xvalkyrie bind title.exe
    ```
 
 4. Compare with a desktop or Xbox One build of the same source if there is one.

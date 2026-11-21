@@ -17,7 +17,7 @@
 #include <winstring.h>
 #include <wrl/wrappers/corewrappers.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 namespace {
 using Microsoft::WRL::Make;
 using Microsoft::WRL::Wrappers::HString;
@@ -202,4 +202,4 @@ IInspectable *system_ui_class(std::wstring_view name) {
     return name == KeyboardOptionsFactory::name ? static_cast<IActivationFactory *>(options.Get())
                                                 : nullptr;
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

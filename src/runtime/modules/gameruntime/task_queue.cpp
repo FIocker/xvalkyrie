@@ -11,7 +11,7 @@
 // has two ports, work and completion, each with its own way of running callbacks: on the
 // thread pool, on the thread pool one at a time, inline, or only when the title asks
 // (XTaskQueueDispatch, usually once a frame).
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 enum class Mode : std::uint32_t { manual, thread_pool, serialized, immediate };
 struct Entry {
@@ -369,4 +369,4 @@ void install_task_queue() {
     implement("XThreadAssertNotTimeSensitive", &assert_not_time_sensitive);
     implement("XThreadVerifyNotTimeSensitive", &assert_not_time_sensitive);
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

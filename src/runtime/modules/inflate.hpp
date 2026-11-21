@@ -3,7 +3,7 @@
 #include <span>
 #include <vector>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 // Inflates a zlib stream (RFC 1950) onto the end of `out`; false if it is not one
 bool inflate_zlib(std::span<const std::uint8_t> stream, std::vector<std::uint8_t> &out);
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace xs {
+namespace xv {
 struct LibraryTitle {
     std::filesystem::path path;       // title directory or XVD/XVC file
     std::filesystem::path executable; // empty for packages
@@ -30,4 +30,4 @@ std::vector<LibraryTitle> discover_library(const std::vector<std::filesystem::pa
 // without reading any of them: what to show while discover_library runs. Never throws.
 std::vector<LibraryTitle> cached_library(const std::vector<std::filesystem::path> &roots,
                                          const std::filesystem::path &cache);
-} // namespace xs
+} // namespace xv

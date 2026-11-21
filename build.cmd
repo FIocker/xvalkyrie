@@ -60,10 +60,10 @@ if errorlevel 1 exit /b 1
 set "CACHE=build\win\CMakeCache.txt"
 if not exist "%CACHE%" set "RECONFIGURE=1"
 if "%RECONFIGURE%"=="0" (
-    findstr /x /c:"XS_DXVK:BOOL=%VULKAN%" "%CACHE%" >nul || set "RECONFIGURE=1"
+    findstr /x /c:"XV_DXVK:BOOL=%VULKAN%" "%CACHE%" >nul || set "RECONFIGURE=1"
 )
 if "%RECONFIGURE%"=="1" (
-    cmake -S . -B build\win -G "Visual Studio 17 2022" -A x64 -DXS_DXVK=%VULKAN%
+    cmake -S . -B build\win -G "Visual Studio 17 2022" -A x64 -DXV_DXVK=%VULKAN%
     if errorlevel 1 goto fail
 )
 if "%RUN_TESTS%"=="1" set "TARGET="
@@ -73,7 +73,7 @@ if "%RUN_TESTS%"=="1" (
     ctest --test-dir build\win -C %CONFIG% --output-on-failure --parallel %JOBS%
     if errorlevel 1 goto fail
 )
-echo Built: %CD%\build\win\%CONFIG%\xscarlet.exe
+echo Built: %CD%\build\win\%CONFIG%\xvalkyrie.exe
 popd
 exit /b 0
 

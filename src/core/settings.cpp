@@ -2,7 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
-namespace xs {
+namespace xv {
 Settings read_settings(std::istream &input) {
     const auto doc = nlohmann::json::parse(input);
     if (!doc.is_object()) {
@@ -17,4 +17,4 @@ Settings read_settings(std::istream &input) {
     }
     return result;
 }
-} // namespace xs
+} // namespace xv

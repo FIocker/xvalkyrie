@@ -2,7 +2,7 @@
 #include "runtime/durango/winrt/placeholder.hpp"
 #include <wrl.h>
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // Base of our WinRT classes. `Derived::name` is the runtime class name. An interface the
 // class does not implement is answered by a placeholder, so that the call that needs it
 // gets reported instead of the title giving up on the cast.
@@ -27,4 +27,4 @@ class Class
         return S_OK;
     }
 };
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

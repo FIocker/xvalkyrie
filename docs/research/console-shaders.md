@@ -7,7 +7,7 @@ One GDK title (see `gdk-titles.md`). A title whose shaders keep their bitcode
 runs as it is.
 
 What follows was read from one vertex shader of the Series title, dumped with
-`XS_SHADER_DUMP=<file>` (the first shader of the first pipeline the host turns down). It is
+`XV_SHADER_DUMP=<file>` (the first shader of the first pipeline the host turns down). It is
 one sample: nothing here was checked against a second shader, a pixel shader, or the Xbox
 One form.
 
@@ -142,5 +142,5 @@ What had to be right on the host for translated shaders to draw:
   `CopyFromSubresource`), since they are stored swizzled.
 
 Tools used, outside the tree: a corpus harness that translates and compiles every shader of
-a folder dumped with `XS_SHADER_CODE` and counts what stopped the others, and
-`XS_SHADER_STAND_INS=<stages>` / `XS_SHADER_SKIP=<text>` to find which shader breaks a run.
+a folder dumped with `XV_SHADER_CODE` and counts what stopped the others, and
+`XV_SHADER_STAND_INS=<stages>` / `XV_SHADER_SKIP=<text>` to find which shader breaks a run.

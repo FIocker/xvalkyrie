@@ -19,7 +19,7 @@
 // The Win32 functions a console answers differently from the host: libraries that are ours
 // or the title's, the console's drives, what a title writes for a debugger, and where it
 // puts its threads. ERA titles import them from kernelx.dll, GDK titles from API sets.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 // ours and the title's first, then the host's
 HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
@@ -50,8 +50,8 @@ HMODULE WINAPI load_library_a(const char *name) { return load_library_ex_a(name,
 BOOL WINAPI read_file(HANDLE file, void *buffer, DWORD bytes, DWORD *read, OVERLAPPED *overlapped) {
     prepare_title_write(buffer, bytes);
     const auto result = ReadFile(file, buffer, bytes, read, overlapped);
-    // XS_FILE_TRACE: a read the host turns down
-    if (static const bool trace = std::getenv("XS_FILE_TRACE") != nullptr;
+    // XV_FILE_TRACE: a read the host turns down
+    if (static const bool trace = std::getenv("XV_FILE_TRACE") != nullptr;
         trace && (overlapped || !result)) {
         const auto error = GetLastError();
         std::fprintf(stderr, "[Runtime] ReadFile(%p, %lu bytes at %llx, buffer %p): error %lu\n",
@@ -138,10 +138,10 @@ std::string console_path(const char *name) {
     return narrow;
 }
 
-// XS_FILE_TRACE: every file the title looks for and does not find, to see what content it
+// XV_FILE_TRACE: every file the title looks for and does not find, to see what content it
 // expects where
 void note_missing(const char *call, const wchar_t *name, bool failed) {
-    static const bool enabled = std::getenv("XS_FILE_TRACE") != nullptr;
+    static const bool enabled = std::getenv("XV_FILE_TRACE") != nullptr;
     if (!enabled || !failed)
         return;
     const auto error = GetLastError();
@@ -259,14 +259,14 @@ void WINAPI output_debug_string_a(const char *text) {
     std::fflush(stderr);
 }
 BOOL WINAPI set_threadpool_affinity_mask(PTP_POOL, DWORD_PTR) { return TRUE; }
-// XS_THREAD_TRACE: where the title puts its threads
+// XV_THREAD_TRACE: where the title puts its threads
 DWORD_PTR WINAPI set_thread_affinity_mask(HANDLE thread, DWORD_PTR mask) {
     auto previous = SetThreadAffinityMask(thread, mask);
     // processors the console has and the host has not: the thread stays where it is
     if (DWORD_PTR process = 0, system = 0;
         !previous && GetProcessAffinityMask(GetCurrentProcess(), &process, &system))
         previous = process;
-    if (std::getenv("XS_THREAD_TRACE")) {
+    if (std::getenv("XV_THREAD_TRACE")) {
         std::fprintf(stderr, "[Runtime] SetThreadAffinityMask(%lu, 0x%llx) -> 0x%llx from %s\n",
                      GetThreadId(thread), static_cast<unsigned long long>(mask),
                      static_cast<unsigned long long>(previous),
@@ -277,7 +277,7 @@ DWORD_PTR WINAPI set_thread_affinity_mask(HANDLE thread, DWORD_PTR mask) {
 }
 DWORD WINAPI get_current_processor_number() {
     const auto number = GetCurrentProcessorNumber();
-    if (static std::atomic<int> shown{0}; std::getenv("XS_THREAD_TRACE") && shown++ < 12) {
+    if (static std::atomic<int> shown{0}; std::getenv("XV_THREAD_TRACE") && shown++ < 12) {
         std::fprintf(stderr, "[Runtime] GetCurrentProcessorNumber -> %lu from %s\n", number,
                      detail::guest_location(_ReturnAddress()).c_str());
         std::fflush(stderr);
@@ -286,7 +286,7 @@ DWORD WINAPI get_current_processor_number() {
 }
 void WINAPI get_system_info(SYSTEM_INFO *info) {
     GetSystemInfo(info);
-    if (std::getenv("XS_THREAD_TRACE")) {
+    if (std::getenv("XV_THREAD_TRACE")) {
         std::fprintf(stderr, "[Runtime] GetSystemInfo: %lu processors, from %s\n",
                      info->dwNumberOfProcessors,
                      detail::guest_location(_ReturnAddress()).c_str());
@@ -438,4 +438,4 @@ void install_kernel(Registry &registry, Target target) {
          {"crypt32.dll", "msvcp_win.dll", "winhttp.dll", "bcrypt.dll", "advapi32.dll"})
         registry.forward(module, module);
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

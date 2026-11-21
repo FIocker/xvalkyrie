@@ -12,7 +12,7 @@
 // always connected, whose readings are what the emulated gamepad reads at the moment the
 // title asks. The interfaces are COM ones with the methods in the order of the public
 // GameInput header of the first kits.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 using Slot = void *;
 constexpr std::uint32_t kind_gamepad = 0x00040000, kind_controller = 0x0000000e,
@@ -207,4 +207,4 @@ void install_gameinput(Registry &registry) {
     registry.add("gameinput.dll", "GameInputCreate", reinterpret_cast<void *>(&game_input_create));
     registry.add("gameinput.dll", "#1", reinterpret_cast<void *>(&game_input_create));
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

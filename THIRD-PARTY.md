@@ -33,10 +33,10 @@ licensed and the license asks for this notice to be kept:
 
 ## DXVK (zlib/libpng license)
 
-With `-DXS_DXVK=ON`, [doitsujin/dxvk](https://github.com/doitsujin/dxvk) is
+With `-DXV_DXVK=ON`, [doitsujin/dxvk](https://github.com/doitsujin/dxvk) is
 fetched at commit `2c94c5f25cf75c313ef2a55b2e0c9276d67c28d6` and altered by
 `cmake/dxvk.patch` for console titles. The altered `d3d11.dll` and `dxgi.dll`
-are shipped as `xs_d3d11.dll` and `xs_dxgi.dll`; they are not the original
+are shipped as `xv_d3d11.dll` and `xv_dxgi.dll`; they are not the original
 DXVK. Its license:
 
     Copyright (c) 2017 Philip Rebohle

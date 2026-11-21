@@ -13,7 +13,7 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
-namespace xs {
+namespace xv {
 namespace {
 std::string hex(std::uint64_t value) {
     constexpr char digits[] = "0123456789abcdef";
@@ -173,7 +173,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
                                       ", the Direct3D runtime of a Windows PC build."
                                 : std::string("Imports modules of more than one target.");
             result.detail +=
-                " XScarlet runs Xbox One and Xbox Series X|S builds. No guest code ran.";
+                " XValkyrie runs Xbox One and Xbox Series X|S builds. No guest code ran.";
             return result;
         }
         result.target = analysis::console_target(profile);
@@ -204,7 +204,7 @@ LaunchResult launch_file(const std::filesystem::path &path) {
             std::to_string(map.at("relocation").at("dir64_fixups").get<std::uint64_t>()) +
             " relocations. Of " + std::to_string(plan.at("imports").size()) + " imports in " +
             std::to_string(profile.at("modules").size()) + " modules, " +
-            std::to_string(plan.at("own").get<std::size_t>()) + " bind to XScarlet, " +
+            std::to_string(plan.at("own").get<std::size_t>()) + " bind to XValkyrie, " +
             std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs, " +
             std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs, " +
             std::to_string(plan.at("system").get<std::size_t>()) +
@@ -256,4 +256,4 @@ LaunchResult launch_title(const std::filesystem::path &path) {
     }
     return result;
 }
-} // namespace xs
+} // namespace xv

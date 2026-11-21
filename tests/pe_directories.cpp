@@ -21,7 +21,7 @@ void put(std::vector<std::uint8_t> &bytes, std::size_t pos, std::uint64_t value,
 } // namespace
 
 TEST_CASE("pe directories") {
-    const auto contents = xs::pe::inspect(fixture()).at("directory_contents");
+    const auto contents = xv::pe::inspect(fixture()).at("directory_contents");
     const auto &module = contents.at("imports").at(0);
     CHECK(module.at("module") == "fixture.dll");
     CHECK(module.at("symbols").at(0).at("name") == "Probe");
@@ -37,8 +37,8 @@ TEST_CASE("pe directories") {
 }
 
 TEST_CASE("pe directories in light detail") {
-    const auto full = xs::pe::inspect(fixture()).at("directory_contents");
-    const auto light = xs::pe::inspect(fixture(), xs::pe::Detail::light).at("directory_contents");
+    const auto full = xv::pe::inspect(fixture()).at("directory_contents");
+    const auto light = xv::pe::inspect(fixture(), xv::pe::Detail::light).at("directory_contents");
     // the same tables, the long lists left out
     CHECK(light.at("imports") == full.at("imports"));
     CHECK(light.at("exceptions").at("count") == full.at("exceptions").size());
@@ -52,21 +52,21 @@ TEST_CASE("pe directory variations") {
     auto bytes = fixture();
     SECTION("no directories") {
         put(bytes, 152 + 108, 0);
-        CHECK(xs::pe::inspect(bytes).at("directory_contents").empty());
+        CHECK(xv::pe::inspect(bytes).at("directory_contents").empty());
     }
     SECTION("no ILT, falls back to IAT") {
         put(bytes, raw, 0);
-        CHECK(xs::pe::inspect(bytes)["directory_contents"]["imports"][0]["symbols"].size() == 2);
+        CHECK(xv::pe::inspect(bytes)["directory_contents"]["imports"][0]["symbols"].size() == 2);
     }
     SECTION("bound IAT") {
         put(bytes, raw, 0);
         put(bytes, raw + 4, 1);
-        CHECK_FALSE(xs::pe::inspect(bytes)["directory_contents"]["imports"][0].contains("symbols"));
+        CHECK_FALSE(xv::pe::inspect(bytes)["directory_contents"]["imports"][0].contains("symbols"));
     }
     SECTION("name in headers") {
         put(bytes, raw + 12, 64);
         bytes[64] = 'Q';
-        CHECK(xs::pe::inspect(bytes)["directory_contents"]["imports"][0]["module"] == "Q");
+        CHECK(xv::pe::inspect(bytes)["directory_contents"]["imports"][0]["module"] == "Q");
     }
     SECTION("name in another section") {
         bytes.resize(1536);
@@ -79,17 +79,17 @@ TEST_CASE("pe directory variations") {
         put(bytes, 152 + 56, 0x3000);
         put(bytes, raw + 12, 0x2008);
         bytes[1032] = 'Z';
-        CHECK(xs::pe::inspect(bytes)["directory_contents"]["imports"][0]["module"] == "Z");
+        CHECK(xv::pe::inspect(bytes)["directory_contents"]["imports"][0]["module"] == "Z");
     }
     SECTION("exceptions on arm64") {
         put(bytes, 132, 0xaa64, 2);
-        CHECK(xs::pe::inspect(bytes)["directory_contents"]["exceptions"].contains("status"));
+        CHECK(xv::pe::inspect(bytes)["directory_contents"]["exceptions"].contains("status"));
     }
     SECTION("HIGHADJ relocation") {
         put(bytes, raw + 0x108, 0x4001, 2);
         put(bytes, raw + 0x10a, 0xf234, 2);
         const auto entries =
-            xs::pe::inspect(bytes)["directory_contents"]["base_relocations"][0]["entries"];
+            xv::pe::inspect(bytes)["directory_contents"]["base_relocations"][0]["entries"];
         REQUIRE(entries.size() == 1);
         CHECK(entries.at(0).at("adjustment_word") == 0xf234);
     }
@@ -122,5 +122,5 @@ TEST_CASE("malformed pe directories") {
     }
     SECTION("partial exception entry") { put(bytes, dirs + 3 * 8 + 4, 13); }
     SECTION("section overlaps headers") { put(bytes, 392 + 12, 0x180); }
-    CHECK_THROWS_AS(xs::pe::inspect(bytes), std::runtime_error);
+    CHECK_THROWS_AS(xv::pe::inspect(bytes), std::runtime_error);
 }

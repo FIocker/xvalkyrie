@@ -1,9 +1,9 @@
 #pragma once
 
-namespace xs::surface {
+namespace xv::surface {
 class TitleWindow;
 }
-namespace xs::runtime {
+namespace xv::runtime {
 class Registry;
 namespace modules {
 // The window a GDK title's frames go to. Such a title makes a window of its own, which on
@@ -14,4 +14,4 @@ surface::TitleWindow &title_window();
 // CreateWindowEx and ShowWindow for a title's own windows
 void install_window(Registry &registry);
 } // namespace modules
-} // namespace xs::runtime
+} // namespace xv::runtime

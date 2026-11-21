@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace xs::pe {
+namespace xv::pe {
 struct Bytes {
     std::span<const std::uint8_t> bytes;
 
@@ -50,4 +50,4 @@ struct Image {
         throw std::runtime_error("RVA has no file-backed bytes");
     }
 };
-} // namespace xs::pe
+} // namespace xv::pe

@@ -36,7 +36,7 @@
 #include <utility>
 #include <vector>
 
-namespace xs {
+namespace xv {
 namespace {
 struct Glfw {
     Glfw() {
@@ -157,7 +157,7 @@ class Desktop {
         } else {
             splash_ = title_splash(path);
         }
-        glfwSetWindowTitle(window_, ("XScarlet - " + name_).c_str());
+        glfwSetWindowTitle(window_, ("XValkyrie - " + name_).c_str());
         path_ = path;
         loading_ = std::async(std::launch::async, hooks_.load, path);
     }
@@ -278,7 +278,7 @@ class Desktop {
         title_.reset();
         notice_.clear();
         exit_code_ = 0;
-        glfwSetWindowTitle(window_, "XScarlet");
+        glfwSetWindowTitle(window_, "XValkyrie");
     }
     void poll() {
         if (dialog_.valid() &&
@@ -372,7 +372,7 @@ class Desktop {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem("About XScarlet"))
+            if (ImGui::MenuItem("About XValkyrie"))
                 settings_.show(ui::Settings::Page::about);
             ImGui::EndMenu();
         }
@@ -972,7 +972,7 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> window(
-        glfwCreateWindow(1180, 740, "XScarlet", nullptr, nullptr), glfwDestroyWindow);
+        glfwCreateWindow(1180, 740, "XValkyrie", nullptr, nullptr), glfwDestroyWindow);
     if (!window) {
         const char *message = nullptr;
         glfwGetError(&message);
@@ -1029,4 +1029,4 @@ int run_desktop(const DesktopHooks &hooks, const std::filesystem::path &initial)
     }
     return desktop.exit_code();
 }
-} // namespace xs
+} // namespace xv

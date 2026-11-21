@@ -11,9 +11,9 @@
 
 #include <tlhelp32.h> // after windows.h
 
-// XS_WATCHDOG: when no frame has been presented for 5 seconds, the stack of every thread of
+// XV_WATCHDOG: when no frame has been presented for 5 seconds, the stack of every thread of
 // the process goes to the log, three times per stall, to see what the title is waiting on.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace {
 std::atomic<std::int64_t> last_frame{0};
 std::int64_t now() {
@@ -97,21 +97,21 @@ LONG WINAPI thread_named(EXCEPTION_POINTERS *info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 const bool names_kept = [] {
-    if (std::getenv("XS_WATCHDOG") || std::getenv("XS_THREAD_DUMP"))
+    if (std::getenv("XV_WATCHDOG") || std::getenv("XV_THREAD_DUMP"))
         AddVectoredExceptionHandler(1, &thread_named);
     return true;
 }();
 } // namespace
 
 void frame_watchdog() {
-    // XS_THREAD_DUMP=<frame>: the same stacks once, at that frame, of a title that goes on
+    // XV_THREAD_DUMP=<frame>: the same stacks once, at that frame, of a title that goes on
     // presenting while something in it waits
-    static const char *const dump_at = std::getenv("XS_THREAD_DUMP");
+    static const char *const dump_at = std::getenv("XV_THREAD_DUMP");
     if (static std::atomic<int> frames{0}; dump_at && ++frames == std::atoi(dump_at)) {
         std::fprintf(stderr, "[Runtime] the threads at frame %s:\n", dump_at);
         dump_threads();
     }
-    static const bool enabled = std::getenv("XS_WATCHDOG") != nullptr;
+    static const bool enabled = std::getenv("XV_WATCHDOG") != nullptr;
     if (!enabled)
         return;
     if (last_frame.exchange(now()) == 0)
@@ -132,4 +132,4 @@ void frame_watchdog() {
             }
         }).detach();
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

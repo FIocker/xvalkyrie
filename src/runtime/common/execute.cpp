@@ -26,7 +26,7 @@
 
 // One guest per process, running on its own thread. Same ABI as the host,
 // so an import is just a function pointer.
-namespace xs::runtime {
+namespace xv::runtime {
 namespace {
 // A DLL shipped with the title, loaded from its folder the same way as the executable.
 struct TitleModule {
@@ -81,7 +81,7 @@ const std::wstring *guest_path(HMODULE module) {
     return title && title->base == reinterpret_cast<std::uint64_t>(module) ? &title->path : nullptr;
 }
 
-// The process is xscarlet.exe, but the guest expects to be the main module.
+// The process is xvalkyrie.exe, but the guest expects to be the main module.
 HMODULE WINAPI get_module_handle_w(LPCWSTR name) {
     return name ? GetModuleHandleW(name) : guest_module();
 }
@@ -163,7 +163,7 @@ struct Override {
     std::string_view symbol;
     void *function;
 };
-// The command line is xscarlet's; the title gets one of its own with nothing but its path,
+// The command line is xvalkyrie's; the title gets one of its own with nothing but its path,
 // as when the console starts it. Built once, the first time it is asked for.
 struct CommandLine {
     std::wstring wide;
@@ -574,7 +574,7 @@ LONG WINAPI unhandled(EXCEPTION_POINTERS *info) {
     }
     return title_filter ? title_filter(info) : EXCEPTION_CONTINUE_SEARCH;
 }
-// XS_FIRST_CHANCE: exceptions as they happen, also those the title handles itself (engines
+// XV_FIRST_CHANCE: exceptions as they happen, also those the title handles itself (engines
 // that catch a thread's fault and only say that it crashed); not thread names or debug text
 LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
     const auto code = info->ExceptionRecord->ExceptionCode;
@@ -587,8 +587,8 @@ LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
-// XS_BREAK=<rva>[,<rva>...]: the registers each time the title gets to one of these addresses
-// of its image (hexadecimal), up to 40 times each or XS_BREAK_LIMIT. A breakpoint is put there; the handler
+// XV_BREAK=<rva>[,<rva>...]: the registers each time the title gets to one of these addresses
+// of its image (hexadecimal), up to 40 times each or XV_BREAK_LIMIT. A breakpoint is put there; the handler
 // puts the instruction back, steps over it and sets the breakpoint again.
 struct Breakpoint {
     std::uint8_t *address;
@@ -652,10 +652,10 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 void set_breakpoints(std::uint8_t *base) {
-    const char *text = std::getenv("XS_BREAK");
+    const char *text = std::getenv("XV_BREAK");
     if (!text)
         return;
-    if (const char *limit = std::getenv("XS_BREAK_LIMIT"))
+    if (const char *limit = std::getenv("XV_BREAK_LIMIT"))
         break_limit = std::atoi(limit);
     AddVectoredExceptionHandler(1, &at_breakpoint);
     for (char *end = nullptr; *text; text = *end ? end + 1 : end) {
@@ -869,8 +869,8 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     // Delay-load imports are bound by the image's own helper on first use, through
     // LoadLibrary and GetProcAddress or ResolveDelayLoadedAPI, which are ours.
 
-    // XS_MUTE does the same as the option, for runs started from the window
-    if ((execution.mute || std::getenv("XS_MUTE")) && !audio::mute_process())
+    // XV_MUTE does the same as the option, for runs started from the window
+    if ((execution.mute || std::getenv("XV_MUTE")) && !audio::mute_process())
         std::fprintf(stderr, "[Runtime] could not mute the audio of this process\n");
 
     detail::set_save_directory(execution.save_directory);
@@ -880,7 +880,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     Guest state;
     state.path = std::filesystem::absolute(path).wstring();
     state.directory = std::filesystem::absolute(path).parent_path();
-    // a title finds its files relative to its own folder, wherever xscarlet was started
+    // a title finds its files relative to its own folder, wherever xvalkyrie was started
     if (!SetCurrentDirectoryW(state.directory.c_str()))
         throw std::runtime_error("Cannot enter the title's folder");
     state.stubs = stubs.memory;
@@ -964,7 +964,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     }
 #ifdef _MSC_VER
     SetUnhandledExceptionFilter(&unhandled);
-    if (std::getenv("XS_FIRST_CHANCE"))
+    if (std::getenv("XV_FIRST_CHANCE"))
         AddVectoredExceptionHandler(0, &first_chance);
     set_breakpoints(reinterpret_cast<std::uint8_t *>(state.base));
 #endif
@@ -983,4 +983,4 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
         RtlDeleteFunctionTable(functions);
     return code;
 }
-} // namespace xs::runtime
+} // namespace xv::runtime

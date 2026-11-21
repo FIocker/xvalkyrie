@@ -4,10 +4,10 @@
 #include <cmath>
 
 // Roboto Medium, generated from the file by cmake/Embed.cmake
-extern const unsigned char xs_font_roboto[];
-extern const unsigned int xs_font_roboto_size;
+extern const unsigned char xv_font_roboto[];
+extern const unsigned int xv_font_roboto_size;
 
-namespace xs::ui {
+namespace xv::ui {
 ImU32 color::fade(ImU32 color, float alpha) {
     const auto old = static_cast<float>(color >> IM_COL32_A_SHIFT & 0xff);
     const auto value = static_cast<ImU32>(std::clamp(old * alpha, 0.f, 255.f));
@@ -19,8 +19,8 @@ Fonts load_fonts() {
     const auto add = [&](float size, const ImWchar *ranges = nullptr) {
         ImFontConfig config;
         config.FontDataOwnedByAtlas = false;
-        return atlas.AddFontFromMemoryTTF(const_cast<unsigned char *>(xs_font_roboto),
-                                          static_cast<int>(xs_font_roboto_size), size, &config,
+        return atlas.AddFontFromMemoryTTF(const_cast<unsigned char *>(xv_font_roboto),
+                                          static_cast<int>(xv_font_roboto_size), size, &config,
                                           ranges);
     };
     // pairs of first and last character; the atlas keeps the pointer
@@ -136,13 +136,13 @@ void glow(ImDrawList *list, ImVec2 center, float radius, ImU32 inner) {
 
 ImVec2 wordmark_size(const Fonts &fonts, float size) {
     auto *const font = wordmark_font(fonts, size);
-    return font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, "XScarlet");
+    return font->CalcTextSizeA(font->FontSize, FLT_MAX, 0, "XValkyrie");
 }
 void wordmark(ImDrawList *list, const Fonts &fonts, ImVec2 at, float size, float alpha) {
     auto *const font = wordmark_font(fonts, size);
     // on whole pixels, or the font's own pixels straddle two of the screen's
     list->AddText(font, font->FontSize, {std::floor(at.x), std::floor(at.y)},
-                  color::fade(color::text, alpha), "XScarlet");
+                  color::fade(color::text, alpha), "XValkyrie");
 }
 void centered_text(ImDrawList *list, ImFont *font, float x, float y, ImU32 color,
                    const char *text) {
@@ -169,4 +169,4 @@ void backdrop(const Fonts &fonts, ImVec2 min, ImVec2 max, float mark) {
     }
     list->PopClipRect();
 }
-} // namespace xs::ui
+} // namespace xv::ui

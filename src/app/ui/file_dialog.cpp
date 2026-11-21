@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace xs {
+namespace xv {
 namespace {
 std::runtime_error dialog_error() {
     const char *reason = NFD_GetError();
@@ -59,4 +59,4 @@ std::future<std::filesystem::path> pick_title_folder(GLFWwindow *owner) {
         return std::filesystem::path(std::u8string(text.begin(), text.end()));
     });
 }
-} // namespace xs
+} // namespace xv

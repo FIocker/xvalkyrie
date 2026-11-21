@@ -6,7 +6,7 @@
 // memory. Titles use it to size and fill memory they hand to Direct3D themselves. Since both
 // sides of that are ours, the layout is the plainest one: every mip of every array slice in
 // order, rows top to bottom, no tiling.
-namespace xs::runtime {
+namespace xv::runtime {
 class Registry;
 namespace modules {
 // DXGI_FORMAT -> bytes of one pixel, or of one 4x4 block for the block-compressed formats
@@ -21,4 +21,4 @@ std::uint64_t texture_bytes(std::uint32_t width, std::uint32_t height, std::uint
 // `module` is the name the console gives the DLL
 void install_xg(Registry &registry, std::string_view module);
 } // namespace modules
-} // namespace xs::runtime
+} // namespace xv::runtime

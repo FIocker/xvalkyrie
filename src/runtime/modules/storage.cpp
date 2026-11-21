@@ -7,7 +7,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 namespace fs = std::filesystem;
 namespace {
 // Files of a container that are not blobs start with a character escaping never produces.
@@ -216,4 +216,4 @@ std::vector<SaveSpace::Blob> SaveSpace::blobs(const std::string &container,
               [](const auto &a, const auto &b) { return a.name < b.name; });
     return result;
 }
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

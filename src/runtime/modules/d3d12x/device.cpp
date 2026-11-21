@@ -25,7 +25,7 @@
 
 // d3d12_x.dll and d3d12_xs.dll on the host's Direct3D 12. Both consoles have the same
 // interfaces up to the methods each added last; `console` says which the title was built for.
-namespace xs::runtime::modules::d3d12x {
+namespace xv::runtime::modules::d3d12x {
 namespace {
 Target console = Target::durango;
 AdapterWrapper adapter_wrapper = nullptr;
@@ -429,7 +429,7 @@ std::uint64_t STDMETHODCALLTYPE moved_method(void *self, std::uint64_t a, std::u
 // GetOpaqueResourceTypeX, which nothing here has
 HRESULT STDMETHODCALLTYPE no_console_method(void *) { return E_NOTIMPL; }
 void console_resource(void *resource) {
-    if (resource && std::getenv("XS_PATCH_RESOURCES"))
+    if (resource && std::getenv("XV_PATCH_RESOURCES"))
         console_vtable<Family::resource>(resource, 15, 17,
                                          {{15, reinterpret_cast<Slot>(&no_console_method)},
                                           {16, reinterpret_cast<Slot>(&no_console_method)}});
@@ -684,7 +684,7 @@ void decode_written(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
         return;
     // what kinds of descriptors titles write, by the type in the last dword (buffers 0, images
     // 8 and up), once each
-    if (static std::atomic<std::uint32_t> seen{0}; std::getenv("XS_D3D_TRACE")) {
+    if (static std::atomic<std::uint32_t> seen{0}; std::getenv("XV_D3D_TRACE")) {
         const std::uint32_t bit = 1u << (words[3] >> 28);
         if (!(seen.fetch_or(bit) & bit))
             std::fprintf(stderr, "[Runtime] descriptor written by the title: %08x %08x %08x %08x\n",
@@ -992,7 +992,7 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     }
     ++decoded[type & 3];
     if (static std::atomic<std::uint32_t> shown{0};
-        std::getenv("XS_D3D_TRACE") && first != 0 && !(shown.fetch_or(1u << type) & (1u << type))) {
+        std::getenv("XV_D3D_TRACE") && first != 0 && !(shown.fetch_or(1u << type) & (1u << type))) {
         std::uint32_t more[4]{};
         if (heap.stride >= 32)
             std::memcpy(more, reinterpret_cast<const void *>(at + 16), sizeof more);
@@ -1190,7 +1190,7 @@ void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
         self, resource, counter, desc, host_handle(handle));
     mark_host(handle);
 }
-// the resource behind each render target view, for XS_D3D_PROBE
+// the resource behind each render target view, for XV_D3D_PROBE
 std::mutex target_mutex;
 std::map<std::uint64_t, ID3D12Resource *> target_of;
 std::atomic<ID3D12Resource *> last_target{nullptr};
@@ -1407,7 +1407,7 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
                                                    const D3D12_CLEAR_VALUE *clear, REFIID iid,
                                                    void **resource) {
     if (static std::atomic<int> shown{0};
-        desc && std::getenv("XS_D3D_TRACE") &&
+        desc && std::getenv("XV_D3D_TRACE") &&
         (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER || shown < 4) && shown++ < 40) {
         std::uint64_t first = 0;
         MEMORY_BASIC_INFORMATION info{};
@@ -1443,7 +1443,7 @@ D3D12_PRIMITIVE_TOPOLOGY_TYPE host_topology_type(D3D12_PRIMITIVE_TOPOLOGY_TYPE t
     return type == 19 || type == 32 ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE : type;
 }
 // What a shader a pipeline was turned down with is made of: its container's parts by name
-// and size. A console build may carry only code for the console's GPU. XS_SHADER_DUMP=<file>
+// and size. A console build may carry only code for the console's GPU. XV_SHADER_DUMP=<file>
 // writes the first one there.
 void describe_shader(const char *stage, const D3D12_SHADER_BYTECODE &code) {
     const auto *const bytes = static_cast<const std::uint8_t *>(code.pShaderBytecode);
@@ -1466,8 +1466,8 @@ void describe_shader(const char *stage, const D3D12_SHADER_BYTECODE &code) {
     std::fprintf(stderr, "[Runtime]   %s shader, %zu bytes, starts %.4s, parts:%s\n", stage,
                  static_cast<std::size_t>(code.BytecodeLength), bytes, parts.c_str());
     if (static std::atomic<bool> dumped{false};
-        std::getenv("XS_SHADER_DUMP") && !dumped.exchange(true))
-        if (auto *const file = std::fopen(std::getenv("XS_SHADER_DUMP"), "wb")) {
+        std::getenv("XV_SHADER_DUMP") && !dumped.exchange(true))
+        if (auto *const file = std::fopen(std::getenv("XV_SHADER_DUMP"), "wb")) {
             std::fwrite(bytes, 1, code.BytecodeLength, file);
             std::fclose(file);
         }
@@ -1716,10 +1716,10 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
             }
             std::fprintf(stderr, "[Runtime] its chunks:%s\n", tags.c_str());
         }
-        // XS_D3D_TRACE: the first shaders the host turned down, to look at
+        // XV_D3D_TRACE: the first shaders the host turned down, to look at
         if (static std::atomic<int> dumped{0};
-            bytes && std::getenv("XS_D3D_TRACE") && std::getenv("TEMP") && dumped < 4)
-            if (auto *const file = std::fopen((std::string(std::getenv("TEMP")) + "\\xs_shader_" +
+            bytes && std::getenv("XV_D3D_TRACE") && std::getenv("TEMP") && dumped < 4)
+            if (auto *const file = std::fopen((std::string(std::getenv("TEMP")) + "\\xv_shader_" +
                                                std::to_string(dumped++) + ".bin")
                                                   .c_str(),
                                               "wb")) {
@@ -1915,7 +1915,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
         heap = &mappable;
     }
     if (static std::atomic<int> shown{0};
-        std::getenv("XS_D3D_TRACE") && heap && desc && shown++ < 40)
+        std::getenv("XV_D3D_TRACE") && heap && desc && shown++ < 40)
         std::fprintf(stderr,
                      "[Runtime] CreateCommittedResource heap %d flags 0x%x dimension %d %llux%u "
                      "format %d flags 0x%x state 0x%x\n",
@@ -1948,7 +1948,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     }
     return result;
 }
-// XS_D3D_DEBUG: the host's debug layer, whose messages go to the log when something the title
+// XV_D3D_DEBUG: the host's debug layer, whose messages go to the log when something the title
 // asked for is turned down
 std::atomic<ID3D12InfoQueue *> debug_messages{nullptr};
 void report_messages() {
@@ -1982,7 +1982,7 @@ struct ListProxy {
     std::uint8_t fields[0x600 - sizeof(Slot *)];
     ID3D12GraphicsCommandList *host;
     std::atomic<ULONG> references;
-    ID3D12Resource *target = nullptr; // bound last, for XS_D3D_PROBE's draw counts
+    ID3D12Resource *target = nullptr; // bound last, for XV_D3D_PROBE's draw counts
     const void *graphics_root = nullptr, *compute_root = nullptr;
     ID3D12DescriptorHeap *heaps[2]{}; // the host's, as bound: views, then samplers
     UINT topology = 0;                 // as the title set it, the console's own included
@@ -2042,7 +2042,7 @@ std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::ui
                                             std::uint64_t c, std::uint64_t d, std::uint64_t e,
                                             std::uint64_t f, std::uint64_t g, std::uint64_t h,
                                             std::uint64_t i, std::uint64_t j) {
-    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool tracing = std::getenv("XV_D3D_TRACE") != nullptr;
     if (static std::atomic<int> calls{0}; tracing && calls++ < 2) {
         std::fprintf(
             stderr,
@@ -2284,9 +2284,9 @@ void STDMETHODCALLTYPE copy_texture_region_x(void *self,
 void STDMETHODCALLTYPE execute_bundle(void *self, ID3D12GraphicsCommandList *bundle) {
     host_of(self)->ExecuteBundle(static_cast<List *>(host_list(bundle)));
 }
-// XS_D3D_TRACE: the first calls of a method, with a handle and the host's for it
+// XV_D3D_TRACE: the first calls of a method, with a handle and the host's for it
 void trace_handle(const char *method, Handle handle) {
-    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool tracing = std::getenv("XV_D3D_TRACE") != nullptr;
     static std::atomic<int> calls{0};
     if (tracing && calls++ < 24) {
         std::fprintf(stderr, "[Runtime] Direct3D 12 %s(%llx -> %llx)\n", method,
@@ -2372,11 +2372,11 @@ void STDMETHODCALLTYPE set_graphics_root_table(void *self, UINT parameter,
     bind_heap_of(self, table.ptr);
     host_of(self)->SetGraphicsRootDescriptorTable(parameter, host_gpu(table));
 }
-// XS_D3D_PROBE: draws per render target
+// XV_D3D_PROBE: draws per render target
 std::mutex draw_mutex;
 std::map<ID3D12Resource *, std::uint64_t> draws_into;
 void count_draw(void *self) {
-    static const bool probing = std::getenv("XS_D3D_PROBE") != nullptr;
+    static const bool probing = std::getenv("XV_D3D_PROBE") != nullptr;
     if (!probing)
         return;
     const std::lock_guard lock(draw_mutex);
@@ -2468,9 +2468,9 @@ void STDMETHODCALLTYPE draw_indexed_instanced(void *self, UINT indices, UINT ins
     }
     host_of(self)->DrawIndexedInstanced(indices, instances, first, base, first_instance);
 }
-// XS_D3D_TRACE: a GPU address the title gives, and whether it is CPU memory of the process
+// XV_D3D_TRACE: a GPU address the title gives, and whether it is CPU memory of the process
 void trace_address(const char *method, std::uint64_t address) {
-    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool tracing = std::getenv("XV_D3D_TRACE") != nullptr;
     static std::atomic<int> calls{0};
     if (!tracing || calls++ >= 24)
         return;
@@ -2536,7 +2536,7 @@ void STDMETHODCALLTYPE so_set_targets(void *self, UINT start, UINT count,
     host_of(self)->SOSetTargets(start, count, views ? host.data() : nullptr);
 }
 void STDMETHODCALLTYPE set_viewports(void *self, UINT count, const D3D12_VIEWPORT *viewports) {
-    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool tracing = std::getenv("XV_D3D_TRACE") != nullptr;
     if (static std::atomic<int> calls{0}; tracing && viewports && count && calls++ < 6) {
         std::fprintf(stderr, "[Runtime] Direct3D 12 RSSetViewports(%u: %g %g %g %g %g %g)\n", count,
                      viewports->TopLeftX, viewports->TopLeftY, viewports->Width, viewports->Height,
@@ -2546,7 +2546,7 @@ void STDMETHODCALLTYPE set_viewports(void *self, UINT count, const D3D12_VIEWPOR
     host_of(self)->RSSetViewports(count, viewports);
 }
 void STDMETHODCALLTYPE set_scissors(void *self, UINT count, const D3D12_RECT *rects) {
-    static const bool tracing = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool tracing = std::getenv("XV_D3D_TRACE") != nullptr;
     if (static std::atomic<int> calls{0}; tracing && rects && count && calls++ < 6) {
         std::fprintf(stderr, "[Runtime] Direct3D 12 RSSetScissorRects(%u: %ld %ld %ld %ld)\n",
                      count, rects->left, rects->top, rects->right, rects->bottom);
@@ -2723,9 +2723,9 @@ void configure_lists() {
         return;
     }
     list_vtable[83] = reinterpret_cast<Slot>(&copy_texture_region_x);
-    // XS_D3D_NO_QUERIES: no queries (BeginQuery, EndQuery, ResolveQueryData), which the
+    // XV_D3D_NO_QUERIES: no queries (BeginQuery, EndQuery, ResolveQueryData), which the
     // debug layer does not get through with some titles
-    if (std::getenv("XS_D3D_NO_QUERIES"))
+    if (std::getenv("XV_D3D_NO_QUERIES"))
         ignore({28, 29, 30});
     list_vtable[98] = reinterpret_cast<Slot>(&dispatch_mesh_x);
     // DriverHintX, the counters, and the binning of primitive batches
@@ -2910,7 +2910,7 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
     auto uploads = take_d3d12_uploads();
     if (uploads.empty())
         return;
-    if (static std::atomic<int> shown{0}; std::getenv("XS_D3D_TRACE") && shown++ < 5) {
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_TRACE") && shown++ < 5) {
         std::fprintf(stderr,
                      "[Runtime] uploading %zu placement textures, the first with %zu "
                      "subresources\n",
@@ -3014,7 +3014,7 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
 // ID3D12CommandQueue::ExecuteCommandLists: the host's lists for the title's proxies
 void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT count,
                                              ID3D12CommandList *const *lists) {
-    if (const auto *text = std::getenv("XS_D3D_SLOW"))
+    if (const auto *text = std::getenv("XV_D3D_SLOW"))
         Sleep(std::atoi(text));
     decode_written_heaps();
     upload_placements_d3d12(self);
@@ -3022,9 +3022,9 @@ void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT coun
     for (UINT i = 0; i < count; ++i)
         host[i] = host_list(lists[i]);
     self->ExecuteCommandLists(count, host.data());
-    // XS_D3D_SYNC: the GPU done with this work before the title goes on, to tell its waits
+    // XV_D3D_SYNC: the GPU done with this work before the title goes on, to tell its waits
     // from ours
-    if (std::getenv("XS_D3D_SYNC")) {
+    if (std::getenv("XV_D3D_SYNC")) {
         static ID3D12Fence *fence = nullptr;
         static UINT64 value = 0;
         if (!fence) {
@@ -3359,16 +3359,16 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     configure_lists();
     using Create = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
     static const auto create = host_d3d12<Create>("D3D12CreateDevice");
-    if (std::getenv("XS_D3D_DEBUG")) {
+    if (std::getenv("XV_D3D_DEBUG")) {
         using GetDebug = HRESULT(WINAPI *)(REFIID, void **);
         static const auto get_debug = host_d3d12<GetDebug>("D3D12GetDebugInterface");
         if (ID3D12Debug *debug = nullptr; get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&debug)))) {
             debug->EnableDebugLayer();
-            // XS_D3D_DEBUG=2: also what each draw reads, checked on the GPU (slow)
-            if (ID3D12Debug1 *gpu = nullptr; std::atoi(std::getenv("XS_D3D_DEBUG")) >= 2 &&
+            // XV_D3D_DEBUG=2: also what each draw reads, checked on the GPU (slow)
+            if (ID3D12Debug1 *gpu = nullptr; std::atoi(std::getenv("XV_D3D_DEBUG")) >= 2 &&
                                              SUCCEEDED(debug->QueryInterface(IID_PPV_ARGS(&gpu)))) {
                 // 3: the queues not serialized, as they are without the debug layer
-                if (std::atoi(std::getenv("XS_D3D_DEBUG")) == 3)
+                if (std::atoi(std::getenv("XV_D3D_DEBUG")) == 3)
                     gpu->SetEnableSynchronizedCommandQueueValidation(FALSE);
                 else
                     gpu->SetEnableGPUBasedValidation(TRUE);
@@ -3696,4 +3696,4 @@ void install(Registry &registry, std::string_view module, Target target) {
     for (const auto &[name, function] : functions)
         registry.add(module, name, function);
 }
-} // namespace xs::runtime::modules::d3d12x
+} // namespace xv::runtime::modules::d3d12x

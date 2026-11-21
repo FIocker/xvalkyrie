@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <windows.h>
 
-namespace xs::runtime {
+namespace xv::runtime {
 struct Forwarder {
     void *const *vtable;
     std::atomic<ULONG> references;
@@ -92,4 +92,4 @@ IUnknown *unwrap_forwarder(IUnknown *object) {
     const auto *candidate = reinterpret_cast<const Forwarder *>(object);
     return live.contains(candidate) ? candidate->host : object;
 }
-} // namespace xs::runtime
+} // namespace xv::runtime

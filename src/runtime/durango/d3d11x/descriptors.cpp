@@ -14,7 +14,7 @@
 // is not theirs, so that what a packet points into names the buffer and the offset in it.
 // Registers: textures from 0x6b40 in 0x20 steps, samplers from 0x7b40 in 0x10, vertex streams
 // from 0x7d70 in 0x10, constant buffers from 0x1c40 (vertex shader) and 0x6a00 (pixel shader).
-namespace xs::runtime::durango::d3d11x {
+namespace xv::runtime::durango::d3d11x {
 namespace {
 constexpr std::uint32_t magic = 0xd3d1face;
 constexpr std::uint32_t textures = 0x6b40, samplers = 0x7b40, vertices = 0x7d70,
@@ -204,4 +204,4 @@ void apply_descriptors(ID3D11DeviceContext *context, const std::byte *start, con
     constants(context, stream, vertex_constants, false);
     constants(context, stream, pixel_constants, true);
 }
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xv::runtime::durango::d3d11x

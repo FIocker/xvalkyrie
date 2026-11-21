@@ -1,11 +1,11 @@
 add_subdirectory(ui)
-add_executable(xscarlet main.cpp)
-target_link_libraries(xscarlet PRIVATE xs_graphics xs_surface xs_options xs_version xs_launcher xs_ui xs_appx xs_pe xs_host xs_game_config xs_analysis xs_xvd xs_loader xs_runtime)
-set_target_properties(xscarlet PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+add_executable(xvalkyrie main.cpp)
+target_link_libraries(xvalkyrie PRIVATE xv_graphics xv_surface xv_options xv_version xv_launcher xv_ui xv_appx xv_pe xv_host xv_game_config xv_analysis xv_xvd xv_loader xv_runtime)
+set_target_properties(xvalkyrie PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 if(MSVC)
-  # xscarlet.map, next to the executable: what the xscarlet.exe+0x... of a log's stacks are
-  target_link_options(xscarlet PRIVATE /MAP)
+  # xvalkyrie.map, next to the executable: what the xvalkyrie.exe+0x... of a log's stacks are
+  target_link_options(xvalkyrie PRIVATE /MAP)
 endif()
-if(XS_DXVK)
-  xs_deploy_dxvk(xscarlet)
+if(XV_DXVK)
+  xv_deploy_dxvk(xvalkyrie)
 endif()

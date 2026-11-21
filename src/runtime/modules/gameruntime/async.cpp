@@ -9,7 +9,7 @@
 // and clean up. Providers are the title's own libraries as often as they are ours. The work
 // runs on the work port of the block's queue and the title's completion callback on its
 // completion port.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 enum class Op : std::uint32_t { begin, do_work, get_result, cancel, cleanup };
 struct ProviderData {
@@ -330,4 +330,4 @@ void install_async() {
     implement("XAsyncComplete", &async_complete);
     implement("XAsyncGetResult", &async_get_result);
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

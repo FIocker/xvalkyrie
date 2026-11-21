@@ -16,7 +16,7 @@
 #include <windows.h>
 
 // Console-only functions. Undocumented ones only return.
-namespace xs::runtime::durango {
+namespace xv::runtime::durango {
 namespace {
 class Activation final : public IActivateAudioInterfaceAsyncOperation {
   public:
@@ -252,4 +252,4 @@ void install_system(Registry &registry) {
     registry.add("toolhelpx.dll", "GetSourceLineFromAddress", erase(not_implemented));
     registry.add("toolhelpx.dll", "QuerySystemHardwareInfo", erase(query_system_hardware_info));
 }
-} // namespace xs::runtime::durango
+} // namespace xv::runtime::durango

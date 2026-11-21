@@ -1,7 +1,7 @@
 #include "app/ui/keys.hpp"
 #include <GLFW/glfw3.h>
 
-namespace xs::ui {
+namespace xv::ui {
 int virtual_key(int key) {
     if ((key >= GLFW_KEY_0 && key <= GLFW_KEY_9) || (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) ||
         key == GLFW_KEY_SPACE)
@@ -74,4 +74,4 @@ int virtual_key(int key) {
         return 0;
     }
 }
-} // namespace xs::ui
+} // namespace xv::ui

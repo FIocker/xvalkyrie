@@ -8,13 +8,13 @@ loading screen and the main menu draw as they should.
 
 - The title uploads three planes per frame with `UpdateSubresource`. They
   hold 0x10 for luma and 0x80 for chroma, which is black: the textures are
-  never given a decoded frame (`XS_D3D_SEQ=<frame>` shows the bytes).
+  never given a decoded frame (`XV_D3D_SEQ=<frame>` shows the bytes).
 - The back buffer average at frame 900 is 1.1, 0.0, 1.1.
 - Nothing faults and no call is reported as unimplemented.
 
 ## What was measured
 
-With breakpoints in the title (`XS_BREAK`, `XS_BREAK_LIMIT`), one minute of
+With breakpoints in the title (`XV_BREAK`, `XV_BREAK_LIMIT`), one minute of
 running each time:
 
 - The decoder is VP6, built into the title (its jobs are named `vp6_Deco...`
@@ -31,7 +31,7 @@ running each time:
 
 So frames are decoded. The eight the player can hold fill up, nothing takes
 them, and the decoder waits for a free frame context, which is where
-`XS_THREAD_DUMP` finds its thread.
+`XV_THREAD_DUMP` finds its thread.
 
 ## What is inferred, not verified
 
@@ -54,7 +54,7 @@ call to see what it returns, and one on the voice's position.
   because jobs are stuck.
 - **Processor count and affinity.** Reporting six or eight processors, and
   pinning the process to six or to one, changed nothing. The title pins its
-  workers with masks 0x1 to 0x20 and 0x80 (`XS_THREAD_TRACE=1`).
+  workers with masks 0x1 to 0x20 and 0x80 (`XV_THREAD_TRACE=1`).
 - **Completed audio commands.** In this kit a completed command's id is 12
   bytes into the message; that was wrong and is fixed, and the video did not
   change.
@@ -68,7 +68,7 @@ ring) changed nothing, and was taken out. It read each context's fields from
 the data of the update command, which is empty in this kit: the title keeps
 a pending copy of a context and applies the fields itself when the command
 completes (`image+0x119e240`). During the video only context 0 is enabled
-and disabled, with one update between (`XS_ACP_TRACE=1`). A second attempt
+and disabled, with one update between (`XV_ACP_TRACE=1`). A second attempt
 was written and never applied, so it tells nothing.
 
 ## What a fix needs

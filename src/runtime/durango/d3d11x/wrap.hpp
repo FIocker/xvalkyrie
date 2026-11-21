@@ -11,7 +11,7 @@
 // pointers inside the object itself. So the title gets objects of ours with the console
 // layout. Each method hands its arguments to the host method, after replacing our objects
 // among them by the host's, and wraps the objects the host returns.
-namespace xs::runtime::durango::d3d11x {
+namespace xv::runtime::durango::d3d11x {
 enum class Kind : std::uint8_t {
     device,
     context,
@@ -34,8 +34,8 @@ void *wrap(void *host, Kind kind);
 void *unwrap(void *object);
 // The kind an object asked for by this interface ID should be wrapped as, if any.
 bool kind_of(const GUID &iid, Kind &kind);
-// XS_D3D_DEBUG: prints what the host's debug layer has to say since the last call. `where`
+// XV_D3D_DEBUG: prints what the host's debug layer has to say since the last call. `where`
 // names the method that just ran. Does nothing without the debug layer.
 void report_debug_messages(const char *object, const char *where, std::size_t position);
 void watch_debug_messages(void *host_device);
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xv::runtime::durango::d3d11x

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace xs {
+namespace xv {
 struct LibrarySettings {
     std::vector<std::filesystem::path> directories;
     bool grid = true;
@@ -34,4 +34,4 @@ LibrarySettings load_library_settings();
 void save_library_settings(const LibrarySettings &settings);
 ConsoleSettings load_console_settings();
 void save_console_settings(const ConsoleSettings &settings);
-} // namespace xs
+} // namespace xv

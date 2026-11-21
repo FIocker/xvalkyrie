@@ -2,10 +2,10 @@
 
 Quick tour of the code. Everything lives under `src/`, one static library per
 directory, each with its own `CMakeLists.txt`. There is a single executable,
-`xscarlet`, that runs both Xbox One and Xbox Series X|S titles: it looks at the
+`xvalkyrie`, that runs both Xbox One and Xbox Series X|S titles: it looks at the
 import table of the title and picks the console runtime to use.
 
-Two words are used with one meaning each. The **host** is the machine xscarlet
+Two words are used with one meaning each. The **host** is the machine xvalkyrie
 runs on, always 64-bit Windows. A **console** is what the title was built for:
 Xbox One (`durango`) or Xbox Series X|S (`scarlett`).
 
@@ -58,30 +58,30 @@ Used for every title, whatever console it was built for.
 
 | Directory | Library | What it does |
 |---|---|---|
-| `core` | `xs_core` | `Target`, log and settings |
-| `host` | `xs_host` | OS wrappers: memory, files, threads, TLS, native modules, session log |
-| `formats/pe` | `xs_pe` | PE32+ parser. Takes bytes, returns a JSON report. Never loads anything. |
-| `formats/gdk` | `xs_game_config` | Reads `MicrosoftGame.config` |
-| `formats/appx` | `xs_appx` | Reads `AppxManifest.xml`, which names the executable of an unpacked ERA title |
-| `formats/xvd` | `xs_xvd` | Reads the header of an XVD/XVC package |
-| `analysis` | `xs_analysis` | Classifies imported DLLs and API names, detects the console target |
-| `loader` | `xs_loader` | Maps an image in memory: sections, relocations, import slots |
-| `backends/graphics` | `xs_graphics` | Which backend is selected, and the clear pass description |
-| `backends/graphics/d3d11` | `xs_graphics_d3d11` | The host's Direct3D 11: device creation, frame dump |
-| `backends/graphics/dxvk` | `xs_graphics_dxvk` | Direct3D 11 on Vulkan: loads `xs_dxgi.dll` and `xs_d3d11.dll` and creates the device |
-| `backends/graphics/vulkan` | `xs_vulkan` | The offscreen Vulkan test backend |
-| `backends/audio` | `xs_audio` | Sound output; so far only muting the process |
-| `backends/input` | `xs_input` | The emulated gamepad: capture methods, key bindings |
-| `backends/surface` | `xs_surface` | `TitleWindow`, the window a title presents into |
-| `runtime/common` | `xs_runtime_common` | Import registry and resolver, and the code that actually runs a guest |
-| `runtime/modules` | `xs_runtime_modules` | Console modules with the same interface on both consoles |
+| `core` | `xv_core` | `Target`, log and settings |
+| `host` | `xv_host` | OS wrappers: memory, files, threads, TLS, native modules, session log |
+| `formats/pe` | `xv_pe` | PE32+ parser. Takes bytes, returns a JSON report. Never loads anything. |
+| `formats/gdk` | `xv_game_config` | Reads `MicrosoftGame.config` |
+| `formats/appx` | `xv_appx` | Reads `AppxManifest.xml`, which names the executable of an unpacked ERA title |
+| `formats/xvd` | `xv_xvd` | Reads the header of an XVD/XVC package |
+| `analysis` | `xv_analysis` | Classifies imported DLLs and API names, detects the console target |
+| `loader` | `xv_loader` | Maps an image in memory: sections, relocations, import slots |
+| `backends/graphics` | `xv_graphics` | Which backend is selected, and the clear pass description |
+| `backends/graphics/d3d11` | `xv_graphics_d3d11` | The host's Direct3D 11: device creation, frame dump |
+| `backends/graphics/dxvk` | `xv_graphics_dxvk` | Direct3D 11 on Vulkan: loads `xv_dxgi.dll` and `xv_d3d11.dll` and creates the device |
+| `backends/graphics/vulkan` | `xv_vulkan` | The offscreen Vulkan test backend |
+| `backends/audio` | `xv_audio` | Sound output; so far only muting the process |
+| `backends/input` | `xv_input` | The emulated gamepad: capture methods, key bindings |
+| `backends/surface` | `xv_surface` | `TitleWindow`, the window a title presents into |
+| `runtime/common` | `xv_runtime_common` | Import registry and resolver, and the code that actually runs a guest |
+| `runtime/modules` | `xv_runtime_modules` | Console modules with the same interface on both consoles |
 
 ### Per console
 
 | Directory | Library | What it does |
 |---|---|---|
-| `runtime/durango` | `xs_runtime_durango` | Xbox One modules (`d3d12_x.dll` and friends) |
-| `runtime/scarlett` | `xs_runtime_scarlett` | Xbox Series X\|S modules (`d3d12_xs.dll` and friends) |
+| `runtime/durango` | `xv_runtime_durango` | Xbox One modules (`d3d12_x.dll` and friends) |
+| `runtime/scarlett` | `xv_runtime_scarlett` | Xbox Series X\|S modules (`d3d12_xs.dll` and friends) |
 
 Each one has a single entry point, `install(Registry &)`, that adds its
 modules to the import registry. The Series one only installs shared modules under their
@@ -171,10 +171,10 @@ three kinds of console module:
 
 | Directory | Library | What it does |
 |---|---|---|
-| `runtime` | `xs_runtime` | `console_registry(Target)`: the registry of one console |
-| `launcher` | `xs_launcher` | `launch_title`, the game library, `config.ini` |
-| `app/ui` | `xs_ui` | GLFW + ImGui main window, native file dialog |
-| `app` | `xscarlet` | CLI |
+| `runtime` | `xv_runtime` | `console_registry(Target)`: the registry of one console |
+| `launcher` | `xv_launcher` | `launch_title`, the game library, `config.ini` |
+| `app/ui` | `xv_ui` | GLFW + ImGui main window, native file dialog |
+| `app` | `xvalkyrie` | CLI |
 
 ### Where new code goes
 
@@ -274,7 +274,7 @@ Every import goes through one place (`runtime/common`). The order is:
 4. A small generated stub. If the game calls it, the process prints the name
    of the import and exits with `0xE0585301`.
 
-`xscarlet bind` prints which of these each import would get.
+`xvalkyrie bind` prints which of these each import would get.
 
 ## Threads
 
@@ -304,7 +304,7 @@ Where the reading comes from is the capture method:
 - `direct`: the state of the keyboard and of the host's first gamepad
   (XInput) is read from the system at the moment the title asks, without any
   window or message loop involved. It only counts while a window
-  of xscarlet is in the foreground.
+  of xvalkyrie is in the foreground.
 
 Bindings are Windows virtual-key codes. Options > Input in the
 window changes the method and the bindings, which apply at once and are saved
@@ -326,21 +326,21 @@ about every title DLL, not only the executable.
 
 ## Running
 
-The guest runs inside the xscarlet process on its own thread. Since guest and
+The guest runs inside the xvalkyrie process on its own thread. Since guest and
 host use the same calling convention, a bound import is just a
 function pointer.
 
 Running in-process means a few things have to be faked:
 
 - `GetModuleHandle(NULL)` and `GetModuleFileName` return the guest image
-  instead of `xscarlet.exe`.
+  instead of `xvalkyrie.exe`.
 - `_CxxThrowException` is reimplemented. The CRT looks up the module that owns
   a thrown type in the loader's module list, and a manually mapped image is
   not in it, so `catch` would never match.
 - The image's unwind table is registered with `RtlAddFunctionTable`.
 
 - The command line (`GetCommandLine`, `__p___argv`, `Platform::GetCmdArguments`)
-  is the title's path alone, not xscarlet's.
+  is the title's path alone, not xvalkyrie's.
 - Static TLS: the system loader only gives TLS to what it loads itself, so
   `runtime/common/static_tls.cpp` writes a small DLL with the image's
   TLS template (and one import, without which the loader skips its TLS) and
@@ -359,15 +359,15 @@ and holds the one selected for the process (Options > Graphics, saved in
 
 - `d3d11`, the host's Direct3D 11. The default.
 - `vulkan`, Direct3D 11 translated to Vulkan by DXVK. `backends/graphics/dxvk`
-  loads `xs_dxgi.dll` and `xs_d3d11.dll` from the folder of `xscarlet.exe`,
+  loads `xv_dxgi.dll` and `xv_d3d11.dll` from the folder of `xvalkyrie.exe`,
   takes the first adapter of the DXVK factory and creates the device on it, so
   DXVK never goes looking for the system's `dxgi.dll`. The DLLs are DXVK's
   `dxgi.dll` and `d3d11.dll` renamed, so they never clash with the system ones
   already in the process.
 
-`cmake/Dxvk.cmake` (`-DXS_DXVK=ON`) fetches DXVK at a fixed commit, applies
+`cmake/Dxvk.cmake` (`-DXV_DXVK=ON`) fetches DXVK at a fixed commit, applies
 `cmake/dxvk.patch`, builds it with Meson and copies the two DLLs next to
-`xscarlet.exe`. The patch makes DXVK behave the way console titles expect:
+`xvalkyrie.exe`. The patch makes DXVK behave the way console titles expect:
 
 - `SetResourceMinLOD` and `GetResourceMinLOD` work for textures created with
   `D3D11_RESOURCE_MISC_RESOURCE_CLAMP`, through `VK_EXT_image_view_min_lod`.
@@ -375,7 +375,7 @@ and holds the one selected for the process (Options > Graphics, saved in
   an unordered access view.
 - A stencil-only shader resource view has the stencil value in red, not green.
 
-`xs_vulkan` is a separate standalone test that clears an offscreen image and
+`xv_vulkan` is a separate standalone test that clears an offscreen image and
 reads it back.
 
 `runtime/durango/d3d11x` is `d3d11_x.dll`. Its `D3D11CreateDevice` creates the
@@ -411,16 +411,16 @@ layout, so the title never gets a host object:
   hardware register value) into fixed offsets of the context object and sets
   dirty bits; `layout.cpp` reads them back and applies them before each draw.
 
-Development switches, all environment variables: `XS_D3D_TRACE=1` prints the
+Development switches, all environment variables: `XV_D3D_TRACE=1` prints the
 first call of every Direct3D method with its arguments and caller,
-`XS_D3D_DEBUG=1` creates the host device with the debug layer and prints its
-messages after the call that caused them, `XS_FRAME_DUMP=file.bmp` (with
-`XS_FRAME_DUMP_AT=n`) writes the n-th presented frame to a file.
+`XV_D3D_DEBUG=1` creates the host device with the debug layer and prints its
+messages after the call that caused them, `XV_FRAME_DUMP=file.bmp` (with
+`XV_FRAME_DUMP_AT=n`) writes the n-th presented frame to a file.
 
 `runtime/modules/xg.cpp` is `xg_x.dll`, which tells titles how a texture is
 laid out in memory. There is one layout here, the plain one.
 
-The window (`xs_ui`) uses OpenGL through GLFW for its own interface and
+The window (`xv_ui`) uses OpenGL through GLFW for its own interface and
 gets everything else from `app/main.cpp` as callbacks, so it does not link
 against the runtime. Opening a title reads and checks it on a worker thread while the
 window shows a loading screen, then runs it on a guest thread. The title does

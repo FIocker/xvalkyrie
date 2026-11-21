@@ -8,7 +8,7 @@
 
 // xgameruntime.dll, the system side of the Gaming Runtime (the GDK's XUser, XGameSave,
 // XTaskQueue and the rest). Internal to the files of this folder.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 struct Method {
     std::uint16_t slot;
     const char *name;
@@ -68,4 +68,4 @@ void install_async();
 void install_user();
 void install_save();
 void install_system();
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

@@ -6,7 +6,7 @@
 struct IInspectable;
 typedef struct HSTRING__ *HSTRING;
 
-namespace xs::runtime::durango::winrt {
+namespace xv::runtime::durango::winrt {
 // "gamertag", "xbox_user_id", "audio_device_id"; "gamerscore", "age_group"
 std::wstring console_string(std::wstring_view key);
 std::uint32_t console_number(std::wstring_view key);
@@ -16,4 +16,4 @@ void *show_keyboard(HSTRING text, HSTRING title, HSTRING description, std::uint3
 void *show_keyboard_with_options(void *options);
 // Windows.Xbox.UI.KeyboardOptions
 IInspectable *system_ui_class(std::wstring_view name);
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace xs::runtime::modules::rdna {
+namespace xv::runtime::modules::rdna {
 using Stage = ShaderStage;
 // One element of a shader's input or output signature. They are kept in the order of their
 // registers, and element n is the field `fn` of the HLSL struct made for the signature.
@@ -29,4 +29,4 @@ struct Shader {
 // takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing
 // if the code has something that is not handled, and then `why` says what.
 std::optional<std::string> translate(Stage stage, const Shader &shader, std::string *why = nullptr);
-} // namespace xs::runtime::modules::rdna
+} // namespace xv::runtime::modules::rdna

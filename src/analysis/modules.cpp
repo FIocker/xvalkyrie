@@ -6,7 +6,7 @@
 #include <set>
 #include <string>
 
-namespace xs::analysis {
+namespace xv::analysis {
 namespace {
 using json = nlohmann::json;
 template <std::size_t N>
@@ -181,4 +181,4 @@ std::optional<Target> console_target(const json &profile) {
         return Target::scarlett;
     return std::nullopt;
 }
-} // namespace xs::analysis
+} // namespace xv::analysis

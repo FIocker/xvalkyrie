@@ -15,7 +15,7 @@
 #include <new>
 #include <utility>
 
-namespace xs::runtime::durango::d3d11x {
+namespace xv::runtime::durango::d3d11x {
 HRESULT device_dxgi(IUnknown *host_device, REFIID iid, void **object);
 namespace {
 using Word = std::uint64_t;
@@ -45,7 +45,7 @@ std::mutex mutex;
 std::map<IUnknown *, void *> objects; // host -> ours, for as long as ours lives
 
 bool trace() {
-    static const bool enabled = std::getenv("XS_D3D_TRACE") != nullptr;
+    static const bool enabled = std::getenv("XV_D3D_TRACE") != nullptr;
     return enabled;
 }
 // true the first time a method of a layout is reached
@@ -93,9 +93,9 @@ Word call(void *self, const Method &method, bool in_object, std::size_t index, W
                      arguments[1], arguments[2], arguments[3]);
         std::fflush(stderr);
     }
-    // XS_D3D_SEQ=<frame>: every forwarded call of that frame in order, with the first object
+    // XV_D3D_SEQ=<frame>: every forwarded call of that frame in order, with the first object
     // of the array it passes
-    if (static const char *const at = std::getenv("XS_D3D_SEQ");
+    if (static const char *const at = std::getenv("XV_D3D_SEQ");
         at && graphics::frames_presented() == static_cast<std::uint64_t>(std::atoi(at))) {
         MEMORY_BASIC_INFORMATION memory{};
         void *first = nullptr;
@@ -215,7 +215,7 @@ HRESULT STDMETHODCALLTYPE query(void *self, REFIID iid, void **object) {
         (iid == __uuidof(IDXGIDevice) || iid == __uuidof(IDXGIDevice1) ||
          iid == __uuidof(IDXGIObject)))
         return device_dxgi(info->host, iid, object);
-    // the debug layer is ours (XS_D3D_DEBUG), not the title's, which would call it with
+    // the debug layer is ours (XV_D3D_DEBUG), not the title's, which would call it with
     // console layouts
     if (iid == __uuidof(ID3D11Debug) || iid == __uuidof(ID3D11InfoQueue))
         return E_NOINTERFACE;
@@ -367,4 +367,4 @@ void *wrap(void *host_object, Kind kind) {
     objects.emplace(host, words);
     return words;
 }
-} // namespace xs::runtime::durango::d3d11x
+} // namespace xv::runtime::durango::d3d11x

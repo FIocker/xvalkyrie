@@ -9,7 +9,7 @@
 // Shaders a console build ships without the bitcode the host runs: their DXIL part holds
 // machine code for the console's GPU instead (see docs/research/console-shaders.md). A host
 // shader is made for each one and kept in the shader cache, by the hash of the original.
-namespace xs::runtime::modules {
+namespace xv::runtime::modules {
 // geometry_points, _lines and _triangles: a geometry shader, by what it is given
 enum class ShaderStage { vertex, pixel, compute, geometry_points, geometry_lines, geometry_triangles };
 // whether the container's DXIL part has no bitcode
@@ -28,4 +28,4 @@ std::string shader_signature(std::span<const std::uint8_t> container);
 // as the process runs. Empty if none could be made.
 std::span<const std::uint8_t> host_shader(ShaderStage stage,
                                           std::span<const std::uint8_t> container);
-} // namespace xs::runtime::modules
+} // namespace xv::runtime::modules

@@ -4,7 +4,7 @@
 #include <span>
 #include <unknwn.h>
 
-namespace xs::runtime {
+namespace xv::runtime {
 // A COM object that hands every method to the same method of a host object, except for
 // QueryInterface and the slots it is told to answer itself. For interfaces the host
 // already implements the way a title expects, bar a few methods.
@@ -31,4 +31,4 @@ IUnknown *forwarder_host(Forwarder *self);
 ULONG forwarder_add_ref(Forwarder *self);
 // `object` itself unless it is a live Forwarder, then its host
 IUnknown *unwrap_forwarder(IUnknown *object);
-} // namespace xs::runtime
+} // namespace xv::runtime

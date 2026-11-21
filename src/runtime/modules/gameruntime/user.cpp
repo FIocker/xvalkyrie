@@ -6,7 +6,7 @@
 
 // XUser: one user, signed in, who never signs out: the one of Options > Console. Its handle
 // is the same object whoever asks, and nothing of it comes from Xbox Live.
-namespace xs::runtime::modules::gameruntime {
+namespace xv::runtime::modules::gameruntime {
 namespace {
 struct User {
 } user;
@@ -212,4 +212,4 @@ void install_user() {
     implement("XUserFindForDevice", &find_for_device);
     implement("XUserIsStoreUser", &is_store_user);
 }
-} // namespace xs::runtime::modules::gameruntime
+} // namespace xv::runtime::modules::gameruntime

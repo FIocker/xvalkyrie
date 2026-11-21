@@ -13,7 +13,7 @@
 #include "runtime/modules/window.hpp"
 #include "runtime/modules/xg.hpp"
 
-namespace xs::runtime::scarlett {
+namespace xv::runtime::scarlett {
 namespace {
 HRESULT WINAPI succeeded() { return S_OK; }
 } // namespace
@@ -38,4 +38,4 @@ void install(Registry &registry) {
     modules::install_xg(registry, "xg_xs.dll");
     modules::d3d12x::install(registry, "d3d12_xs.dll", Target::scarlett);
 }
-} // namespace xs::runtime::scarlett
+} // namespace xv::runtime::scarlett

@@ -20,8 +20,8 @@
 #include <wrl/event.h>
 #include <wrl/wrappers/corewrappers.h>
 
-namespace xs::runtime::durango::winrt {
-using xs::surface::TitleWindow;
+namespace xv::runtime::durango::winrt {
+using xv::surface::TitleWindow;
 namespace {
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::EventSource;
@@ -166,21 +166,21 @@ struct IConsoleWindow : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE unknown10(void *, void *) = 0;
     virtual HRESULT STDMETHODCALLTYPE Activate() = 0; // 11
     // clang-format off
-#define XS_UNKNOWN(Index) virtual HRESULT STDMETHODCALLTYPE unknown##Index(void *, void *) = 0;
-    XS_UNKNOWN(12) XS_UNKNOWN(13) XS_UNKNOWN(14) XS_UNKNOWN(15) XS_UNKNOWN(16) XS_UNKNOWN(17)
-    XS_UNKNOWN(18) XS_UNKNOWN(19) XS_UNKNOWN(20) XS_UNKNOWN(21) XS_UNKNOWN(22) XS_UNKNOWN(23)
-    XS_UNKNOWN(24) XS_UNKNOWN(25) XS_UNKNOWN(26) XS_UNKNOWN(27) XS_UNKNOWN(28) XS_UNKNOWN(29)
-    XS_UNKNOWN(30) XS_UNKNOWN(31) XS_UNKNOWN(32) XS_UNKNOWN(33) XS_UNKNOWN(34) XS_UNKNOWN(35)
-    XS_UNKNOWN(36) XS_UNKNOWN(37) XS_UNKNOWN(38) XS_UNKNOWN(39) XS_UNKNOWN(40) XS_UNKNOWN(41)
-    XS_UNKNOWN(42) XS_UNKNOWN(43) XS_UNKNOWN(44) XS_UNKNOWN(45) XS_UNKNOWN(46) XS_UNKNOWN(47)
-#undef XS_UNKNOWN
+#define XV_UNKNOWN(Index) virtual HRESULT STDMETHODCALLTYPE unknown##Index(void *, void *) = 0;
+    XV_UNKNOWN(12) XV_UNKNOWN(13) XV_UNKNOWN(14) XV_UNKNOWN(15) XV_UNKNOWN(16) XV_UNKNOWN(17)
+    XV_UNKNOWN(18) XV_UNKNOWN(19) XV_UNKNOWN(20) XV_UNKNOWN(21) XV_UNKNOWN(22) XV_UNKNOWN(23)
+    XV_UNKNOWN(24) XV_UNKNOWN(25) XV_UNKNOWN(26) XV_UNKNOWN(27) XV_UNKNOWN(28) XV_UNKNOWN(29)
+    XV_UNKNOWN(30) XV_UNKNOWN(31) XV_UNKNOWN(32) XV_UNKNOWN(33) XV_UNKNOWN(34) XV_UNKNOWN(35)
+    XV_UNKNOWN(36) XV_UNKNOWN(37) XV_UNKNOWN(38) XV_UNKNOWN(39) XV_UNKNOWN(40) XV_UNKNOWN(41)
+    XV_UNKNOWN(42) XV_UNKNOWN(43) XV_UNKNOWN(44) XV_UNKNOWN(45) XV_UNKNOWN(46) XV_UNKNOWN(47)
+#undef XV_UNKNOWN
     // clang-format on
 };
 
 class Window final : public IConsoleWindow {
   public:
     static constexpr wchar_t name[] = L"Windows.UI.Core.CoreWindow";
-    Window() : host_(L"XScarlet", 1280, 720), dispatcher_(Make<Dispatcher>(host_)) {}
+    Window() : host_(L"XValkyrie", 1280, 720), dispatcher_(Make<Dispatcher>(host_)) {}
     TitleWindow &host() { return host_; }
     Dispatcher &dispatcher() { return *dispatcher_.Get(); }
 
@@ -229,29 +229,29 @@ class Window final : public IConsoleWindow {
     // The host window stays hidden until the title presents its first frame.
     STDMETHODIMP Activate() override { return S_OK; }
     // clang-format off
-#define XS_UNKNOWN(Index)                                                                          \
+#define XV_UNKNOWN(Index)                                                                          \
     STDMETHODIMP unknown##Index(void *first, void *second) override {                              \
         return unknown_method(name, "console ICoreWindow", Index, first, second,                   \
                               _ReturnAddress());                                                   \
     }
-    XS_UNKNOWN(8) XS_UNKNOWN(9) XS_UNKNOWN(10)
-    XS_UNKNOWN(12) XS_UNKNOWN(13) XS_UNKNOWN(14) XS_UNKNOWN(16) XS_UNKNOWN(18)
-    XS_UNKNOWN(20) XS_UNKNOWN(21) XS_UNKNOWN(22) XS_UNKNOWN(24) XS_UNKNOWN(26)
-    XS_UNKNOWN(28) XS_UNKNOWN(29) XS_UNKNOWN(30) XS_UNKNOWN(32) XS_UNKNOWN(33)
-    XS_UNKNOWN(34) XS_UNKNOWN(36) XS_UNKNOWN(38) XS_UNKNOWN(39)
-    XS_UNKNOWN(41) XS_UNKNOWN(43) XS_UNKNOWN(44) XS_UNKNOWN(45)
-    XS_UNKNOWN(46) XS_UNKNOWN(47)
-#undef XS_UNKNOWN
+    XV_UNKNOWN(8) XV_UNKNOWN(9) XV_UNKNOWN(10)
+    XV_UNKNOWN(12) XV_UNKNOWN(13) XV_UNKNOWN(14) XV_UNKNOWN(16) XV_UNKNOWN(18)
+    XV_UNKNOWN(20) XV_UNKNOWN(21) XV_UNKNOWN(22) XV_UNKNOWN(24) XV_UNKNOWN(26)
+    XV_UNKNOWN(28) XV_UNKNOWN(29) XV_UNKNOWN(30) XV_UNKNOWN(32) XV_UNKNOWN(33)
+    XV_UNKNOWN(34) XV_UNKNOWN(36) XV_UNKNOWN(38) XV_UNKNOWN(39)
+    XV_UNKNOWN(41) XV_UNKNOWN(43) XV_UNKNOWN(44) XV_UNKNOWN(45)
+    XV_UNKNOWN(46) XV_UNKNOWN(47)
+#undef XV_UNKNOWN
     // Event registrations (handler, token). Which events they are is not known yet, so
     // nothing raises them.
-#define XS_EVENT(Index)                                                                            \
+#define XV_EVENT(Index)                                                                            \
     STDMETHODIMP unknown##Index(void *, void *token) override {                                    \
         *static_cast<std::int64_t *>(token) = ++tokens_;                                           \
         return S_OK;                                                                               \
     }
-    XS_EVENT(17) XS_EVENT(19) XS_EVENT(23) XS_EVENT(25) XS_EVENT(27) XS_EVENT(31) XS_EVENT(37)
-    XS_EVENT(40) XS_EVENT(42)
-#undef XS_EVENT
+    XV_EVENT(17) XV_EVENT(19) XV_EVENT(23) XV_EVENT(25) XV_EVENT(27) XV_EVENT(31) XV_EVENT(37)
+    XV_EVENT(40) XV_EVENT(42)
+#undef XV_EVENT
         // clang-format on
         // Activated (15) and VisibilityChanged (35), which the shell raises once the window is
         // up: activated, and visible. Titles wait for them before they start.
@@ -508,4 +508,4 @@ IInspectable *application_class(std::wstring_view name) {
         return static_cast<IActivationFactory *>(window.Get());
     return nullptr;
 }
-} // namespace xs::runtime::durango::winrt
+} // namespace xv::runtime::durango::winrt

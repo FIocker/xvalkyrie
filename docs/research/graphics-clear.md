@@ -1,6 +1,6 @@
 # Vulkan clear test
 
-`xscarlet-vk-check` (built with `-DXS_VULKAN=ON`) clears an offscreen RGBA8
+`xvalkyrie-vk-check` (built with `-DXV_VULKAN=ON`) clears an offscreen RGBA8
 image, clears a few rectangles on top with `vkCmdClearAttachments`, reads the
 image back and compares every pixel with values computed on the CPU.
 

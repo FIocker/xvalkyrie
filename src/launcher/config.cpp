@@ -11,14 +11,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-namespace xs {
+namespace xv {
 std::filesystem::path config_directory() {
     const auto *const base = _wgetenv(L"APPDATA");
     const auto *const home = _wgetenv(L"USERPROFILE");
     const auto folder = base && *base   ? std::filesystem::path(base)
                         : home && *home ? std::filesystem::path(home)
                                         : std::filesystem::current_path();
-    return folder / "xscarlet";
+    return folder / "xvalkyrie";
 }
 std::filesystem::path config_file() { return config_directory() / "config.ini"; }
 std::filesystem::path cache_directory() { return config_directory() / "cache"; }
@@ -205,4 +205,4 @@ void save_library_settings(const LibrarySettings &library) {
     settings.library = library;
     write(settings);
 }
-} // namespace xs
+} // namespace xv

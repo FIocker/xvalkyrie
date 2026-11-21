@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 
-namespace xs::host {
+namespace xv::host {
 // read_execute is only used by the runtime
 enum class Access { none, read, read_write, read_execute };
 std::size_t page_size();
@@ -24,4 +24,4 @@ class Reservation {
     std::byte *address_;
     bool committed_ = false;
 };
-} // namespace xs::host
+} // namespace xv::host
