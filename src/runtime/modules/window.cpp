@@ -29,28 +29,61 @@ DWORD console_style(DWORD style, HWND parent) {
         style = (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP;
     return style;
 }
+// A window class belongs to a module, and the title's image is none the host knows: a class
+// registered for it is not found again when the window is made. Classes and windows of the
+// title are this program's instead.
+HINSTANCE host_instance() { return GetModuleHandleW(nullptr); }
+ATOM WINAPI register_class_ex_w(const WNDCLASSEXW *description) {
+    if (!description)
+        return 0;
+    auto host = *description;
+    host.hInstance = host_instance();
+    return RegisterClassExW(&host);
+}
+ATOM WINAPI register_class_ex_a(const WNDCLASSEXA *description) {
+    if (!description)
+        return 0;
+    auto host = *description;
+    host.hInstance = host_instance();
+    return RegisterClassExA(&host);
+}
+ATOM WINAPI register_class_w(const WNDCLASSW *description) {
+    if (!description)
+        return 0;
+    auto host = *description;
+    host.hInstance = host_instance();
+    return RegisterClassW(&host);
+}
+ATOM WINAPI register_class_a(const WNDCLASSA *description) {
+    if (!description)
+        return 0;
+    auto host = *description;
+    host.hInstance = host_instance();
+    return RegisterClassA(&host);
+}
 HWND WINAPI create_window_ex_w(DWORD extended, const wchar_t *class_name, const wchar_t *name,
                                DWORD style, int x, int y, int width, int height, HWND parent,
-                               HMENU menu, HINSTANCE instance, void *parameter) {
-    return remember(CreateWindowExW(extended, class_name, name, console_style(style, parent), x, y,
-                                    width, height, parent, menu, instance, parameter));
+                               HMENU menu, HINSTANCE, void *parameter) {
+    const auto window = CreateWindowExW(extended, class_name, name, console_style(style, parent), x,
+                                        y, width, height, parent, menu, host_instance(), parameter);
+    if (!window)
+        std::fprintf(stderr, "[Runtime] CreateWindowExW: error %lu\n", GetLastError());
+    return remember(window);
 }
 HWND WINAPI create_window_ex_a(DWORD extended, const char *class_name, const char *name,
                                DWORD style, int x, int y, int width, int height, HWND parent,
-                               HMENU menu, HINSTANCE instance, void *parameter) {
-    const auto window = CreateWindowExA(extended, class_name, name, console_style(style, parent),
-                                        x, y, width, height, parent, menu, instance, parameter);
+                               HMENU menu, HINSTANCE, void *parameter) {
+    const auto window = CreateWindowExA(extended, class_name, name, console_style(style, parent), x,
+                                        y, width, height, parent, menu, host_instance(), parameter);
     if (!window)
-        std::fprintf(stderr, "[Runtime] CreateWindowExA(%s, style 0x%lx, %dx%d): error %lu\n",
-                     IS_INTRESOURCE(class_name) ? "(atom)" : class_name, style, width, height,
-                     GetLastError());
+        std::fprintf(stderr, "[Runtime] CreateWindowExA: error %lu\n", GetLastError());
     return remember(window);
 }
 BOOL WINAPI show_window(HWND window, int command) {
     {
         const std::lock_guard lock(mutex);
         if (title_windows.contains(window))
-            return FALSE;
+            return TRUE; // a title takes what the console answers for success
     }
     return ShowWindow(window, command);
 }
@@ -69,5 +102,9 @@ void install_window(Registry &registry) {
     registry.add_api("CreateWindowExW", reinterpret_cast<void *>(&create_window_ex_w));
     registry.add_api("CreateWindowExA", reinterpret_cast<void *>(&create_window_ex_a));
     registry.add_api("ShowWindow", reinterpret_cast<void *>(&show_window));
+    registry.add_api("RegisterClassExW", reinterpret_cast<void *>(&register_class_ex_w));
+    registry.add_api("RegisterClassExA", reinterpret_cast<void *>(&register_class_ex_a));
+    registry.add_api("RegisterClassW", reinterpret_cast<void *>(&register_class_w));
+    registry.add_api("RegisterClassA", reinterpret_cast<void *>(&register_class_a));
 }
 } // namespace xv::runtime::modules
