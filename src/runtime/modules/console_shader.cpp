@@ -6,15 +6,20 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <memory>
 #include <optional>
+#include <set>
+#include <thread>
 #include <vector>
 #include <string>
 #include <windows.h>
@@ -25,7 +30,7 @@
 namespace xv::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 10;
+constexpr int translator_version = 11;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -384,8 +389,7 @@ struct Blob : IUnknown {
     virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
     virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
 };
-std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source,
-                                  bool report = true) {
+std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &source, bool report) {
     static const auto function = [] {
         const auto library =
             LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -426,6 +430,45 @@ std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source,
         errors->Release();
     return bytes;
 }
+void write_file(const std::filesystem::path &path, Bytes bytes);
+// The host's compiler takes minutes over some of the largest shaders, and the title waits
+// for each of its shaders. So it is given `seconds`: a shader that takes longer is left to
+// finish on its own and goes to `keep`, the shader cache, for the next run; this run gets
+// nothing for it. XV_SHADER_SECONDS changes how long that is.
+std::vector<std::uint8_t> compile(ShaderStage stage, const std::string &source,
+                                  const std::filesystem::path &keep = {}) {
+    static const int seconds = [] {
+        const auto *const text = std::getenv("XV_SHADER_SECONDS");
+        return text ? std::max(std::atoi(text), 1) : 20;
+    }();
+    struct Job {
+        std::mutex mutex;
+        std::condition_variable finished;
+        bool done = false, abandoned = false;
+        std::vector<std::uint8_t> bytes;
+    };
+    const auto job = std::make_shared<Job>();
+    std::thread([job, stage, source, keep] {
+        auto bytes = compile_now(stage, source, true);
+        const std::lock_guard lock(job->mutex);
+        if (job->abandoned && !bytes.empty() && !keep.empty())
+            write_file(keep, bytes);
+        job->bytes = std::move(bytes);
+        job->done = true;
+        job->finished.notify_all();
+    }).detach();
+    std::unique_lock lock(job->mutex);
+    if (job->finished.wait_for(lock, std::chrono::seconds(seconds), [&] { return job->done; }))
+        return std::move(job->bytes);
+    job->abandoned = true;
+    static std::atomic<int> shown{0};
+    if (shown++ < 4)
+        std::fprintf(stderr,
+                     "[Runtime] the host's compiler has had %d s for a console shader of %zu "
+                     "characters: it draws nothing in this run%s\n",
+                     seconds, source.size(), keep.empty() ? "" : ", and is kept for the next");
+    return {};
+}
 
 std::string hash_name(Bytes bytes) {
     std::uint64_t a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
@@ -459,7 +502,9 @@ void write_file(const std::filesystem::path &path, Bytes bytes) {
 }
 
 std::mutex mutex;
+std::condition_variable made_one;
 std::map<std::string, std::vector<std::uint8_t>> made; // by cache name; never erased
+std::set<std::string> making;                          // by cache name, on some thread
 std::atomic<unsigned> translated{0}, stood_in{0};
 } // namespace
 
@@ -533,9 +578,15 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     const bool stand_ins_only = stand_ins && !std::strchr(stand_ins, stage_letter);
     const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) +
                       (stand_ins_only ? "-stand-in" : "") + ".dxbc";
-    const std::lock_guard lock(mutex);
-    if (const auto found = made.find(name); found != made.end())
-        return found->second;
+    // one thread makes a shader, and the others that want the same one wait for it: titles
+    // make their pipelines on many threads, and the host's compiler is slow
+    {
+        std::unique_lock lock(mutex);
+        made_one.wait(lock, [&] { return !making.count(name); });
+        if (const auto found = made.find(name); found != made.end())
+            return found->second;
+        making.insert(name);
+    }
     const auto &folder = shader_cache_directory();
     std::vector<std::uint8_t> shader;
     // XV_SHADER_WHY: every shader made anew, and what stopped the ones with a stand-in
@@ -574,10 +625,12 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
             write_file(text, {reinterpret_cast<const std::uint8_t *>(source->data()),
                               source->size()});
         }
+        const bool kept = !folder.empty() && !asking;
         if (source)
-            shader = compile(stage, *source);
+            shader = compile(stage, *source, kept ? folder / name : std::filesystem::path{});
         const bool done = !shader.empty();
         ++(done ? translated : stood_in);
+        const std::lock_guard lock(mutex);
         if (!done) {
             if (asking)
                 ++reasons[std::string(1, letter) + ": " + (source ? "the host's compiler" : why)];
@@ -586,9 +639,11 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                 write_file(std::filesystem::path(dump) / (hash + "-" + letter + ".stand-in.hlsl"),
                            {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});
             shader = compile(stage, text);
-        }
-        if (!shader.empty() && !folder.empty() && !asking)
+        } else if (kept) {
+            // only what was translated is kept: a stand-in is made again, in case the next
+            // version translates the shader
             write_file(folder / name, shader);
+        }
         const auto total = translated + stood_in;
         if (std::has_single_bit(total))
             std::fprintf(stderr,
@@ -600,6 +655,9 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
             for (const auto &[reason, count] : reasons)
                 std::fprintf(stderr, "[Runtime]   %u stopped by %s\n", count, reason.c_str());
     }
+    const std::lock_guard lock(mutex);
+    making.erase(name);
+    made_one.notify_all();
     return made.emplace(name, std::move(shader)).first->second;
 }
 } // namespace
