@@ -1810,6 +1810,8 @@ ULONG STDMETHODCALLTYPE queue_release(void *self) {
 }
 void STDMETHODCALLTYPE queue_execute(void *self, UINT count, ID3D12CommandList *const *lists) {
     execute_command_lists(queue_host(self), count, lists);
+    // what the debug layer has to say of the draws, which no call's result shows
+    report_messages();
 }
 HRESULT STDMETHODCALLTYPE queue_signal_x(void *self, ID3D12Fence *fence, UINT64 value, UINT) {
     return queue_host(self)->Signal(fence, value);
