@@ -45,6 +45,10 @@ constexpr GUID inspectable{
 constexpr GUID activation_factory{0x00000035, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
 // IMarshal: saying yes to it would make COM call into the placeholder to marshal it
 constexpr GUID marshal{0x00000003, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
+// IReferenceTracker: what XAML's own objects have. A managed runtime asks every object for
+// it, and takes one that answers for part of XAML's graph of references.
+constexpr GUID reference_tracker{
+    0x11d3b13a, 0x180e, 0x4789, {0xa8, 0xbe, 0x77, 0x12, 0x88, 0x28, 0x93, 0xe6}};
 
 std::atomic<std::int64_t> tokens{0};
 
@@ -319,7 +323,7 @@ void *shared_placeholder(const wchar_t *name) {
 
 long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) {
     *object = nullptr;
-    if (iid == marshal)
+    if (iid == marshal || iid == reference_tracker)
         return E_NOINTERFACE;
     if (long result; gamepad_interface(name, iid, object, result))
         return result;

@@ -732,6 +732,12 @@ constexpr Row rows[] = {
     {association_template, guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"), 7, {Inert::empty_list}},
     // IUserStatics::GetUserById(id, User **): the one user there is
     {user, user_statics, 14, {Inert::shared2, user}},
+    // IAppModelUtil's first method, by the dashboard's call of it (dashboard.dll+0x1f1fe51):
+    // (bool), and only the HRESULT is looked at
+    {L"Windows.Xbox.System.Internal.Interop.AppModelUtil",
+     guid("ddd0e604-011e-4d2f-bf24-df3486cef6b3"),
+     6,
+     {Inert::accept}},
 };
 } // namespace
 
