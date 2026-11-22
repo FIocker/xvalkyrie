@@ -69,6 +69,7 @@ constexpr auto party_chat_statics = guid("cc1bcf39-99f3-42a2-afb6-cdc07b29755f")
 constexpr wchar_t transfer_manager[] = L"Windows.Xbox.Management.Deployment.PackageTransferManager";
 constexpr wchar_t kinect[] = L"Windows.Kinect.KinectSensor";
 constexpr wchar_t speech_recognizer[] = L"Windows.Xbox.Speech.Recognition.SpeechRecognizer";
+constexpr wchar_t socket_description[] = L"Windows.Xbox.Networking.SecureDeviceSocketDescription";
 constexpr wchar_t association_template[] =
     L"Windows.Xbox.Networking.SecureDeviceAssociationTemplate";
 constexpr wchar_t association[] = L"Windows.Xbox.Networking.SecureDeviceAssociation";
@@ -465,7 +466,24 @@ constexpr Row rows[] = {
     {association_template, direct, 9, {Inert::offline, nullptr, 5}},  // ...ForPortsAsync
     {association_template, direct, 10, {Inert::offline, nullptr, 2}}, // CreateCertificateRequest
     {association_template, direct, 11, {Inert::failed_action_at, nullptr, 2, network_unreachable}},
+    // Name, the two socket descriptions, AllowedUsages, RelyingParty, the parser and quality
+    // of service lists, MultiplayerSessionRequirement: a template that describes nothing
+    {association_template, direct, 12, {Inert::zero64}},
+    {association_template, direct, 13, {Inert::object, socket_description}},
+    {association_template, direct, 14, {Inert::object, socket_description}},
+    {association_template, direct, 15, {Inert::zero32}},
+    {association_template, direct, 16, {Inert::zero64}},
+    {association_template, direct, 17, {Inert::empty_list}},
+    {association_template, direct, 18, {Inert::empty_list}},
+    {association_template, direct, 19, {Inert::zero32}},
     {association_template, direct, 20, {Inert::empty_list}}, // Associations
+    // SecureDeviceSocketDescription: Name, IpProtocol, the bound port range (two 16-bit
+    // values, 0 for any port), AllowedUsages
+    {socket_description, direct, 6, {Inert::zero64}},
+    {socket_description, direct, 7, {Inert::zero32}},
+    {socket_description, direct, 8, {Inert::zero32}},
+    {socket_description, direct, 9, {Inert::zero32}},
+    {socket_description, direct, 10, {Inert::zero32}},
     {association,
      guid("15661441-f13a-46e4-8ac2-f474d59b1f0c"),
      6,
