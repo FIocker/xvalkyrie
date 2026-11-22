@@ -408,6 +408,25 @@ HRESULT WINAPI networking_statistics(void *, std::uint32_t, std::uint64_t *stati
     return S_OK;
 }
 
+// XNetworkingConfigurationSetting: the most bytes the console queues for the title's, the
+// system's and the tools' TCP connections. The host has no such limits: a title gets back
+// what it set, and zero before that.
+std::atomic<std::uint64_t> networking_settings[3];
+HRESULT WINAPI networking_setting(void *, std::uint32_t setting, std::uint64_t *value) {
+    if (!value)
+        return E_POINTER;
+    if (setting >= std::size(networking_settings))
+        return E_INVALIDARG;
+    *value = networking_settings[setting];
+    return S_OK;
+}
+HRESULT WINAPI set_networking_setting(void *, std::uint32_t setting, std::uint64_t value) {
+    if (setting >= std::size(networking_settings))
+        return E_INVALIDARG;
+    networking_settings[setting] = value;
+    return S_OK;
+}
+
 // events the host never raises: a token for the registration, and nothing more. The token
 // is the last argument of all of them.
 HRESULT WINAPI register_3(void *, void *, void *, void *, std::uint64_t *token) {
@@ -498,6 +517,8 @@ void install_system() {
               &security_information_result);
     implement("XNetworkingVerifyServerCertificate", &succeeded);
     implement("XNetworkingQueryStatistics", &networking_statistics);
+    implement("XNetworkingQueryConfigurationSetting", &networking_setting);
+    implement("XNetworkingSetConfigurationSetting", &set_networking_setting);
     implement("XGameSaveFilesGetFolderWithUiAsync", &save_files_folder);
     implement("XGameSaveFilesGetFolderWithUiResult", &save_files_folder_result);
     implement("XGameSaveFilesGetRemainingQuota", &save_files_quota);

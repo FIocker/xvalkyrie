@@ -316,3 +316,17 @@ TEST_CASE("every chunk of the package is installed") {
                                                          "package", &kind) == S_OK);
     CHECK(kind == 0);
 }
+
+TEST_CASE("a networking limit is what the title set it to") {
+    std::uint64_t value = 1;
+    REQUIRE(call<HRESULT, std::uint32_t, std::uint64_t *>(
+                "XNetworking", "XNetworkingQueryConfigurationSetting", 0, &value) == S_OK);
+    CHECK(value == 0);
+    REQUIRE(call<HRESULT, std::uint32_t, std::uint64_t>(
+                "XNetworking", "XNetworkingSetConfigurationSetting", 0, 1 << 20) == S_OK);
+    REQUIRE(call<HRESULT, std::uint32_t, std::uint64_t *>(
+                "XNetworking", "XNetworkingQueryConfigurationSetting", 0, &value) == S_OK);
+    CHECK(value == 1 << 20);
+    CHECK(call<HRESULT, std::uint32_t, std::uint64_t *>(
+              "XNetworking", "XNetworkingQueryConfigurationSetting", 3, &value) == E_INVALIDARG);
+}
