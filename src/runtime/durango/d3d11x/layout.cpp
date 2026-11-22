@@ -343,6 +343,42 @@ std::uint64_t STDMETHODCALLTYPE state_desc_x(void *self, std::uint64_t a, std::u
     std::memcpy(reinterpret_cast<void *>(a), words, sizeof words);
     return 0;
 }
+// CreateSamplerStateX (67): a sampler from the hardware's words, the other way round
+HRESULT STDMETHODCALLTYPE create_sampler_state_x(void *self, const std::uint32_t *words,
+                                                 void **state) {
+    if (!words || !state)
+        return E_INVALIDARG;
+    const auto address = [](std::uint32_t clamp) {
+        return clamp == 0   ? D3D11_TEXTURE_ADDRESS_WRAP
+               : clamp == 1 ? D3D11_TEXTURE_ADDRESS_MIRROR
+               : clamp == 3 ? D3D11_TEXTURE_ADDRESS_MIRROR_ONCE
+               : clamp == 6 ? D3D11_TEXTURE_ADDRESS_BORDER
+                            : D3D11_TEXTURE_ADDRESS_CLAMP;
+    };
+    const auto level = [](std::uint32_t value) {
+        return value >= 0xff0 ? D3D11_FLOAT32_MAX : static_cast<float>(value) / 256.0f;
+    };
+    D3D11_SAMPLER_DESC desc{};
+    desc.AddressU = address(words[0] & 7);
+    desc.AddressV = address(words[0] >> 3 & 7);
+    desc.AddressW = address(words[0] >> 6 & 7);
+    const auto ratio = words[0] >> 9 & 7, compare = words[0] >> 12 & 7;
+    desc.MaxAnisotropy = 1u << std::min(ratio, 4u);
+    UINT filter = ratio ? 0x55
+                        : (words[2] >> 22 & 1) << 4 | (words[2] >> 20 & 1) << 2 |
+                              ((words[2] >> 26 & 3) == 2 ? 1u : 0u);
+    if (compare)
+        filter |= 0x80;
+    desc.Filter = static_cast<D3D11_FILTER>(filter);
+    desc.ComparisonFunc = static_cast<D3D11_COMPARISON_FUNC>(compare ? compare + 1 : 1);
+    desc.MinLOD = level(words[1] & 0xfff);
+    desc.MaxLOD = level(words[1] >> 12 & 0xfff);
+    desc.MipLODBias = static_cast<float>(static_cast<int>(words[2] << 18) >> 18) / 256.0f;
+    ID3D11SamplerState *host = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))->CreateSamplerState(&desc, &host);
+    *state = SUCCEEDED(result) ? wrap(host, Kind::state) : nullptr;
+    return result;
+}
 Layout dma() {
     Layout result{"DMA engine context"};
     device_child(result);
@@ -621,7 +657,7 @@ Layout device() {
     result.vtable[64] = custom(&create_placement_texture2d);
     result.vtable[65] = custom(&create_placement_texture3d);
     result.vtable[66] = custom(&get_timestamps);
-    result.vtable[67] = forward(23, {created(2, Kind::state)});   // CreateSamplerStateX
+    result.vtable[67] = custom(&create_sampler_state_x);
     result.vtable[68] = forward(27, {created(2, Kind::context)}); // CreateDeferredContextX
     result.vtable[70] = forward(21, {created(2, Kind::state)});   // CreateDepthStencilStateX
     result.vtable[71] = custom(&create_renderable_texture2d);     // ...RenderableTexture2D
