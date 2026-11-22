@@ -252,6 +252,14 @@ LaunchResult launch_file(const std::filesystem::path &path) {
             return result;
         }
         result.target = analysis::console_target(profile);
+        if (!result.target && runtime::windows_app(bytes)) {
+            // an app of the console's own system: started with the host's APIs
+            result.status = LaunchStatus::runnable;
+            result.detail = "Read an x64 PE32+ executable built for an app container, with no "
+                            "console graphics import: an app of the console's system. It is "
+                            "started with the host's APIs and the console's WinRT classes.";
+            return result;
+        }
         if (!result.target) {
             result.status = LaunchStatus::runtime_unavailable;
             result.detail = "Read an x64 PE32+ executable. It imports no Xbox One or Xbox Series "
