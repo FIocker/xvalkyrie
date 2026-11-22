@@ -126,15 +126,15 @@ HRESULT WINAPI message_dialog(void *, XAsyncBlock *block, const char *title, con
                               const char *first, const char *second, const char *third,
                               std::uint32_t default_button, std::uint32_t cancel_button) {
     const bool ask = console_settings().keyboard_dialog;
-    using Callback = void CALLBACK(Pending *, Queue *, const char *, const char *, const char *,
-                                   const char *, const char *, std::uint32_t, std::uint32_t,
-                                   void *);
+    using Callback =
+        void CALLBACK(Pending *, Queue *, const char *, const char *, const char *, const char *,
+                      const char *, std::uint32_t, std::uint32_t, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::message_dialog, ask);
         callback)
         return hand_over(block, dialog_identity, Screen::message_dialog,
                          [=, texts = std::array{text_of(title), text_of(content), text_of(first),
-                                                text_of(second), text_of(third)}](
-                             Pending *handle, Queue *queue) {
+                                                text_of(second), text_of(third)}](Pending *handle,
+                                                                                  Queue *queue) {
                              callback(handle, queue, raw(texts[0]), raw(texts[1]), raw(texts[2]),
                                       raw(texts[3]), raw(texts[4]), default_button, cancel_button,
                                       context);
@@ -194,20 +194,18 @@ HRESULT WINAPI profile_card(void *, XAsyncBlock *block, void *user, std::uint64_
     using Callback = void CALLBACK(Pending *, Queue *, void *, std::uint64_t, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::profile_card, false);
         callback)
-        return hand_over(block, shown_identity, Screen::profile_card,
-                         [=](Pending *handle, Queue *queue) {
-                             callback(handle, queue, user, player, context);
-                         });
+        return hand_over(
+            block, shown_identity, Screen::profile_card,
+            [=](Pending *handle, Queue *queue) { callback(handle, queue, user, player, context); });
     return finish(block, shown_identity, S_OK);
 }
 HRESULT WINAPI achievements(void *, XAsyncBlock *block, void *user, std::uint32_t title) {
     using Callback = void CALLBACK(Pending *, Queue *, void *, std::uint32_t, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::achievements, false);
         callback)
-        return hand_over(block, shown_identity, Screen::achievements,
-                         [=](Pending *handle, Queue *queue) {
-                             callback(handle, queue, user, title, context);
-                         });
+        return hand_over(
+            block, shown_identity, Screen::achievements,
+            [=](Pending *handle, Queue *queue) { callback(handle, queue, user, title, context); });
     return finish(block, shown_identity, S_OK);
 }
 HRESULT WINAPI activity_invite(void *, XAsyncBlock *block, void *user) {
@@ -226,14 +224,14 @@ HRESULT WINAPI send_invite(void *, XAsyncBlock *block, void *user, const char *c
                                    const char *, const char *, const char *, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::send_invite, false);
         callback)
-        return hand_over(block, shown_identity, Screen::send_invite,
-                         [=, texts = std::array{text_of(configuration), text_of(session_template),
-                                                text_of(session), text_of(invitation),
-                                                text_of(activation)}](Pending *handle,
-                                                                      Queue *queue) {
-                             callback(handle, queue, user, raw(texts[0]), raw(texts[1]),
-                                      raw(texts[2]), raw(texts[3]), raw(texts[4]), context);
-                         });
+        return hand_over(
+            block, shown_identity, Screen::send_invite,
+            [=, texts = std::array{text_of(configuration), text_of(session_template),
+                                   text_of(session), text_of(invitation),
+                                   text_of(activation)}](Pending *handle, Queue *queue) {
+                callback(handle, queue, user, raw(texts[0]), raw(texts[1]), raw(texts[2]),
+                         raw(texts[3]), raw(texts[4]), context);
+            });
     return finish(block, shown_identity, S_OK);
 }
 // a screen with nothing behind it: closed as soon as it is asked for
@@ -262,23 +260,22 @@ HRESULT WINAPI player_picker(void *, XAsyncBlock *block, void *user, const char 
     using Callback = void CALLBACK(Pending *, Queue *, const PickerInfo *, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::player_picker, false);
         callback)
-        return hand_over(
-            block, picker_identity, Screen::player_picker,
-            [=, text = text_of(prompt),
-             all = std::vector<std::uint64_t>(from, from + (from ? from_count : 0)),
-             chosen = std::vector<std::uint64_t>(selected, selected + (selected ? selected_count
-                                                                                : 0))](
-                Pending *handle, Queue *queue) {
-                const PickerInfo info{user,
-                                      raw(text),
-                                      static_cast<std::uint32_t>(all.size()),
-                                      all.data(),
-                                      static_cast<std::uint32_t>(chosen.size()),
-                                      chosen.data(),
-                                      least,
-                                      most};
-                callback(handle, queue, &info, context);
-            });
+        return hand_over(block, picker_identity, Screen::player_picker,
+                         [=, text = text_of(prompt),
+                          all = std::vector<std::uint64_t>(from, from + (from ? from_count : 0)),
+                          chosen = std::vector<std::uint64_t>(
+                              selected, selected + (selected ? selected_count : 0))](
+                             Pending *handle, Queue *queue) {
+                             const PickerInfo info{user,
+                                                   raw(text),
+                                                   static_cast<std::uint32_t>(all.size()),
+                                                   all.data(),
+                                                   static_cast<std::uint32_t>(chosen.size()),
+                                                   chosen.data(),
+                                                   least,
+                                                   most};
+                             callback(handle, queue, &info, context);
+                         });
     return finish(block, picker_identity, E_ABORT);
 }
 HRESULT WINAPI player_picker_response(void *, Pending *handle, std::uint32_t count,
@@ -338,13 +335,13 @@ HRESULT WINAPI text_entry(void *, XAsyncBlock *block, const char *title, const c
                                    std::uint32_t, std::uint32_t, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::text_entry, ask);
         callback)
-        return hand_over(block, text_identity, Screen::text_entry,
-                         [=, texts = std::array{text_of(title), text_of(description),
-                                                text_of(suggested)}](Pending *handle,
-                                                                     Queue *queue) {
-                             callback(handle, queue, raw(texts[0]), raw(texts[1]), raw(texts[2]),
-                                      scope, max_length, context);
-                         });
+        return hand_over(
+            block, text_identity, Screen::text_entry,
+            [=, texts = std::array{text_of(title), text_of(description), text_of(suggested)}](
+                Pending *handle, Queue *queue) {
+                callback(handle, queue, raw(texts[0]), raw(texts[1]), raw(texts[2]), scope,
+                         max_length, context);
+            });
     if (!ask)
         return finish(block, text_identity, S_OK, payload(request.text));
     return start(block, text_identity, [request, payload](Outcome outcome) mutable {

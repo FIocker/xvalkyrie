@@ -1947,9 +1947,9 @@ class Translator {
             const auto part = "((" + shared_word(at, offset) + " >> " + shift + ") & " +
                               (byte ? "0xffu" : "0xffffu") + ")";
             const auto bits = byte ? "24" : "16";
-            set_v(destination, into(extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " +
-                                                 bits + ")"
-                                           : part));
+            set_v(destination,
+                  into(extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")"
+                              : part));
             return;
         }
         if (name == "ds_write_b8" || name == "ds_write_b16") {
@@ -1980,8 +1980,8 @@ class Translator {
             for (std::uint32_t which = 0; which < 2; ++which) {
                 const auto before = "x" + std::to_string(temporaries_++);
                 line("uint " + before + " = 0u;");
-                line(guard + atomic("swap", shared_word(at, offsets[which] * unit),
-                                    v(data[which]), "", before));
+                line(guard + atomic("swap", shared_word(at, offsets[which] * unit), v(data[which]),
+                                    "", before));
                 set_v(destination + which, before);
             }
             return;
@@ -2016,11 +2016,10 @@ class Translator {
         // ds_cmpst: the first datum is what the word is compared with, the second what it
         // takes. ds_mskor and ds_wrap: the first is the mask or the limit, the second what is
         // put in or added.
-        line(guard +
-             (how == "cmpswap" || how == "fcmpswap"
-                  ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
-                  : atomic(how, shared_word(at, offset), v(data[0]), found->two ? v(data[1]) : "",
-                           before)));
+        line(guard + (how == "cmpswap" || how == "fcmpswap"
+                          ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
+                          : atomic(how, shared_word(at, offset), v(data[0]),
+                                   found->two ? v(data[1]) : "", before)));
         if (returns)
             set_v(destination, before);
     }
@@ -2382,8 +2381,8 @@ class Translator {
             return {"0u", hex(ins.literal)};
         }
         if (real && source >= 240 && source <= 248) {
-            static constexpr double doubles[] = {0.5,  -0.5, 1.0,  -1.0, 2.0,
-                                                 -2.0, 4.0,  -4.0, 0.15915494309189532};
+            static constexpr double doubles[] = {
+                0.5, -0.5, 1.0, -1.0, 2.0, -2.0, 4.0, -4.0, 0.15915494309189532};
             const auto bits = std::bit_cast<std::uint64_t>(doubles[source - 240]);
             return {hex(static_cast<std::uint32_t>(bits)),
                     hex(static_cast<std::uint32_t>(bits >> 32))};
@@ -2414,8 +2413,7 @@ class Translator {
         // a double goes to two registers, after everything it is made of was read
         const auto set = [&](const std::string &value) {
             const auto id = "x" + std::to_string(temporaries_++);
-            line("uint " + id + "l, " + id + "h; asuint(" + value + ", " + id + "l, " + id +
-                 "h);");
+            line("uint " + id + "l, " + id + "h; asuint(" + value + ", " + id + "l, " + id + "h);");
             set_v(destination, id + "l");
             set_v(destination + 1, id + "h");
         };
@@ -2471,8 +2469,7 @@ class Translator {
                 return "(" +
                        (type == "i64" ? "(int)" + upper + " < (int)" + than_upper
                                       : upper + " < " + than_upper) +
-                       " || (" + upper + " == " + than_upper + " && " + lower + " < " + than +
-                       "))";
+                       " || (" + upper + " == " + than_upper + " && " + lower + " < " + than + "))";
             };
             if (how == "f")
                 condition = "false";
@@ -3331,10 +3328,9 @@ class Translator {
                 line(guard + "{ uint X; " + buffer + ".InterlockedAnd(" + at + ", " + clear +
                      ", X); " + buffer + ".InterlockedOr(" + at + ", " + part + ", X); }");
             } else {
-                const auto word = words(resource) + "[" + index + "].w[" +
-                                  field("(" + extra + " + 0u)",
-                                        fixed == ~0u ? fixed : fixed & ~3u, 0) +
-                                  "]";
+                const auto word =
+                    words(resource) + "[" + index + "].w[" +
+                    field("(" + extra + " + 0u)", fixed == ~0u ? fixed : fixed & ~3u, 0) + "]";
                 line(guard + "{ InterlockedAnd(" + word + ", " + clear + "); InterlockedOr(" +
                      word + ", " + part + "); }");
             }

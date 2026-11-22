@@ -65,9 +65,8 @@ TEST_CASE("operations on a group's memory the host has no function for retry unt
     CHECK(count(source, "do { X = lds[") == 4);
     CHECK(count(source, "InterlockedCompareExchange(lds[") == 4);
     // ds_wrxchg2_rtn_b32, ds_read_b96, ds_write_b8_d16_hi, ds_read_u16_d16_hi
-    const auto parts =
-        translated({shared(0x2e), shared_registers, shared(0xfe), shared_registers, shared(0xa0),
-                    shared_registers, shared(0xa7), shared_registers});
+    const auto parts = translated({shared(0x2e), shared_registers, shared(0xfe), shared_registers,
+                                   shared(0xa0), shared_registers, shared(0xa7), shared_registers});
     CHECK(count(parts, "InterlockedExchange(lds[") == 2);
     CHECK(parts.find("(v2 >> 16) & 0xffu") != std::string::npos);
     CHECK(parts.find("v4 = (v4 & 0xffffu) | (") != std::string::npos);

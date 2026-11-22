@@ -2323,9 +2323,8 @@ bool copy_feedback_map(List *host, const D3D12_TEXTURE_COPY_LOCATION *target,
     D3D12_TEXTURE_COPY_LOCATION from{};
     from.pResource = texture;
     from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    from.SubresourceIndex = source->SubresourceIndex < desc.DepthOrArraySize
-                                ? source->SubresourceIndex
-                                : 0;
+    from.SubresourceIndex =
+        source->SubresourceIndex < desc.DepthOrArraySize ? source->SubresourceIndex : 0;
     const D3D12_BOX part{0,
                          0,
                          0,

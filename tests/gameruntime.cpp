@@ -136,8 +136,7 @@ void CALLBACK draw_message_dialog(void *handle, void *, const char *title, const
                                   const char *, const char *, const char *third, std::uint32_t,
                                   std::uint32_t, void *context) {
     *static_cast<std::string *>(context) = std::string(title) + "/" + third;
-    call<HRESULT, void *, std::uint32_t>("XGameUi", "XGameUiSetMessageDialogUiResponse", handle,
-                                         2);
+    call<HRESULT, void *, std::uint32_t>("XGameUi", "XGameUiSetMessageDialogUiResponse", handle, 2);
 }
 } // namespace
 
@@ -171,9 +170,9 @@ TEST_CASE("a title that draws its own dialogs answers them itself") {
 TEST_CASE("the keyboard a title keeps open is dismissed with its first text") {
     const std::uint32_t options[3] = {0, 0, 0};
     void *entry = nullptr;
-    REQUIRE(call<HRESULT, const std::uint32_t *, std::uint32_t, const char *, std::uint32_t,
-                 void **>("XGameUi", "XGameUiTextEntryOpen", options, 32, "Valkyrie", 8, &entry) ==
-            S_OK);
+    REQUIRE(
+        call<HRESULT, const std::uint32_t *, std::uint32_t, const char *, std::uint32_t, void **>(
+            "XGameUi", "XGameUiTextEntryOpen", options, 32, "Valkyrie", 8, &entry) == S_OK);
     REQUIRE(entry);
     std::uint32_t change = 0, cursor = 0;
     char text[16] = {};
@@ -253,9 +252,8 @@ TEST_CASE("no client streams the title and games may not capture") {
     CHECK(call<std::uint32_t, std::uint64_t>("XGameStreaming", "XGameStreamingGetConnectionState",
                                              1) == 0);
     bool touch = true;
-    CHECK(call<HRESULT, std::uint64_t, bool *>("XGameStreaming",
-                                               "XGameStreamingIsTouchInputEnabled", 1,
-                                               &touch) == not_connected);
+    CHECK(call<HRESULT, std::uint64_t, bool *>(
+              "XGameStreaming", "XGameStreamingIsTouchInputEnabled", 1, &touch) == not_connected);
     CHECK_FALSE(touch);
     struct Details {
         std::uint32_t words[11];
@@ -310,8 +308,8 @@ TEST_CASE("every chunk of the package is installed") {
                                 1000, true, &block) == S_OK);
     REQUIRE(wait(&block) == S_OK);
     void *installing = nullptr;
-    REQUIRE(call<HRESULT, XAsyncBlock *, void **>("XPackage", "XPackageInstallChunksResult",
-                                                  &block, &installing) == S_OK);
+    REQUIRE(call<HRESULT, XAsyncBlock *, void **>("XPackage", "XPackageInstallChunksResult", &block,
+                                                  &installing) == S_OK);
     CHECK(installing == monitor);
     std::uint32_t kind = 9;
     REQUIRE(call<HRESULT, const char *, std::uint32_t *>("XPackage", "XPackageGetPackageKind",

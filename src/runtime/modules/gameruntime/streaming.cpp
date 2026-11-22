@@ -82,8 +82,7 @@ HRESULT WINAPI show_with_state(void *, const char *, std::size_t, const void *) 
 HRESULT WINAPI update_state_on_client(void *, Client, std::size_t, const void *) {
     return e_client_not_connected;
 }
-HRESULT WINAPI show_with_state_on_client(void *, Client, const char *, std::size_t,
-                                         const void *) {
+HRESULT WINAPI show_with_state_on_client(void *, Client, const char *, std::size_t, const void *) {
     return e_client_not_connected;
 }
 std::size_t WINAPI bundle_name_size(void *, Client) { return 0; }
@@ -200,8 +199,7 @@ void install_streaming() {
     implement("XGameStreamingUpdateTouchControlsState", &update_state);
     implement("XGameStreamingUpdateTouchControlsStateOnClient", &update_state_on_client);
     implement("XGameStreamingShowTouchControlsWithStateUpdate", &show_with_state);
-    implement("XGameStreamingShowTouchControlsWithStateUpdateOnClient",
-              &show_with_state_on_client);
+    implement("XGameStreamingShowTouchControlsWithStateUpdateOnClient", &show_with_state_on_client);
     implement("XGameStreamingGetTouchBundleVersionNameSize", &bundle_name_size);
     implement("XGameStreamingGetTouchBundleVersion", &bundle_version);
     implement("XGameStreamingGetClientIPAddress", &client_address);
