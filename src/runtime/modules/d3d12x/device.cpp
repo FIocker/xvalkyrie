@@ -2507,18 +2507,76 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
     static_cast<ListProxy *>(self)->indices = host;
     host_of(self)->IASetIndexBuffer(view ? &host : nullptr);
 }
+// On the Series console any memory the GPU can see may be given as a root descriptor, a
+// buffer or not. An address that is memory of the title's and in no buffer here is copied
+// into a buffer of ours, which is what the host is given: 64 KiB of it, or as much as is
+// there. The copies go round a ring, which a frame does not come near filling.
+std::uint64_t root_address(std::uint64_t address) {
+    if (!address)
+        return 0;
+    {
+        const std::lock_guard lock(buffer_mutex);
+        auto found = mapped_at.upper_bound(address);
+        if (found != mapped_at.begin() && address < std::prev(found)->second.end)
+            return std::prev(found)->second.gpu + (address - std::prev(found)->first);
+        auto buffer = buffers_at.upper_bound(address);
+        if (buffer != buffers_at.begin() && address < std::prev(buffer)->second.end)
+            return address;
+    }
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) ||
+        info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return address;
+    constexpr std::uint64_t ring_size = 256ull << 20, most = 64 << 10;
+    static std::mutex mutex;
+    static ID3D12Resource *ring = nullptr;
+    static std::uint8_t *memory = nullptr;
+    static std::uint64_t next = 0;
+    const std::lock_guard lock(mutex);
+    if (!ring) {
+        auto *const device = d3d12_device.load();
+        const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Width = ring_size;
+        desc.Height = desc.DepthOrArraySize = desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        void *mapped = nullptr;
+        if (!device ||
+            FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                   D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                   IID_PPV_ARGS(&ring))) ||
+            FAILED(ring->Map(0, nullptr, &mapped))) {
+            ring = nullptr;
+            return address;
+        }
+        memory = static_cast<std::uint8_t *>(mapped);
+        std::fprintf(stderr, "[Runtime] root descriptors on memory that is no buffer are copied "
+                             "into one of the host's\n");
+        std::fflush(stderr);
+    }
+    const auto region_end = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
+    const auto bytes = std::min(most, region_end - address);
+    if (next + most > ring_size)
+        next = 0;
+    const auto at = next;
+    next += (bytes + 255) & ~255ull;
+    std::memcpy(memory + at, reinterpret_cast<const void *>(address), bytes);
+    return ring->GetGPUVirtualAddress() + at;
+}
 void STDMETHODCALLTYPE set_graphics_root_cbv(void *self, UINT index, std::uint64_t address) {
     trace_address("SetGraphicsRootConstantBufferView", address);
-    host_of(self)->SetGraphicsRootConstantBufferView(index, host_address(address));
+    host_of(self)->SetGraphicsRootConstantBufferView(index, root_address(address));
 }
 void STDMETHODCALLTYPE set_compute_root_cbv(void *self, UINT index, std::uint64_t address) {
-    host_of(self)->SetComputeRootConstantBufferView(index, host_address(address));
+    host_of(self)->SetComputeRootConstantBufferView(index, root_address(address));
 }
 void STDMETHODCALLTYPE set_compute_root_srv(void *self, UINT index, std::uint64_t address) {
-    host_of(self)->SetComputeRootShaderResourceView(index, host_address(address));
+    host_of(self)->SetComputeRootShaderResourceView(index, root_address(address));
 }
 void STDMETHODCALLTYPE set_graphics_root_srv(void *self, UINT index, std::uint64_t address) {
-    host_of(self)->SetGraphicsRootShaderResourceView(index, host_address(address));
+    host_of(self)->SetGraphicsRootShaderResourceView(index, root_address(address));
 }
 void STDMETHODCALLTYPE set_compute_root_uav(void *self, UINT index, std::uint64_t address) {
     host_of(self)->SetComputeRootUnorderedAccessView(index, host_address(address));
