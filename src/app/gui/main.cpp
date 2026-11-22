@@ -76,7 +76,8 @@ int wmain(int argc, wchar_t **argv) {
             auto title = xv::launch_title(path);
             std::cerr << "[Launcher] "
                       << (title.status == xv::LaunchStatus::runnable ? "can start: "
-                                                                     : "cannot start: ")
+                          : title.startable() ? "not known to run, started anyway: "
+                                              : "cannot start: ")
                       << title.detail << std::endl;
             return title;
         };
@@ -88,7 +89,8 @@ int wmain(int argc, wchar_t **argv) {
             std::cerr << "[Launcher] starting " << text(xv::title_executable(path)) << std::endl;
             // what the title's process prints: on the window, and where this one prints
             const auto code = xv::host::run_beside(
-                boot, {L"exec", path.wstring()}, title_process, [&](std::string_view piece) {
+                boot, {L"exec", path.wstring(), L"--allow-missing"}, title_process,
+                [&](std::string_view piece) {
                     std::cerr.write(piece.data(), static_cast<std::streamsize>(piece.size()));
                     output(piece);
                 });

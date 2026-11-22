@@ -20,6 +20,12 @@ struct LaunchResult {
     std::string file;
     LaunchStatus status;
     std::string detail;
+    // Whether there is anything to start: an x64 image, whatever is missing for it. One that
+    // is not known to run is started all the same, to see how far it gets.
+    bool startable() const {
+        return status == LaunchStatus::runnable || status == LaunchStatus::runtime_unavailable ||
+               status == LaunchStatus::other_target;
+    }
     std::optional<Target> target = {}; // console the imports point to, if any
 };
 // `path` is an executable, an unpacked title directory, or the MicrosoftGame.config or

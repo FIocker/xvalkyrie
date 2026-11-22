@@ -25,9 +25,11 @@ Registry title_registry(std::span<const std::uint8_t> file) {
         analysis::console_target(analysis::import_profile(pe::inspect(file, pe::Detail::light)));
     if (target)
         return console_registry(*target);
+    // Not a console build: nothing of ours to bind it to. It gets the host's own functions,
+    // so that it runs as far as it can.
     Registry registry;
+    registry.open_to_host();
     if (windows_app(file)) {
-        registry.open_to_host();
         // An app of the console's own system (its dashboard and the like) is a Windows app
         // that asks for the console's WinRT classes: those are answered as for a title,
         // whichever API set the activation functions are imported from.

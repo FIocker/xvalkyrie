@@ -186,8 +186,8 @@ class Desktop {
             exit_code_ = 1;
             return;
         }
-        exit_code_ = title_->status == LaunchStatus::runnable ? 0 : 1;
-        if (title_->status != LaunchStatus::runnable)
+        exit_code_ = title_->startable() ? 0 : 1;
+        if (!title_->startable())
             return;
         // shared so that a guest outliving the window still has somewhere to report to
         log_.clear();
@@ -743,6 +743,8 @@ class Desktop {
     }
     // what went wrong with the opened title, in a few words
     const char *problem() const {
+        if (title_->startable())
+            return ended_badly_ ? "The title stopped" : "The title ended";
         switch (title_->status) {
         case LaunchStatus::unreadable:
             return "This file could not be read";
@@ -764,7 +766,7 @@ class Desktop {
     // A title that was opened and is not running: a sign, what happened in a few words,
     // the whole story, and the way back.
     void title_screen() {
-        const bool failed = title_->status != LaunchStatus::runnable || ended_badly_;
+        const bool failed = !title_->startable() || ended_badly_;
         title_background(.8f);
         // a title that ran says how it ended before anything else
         const auto story = outcome_.empty() ? title_->detail : outcome_ + ". " + title_->detail;
