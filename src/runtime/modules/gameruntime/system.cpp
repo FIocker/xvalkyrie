@@ -15,6 +15,7 @@ namespace xv::runtime::modules::gameruntime {
 namespace {
 std::atomic<std::uint64_t> tokens{0};
 const char port_identity[] = "XNetworkingQueryPreferredLocalUdpMultiplayerPortAsync";
+const char space_identity[] = "XPersistentLocalStoragePromptUserForSpaceAsync";
 
 std::filesystem::path package_root() {
     std::error_code error;
@@ -130,6 +131,14 @@ HRESULT WINAPI storage_space(void *, std::uint64_t *info) {
     return S_OK;
 }
 
+// more space is the user's to give on a console; here it is the host's disk
+HRESULT WINAPI storage_prompt(void *, std::uint64_t, XAsyncBlock *block) {
+    return finish(block, space_identity, S_OK);
+}
+HRESULT WINAPI storage_prompt_result(void *, XAsyncBlock *block) {
+    return result(block, space_identity, 0, nullptr, nullptr);
+}
+
 // XPackage: the title is one package, all of it installed, mounted where it was unpacked
 std::string package_identifier() {
     const auto name = config_text("name");
@@ -152,6 +161,42 @@ HRESULT WINAPI chunk_availability(void *, const char *, std::uint32_t, void *,
     if (!availability)
         return E_POINTER;
     *availability = 0;
+    return S_OK;
+}
+// XPackageInstallationMonitor: nothing is left to install, whatever chunks are asked about
+struct Monitor {
+} monitor;
+struct InstallationProgress {
+    std::uint64_t total_bytes, installed_bytes, launch_bytes;
+    bool launchable, completed;
+};
+HRESULT WINAPI create_monitor(void *, const char *, std::uint32_t, const void *, std::uint32_t,
+                              Queue *, Monitor **handle) {
+    if (!handle)
+        return E_POINTER;
+    *handle = &monitor;
+    return S_OK;
+}
+HRESULT WINAPI install_chunks(void *, const char *, std::uint32_t, const void *, std::uint32_t,
+                              bool, Queue *, Monitor **handle) {
+    if (!handle)
+        return E_POINTER;
+    *handle = &monitor;
+    return S_OK;
+}
+void WINAPI installation_progress(void *, Monitor *, InstallationProgress *progress) {
+    if (progress)
+        *progress = {1, 1, 1, true, true};
+}
+bool WINAPI update_monitor(void *, Monitor *) { return false; }
+bool WINAPI unregister_progress(void *, Monitor *, std::uint64_t, bool) { return true; }
+HRESULT WINAPI estimate_download(void *, const char *, std::uint32_t, const void *,
+                                 std::uint64_t *size, bool *confirm) {
+    if (!size)
+        return E_POINTER;
+    *size = 0;
+    if (confirm)
+        *confirm = false;
     return S_OK;
 }
 struct Mount {
@@ -216,6 +261,22 @@ HRESULT WINAPI register_3(void *, void *, void *, void *, std::uint64_t *token) 
 bool WINAPI unregister(void *, std::uint64_t, bool) { return true; }
 HRESULT WINAPI succeeded(void *) { return S_OK; }
 bool WINAPI no(void *) { return false; }
+bool WINAPI yes(void *) { return true; }
+std::uint32_t WINAPI none(void *) { return 0; }
+// XGameStreaming: no client is streaming the title
+HRESULT WINAPI streaming_clients(void *, std::uint32_t, void *, std::uint32_t *used) {
+    if (!used)
+        return E_POINTER;
+    *used = 0;
+    return S_OK;
+}
+// XAppCapture keeps no clips, so its metadata has all the room it asks about
+HRESULT WINAPI metadata_storage(void *, std::uint64_t *bytes) {
+    if (!bytes)
+        return E_POINTER;
+    *bytes = 1ull << 30;
+    return S_OK;
+}
 } // namespace
 
 void install_system() {
@@ -236,6 +297,23 @@ void install_system() {
     implement("XPersistentLocalStorageGetPathSize", &storage_path_size);
     implement("XPersistentLocalStorageGetPath", &storage_path);
     implement("XPersistentLocalStorageGetSpaceInfo", &storage_space);
+    implement("XPersistentLocalStoragePromptUserForSpaceAsync", &storage_prompt);
+    implement("XPersistentLocalStoragePromptUserForSpaceResult", &storage_prompt_result);
+    implement("XPackageCreateInstallationMonitor", &create_monitor);
+    implement("XPackageCloseInstallationMonitorHandle", &close_handle);
+    implement("XPackageGetInstallationProgress", &installation_progress);
+    implement("XPackageUpdateInstallationMonitor", &update_monitor);
+    implement("XPackageRegisterInstallationProgressChanged", &register_3);
+    implement("XPackageUnregisterInstallationProgressChanged", &unregister_progress);
+    implement("XPackageInstallChunks", &install_chunks);
+    implement("XPackageEnumerateChunkAvailability", &enumerate_nothing);
+    implement("XPackageChangeChunkInstallOrder", &succeeded);
+    implement("XPackageEstimateDownloadSize", &estimate_download);
+    implement("XSystemHandleTrack", &succeeded);
+    implement("XSystemIsHandleValid", &yes);
+    implement("XSystemAllowFullDownloadBandwidth", &succeeded);
+    implement("XLaunchRestartOnCrash", &succeeded);
+    implement("XUserIsSignOutPresent", &no);
     implement("XPackageGetCurrentProcessPackageIdentifier", &package_identifier_of_process);
     implement("XPackageIsPackagedProcess", &is_packaged);
     implement("XPackageGetUserLocale", &user_locale);
@@ -268,6 +346,23 @@ void install_system() {
     implement("XGameStreamingInitialize", &succeeded);
     implement("XGameStreamingUninitialize", &succeeded);
     implement("XGameStreamingIsStreaming", &no);
+    implement("XGameStreamingGetClientCount", &none);
+    implement("XGameStreamingGetClients", &streaming_clients);
+    implement("XGameStreamingHideTouchControls", &succeeded);
+    implement("XGameStreamingShowTouchControlLayout", &succeeded);
+    // events and states of clips nobody records
+    for (const auto *name :
+         {"XAppCaptureMetadataAddStringEvent", "XAppCaptureMetadataAddInt32Event",
+          "XAppCaptureMetadataAddDoubleEvent", "XAppCaptureMetadataStartStringState",
+          "XAppCaptureMetadataStartInt32State", "XAppCaptureMetadataStartDoubleState",
+          "XAppCaptureMetadataStopState", "XAppCaptureMetadataStopAllStates",
+          "XAppCaptureEnableRecord", "XAppCaptureDisableRecord"})
+        implement(name, &succeeded);
+    implement("XAppCaptureMetadataRemainingStorageBytesAvailable", &metadata_storage);
+    implement("XAppCaptureRegisterMetadataPurged", &register_3);
+    implement("XAppCaptureUnRegisterMetadataPurged", &unregister);
+    implement("XAppBroadcastRegisterIsAppBroadcastingChanged", &register_3);
+    implement("XAppBroadcastUnregisterIsAppBroadcastingChanged", &unregister);
     implement("XAppBroadcastIsAppBroadcasting", &no);
 }
 } // namespace xv::runtime::modules::gameruntime

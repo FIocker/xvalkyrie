@@ -3,6 +3,9 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <mmdeviceapi.h>
+#include <objbase.h>
+#include <thread>
 
 // XUser: one user, signed in, who never signs out: the one of Options > Console. Its handle
 // is the same object whoever asks, and nothing of it comes from Xbox Live.
@@ -163,6 +166,45 @@ HRESULT WINAPI sign_out_deferral(void *, void **deferral) {
     return S_OK;
 }
 void WINAPI close_deferral(void *, void *) {}
+// The user's headset is the host's communications device. On a thread of its own for COM.
+std::wstring communications_endpoint(bool capture) {
+    std::wstring id;
+    std::thread([&] {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
+            return;
+        IMMDeviceEnumerator *devices = nullptr;
+        IMMDevice *device = nullptr;
+        wchar_t *name = nullptr;
+        if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                       IID_PPV_ARGS(&devices))) &&
+            SUCCEEDED(devices->GetDefaultAudioEndpoint(capture ? eCapture : eRender,
+                                                       eCommunications, &device)) &&
+            SUCCEEDED(device->GetId(&name)))
+            id = name;
+        CoTaskMemFree(name);
+        if (device)
+            device->Release();
+        if (devices)
+            devices->Release();
+        CoUninitialize();
+    }).join();
+    return id;
+}
+// XUserDefaultAudioEndpointKind: communication render, communication capture
+HRESULT WINAPI default_audio_endpoint(void *, User *, std::uint32_t kind, std::size_t size,
+                                      wchar_t *buffer, std::size_t *used) {
+    if (kind > 1)
+        return E_INVALIDARG;
+    const auto id = communications_endpoint(kind == 1);
+    if (id.empty())
+        return static_cast<HRESULT>(0x80070490); // ERROR_NOT_FOUND: no such device
+    if (used)
+        *used = id.size() + 1;
+    if (!buffer || size < id.size() + 1)
+        return e_not_sufficient_buffer;
+    std::memcpy(buffer, id.c_str(), (id.size() + 1) * sizeof(wchar_t));
+    return S_OK;
+}
 // every input device is the one user's
 HRESULT WINAPI find_for_device(void *, const void *, User **handle) { return hand_out(handle); }
 bool WINAPI is_store_user(void *, User *) { return true; }
@@ -203,6 +245,7 @@ void install_user() {
     implement("XUserRegisterForChangeEvent", &register_event);
     implement("XUserUnregisterForChangeEvent", &unregister_event);
     implement("XUserRegisterForDeviceAssociationChanged", &register_event);
+    implement("XUserGetDefaultAudioEndpointUtf16", &default_audio_endpoint);
     // the default audio endpoint never changes here
     implement("XUserRegisterForDefaultAudioEndpointUtf16Changed", &register_event);
     implement("XUserUnregisterForDefaultAudioEndpointUtf16Changed", &unregister_event);

@@ -73,6 +73,8 @@ void build_tables() {
         install_user();
         install_save();
         install_system();
+        install_store();
+        install_ui();
     });
 }
 

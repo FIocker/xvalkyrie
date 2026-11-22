@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -53,7 +54,11 @@ struct XAsyncBlock {
 // block's queue with `status`, and XAsyncGetResult under `identity` gives `payload`.
 HRESULT finish(XAsyncBlock *block, const void *identity, HRESULT status,
                std::vector<std::uint8_t> payload = {});
-// The result of an operation started with finish(): its status if it failed or has no
+// An operation of ours whose outcome comes later. `work` runs on the work port of the block's
+// queue and is given what to call with the outcome, once, from any thread.
+using Outcome = std::function<void(HRESULT status, std::vector<std::uint8_t> payload)>;
+HRESULT start(XAsyncBlock *block, const void *identity, std::function<void(Outcome)> work);
+// The result of an operation started with finish() or start(): its status if it failed or has no
 // payload, else the payload copied to `buffer`.
 HRESULT result(XAsyncBlock *block, const void *identity, std::size_t size, void *buffer,
                std::size_t *used);
@@ -67,4 +72,6 @@ void install_async();
 void install_user();
 void install_save();
 void install_system();
+void install_store();
+void install_ui();
 } // namespace xv::runtime::modules::gameruntime

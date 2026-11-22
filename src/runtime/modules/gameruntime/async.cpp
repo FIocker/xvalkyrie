@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <utility>
 
 // XAsync: one asynchronous operation, tracked in a block the title owns. Whoever implements
 // the operation is its provider, a callback asked to begin, do the work, hand out the result
@@ -301,8 +302,43 @@ HRESULT CALLBACK finished_provider(Op op, const ProviderData *data) {
     }
     return S_OK;
 }
+// An operation of ours whose outcome another thread brings
+struct Deferred {
+    Finished finished;
+    std::function<void(Outcome)> work;
+};
+HRESULT CALLBACK deferred_provider(Op op, const ProviderData *data) {
+    auto *const deferred = static_cast<Deferred *>(data->context);
+    switch (op) {
+    case Op::begin:
+        return async_schedule(nullptr, data->block, 0);
+    case Op::do_work:
+        std::exchange(deferred->work, {})(
+            [deferred, block = data->block](HRESULT status, std::vector<std::uint8_t> payload) {
+                deferred->finished = {status, std::move(payload)};
+                async_complete(nullptr, block, status, deferred->finished.payload.size());
+            });
+        return e_pending;
+    case Op::get_result:
+        std::memcpy(data->buffer, deferred->finished.payload.data(),
+                    deferred->finished.payload.size());
+        return S_OK;
+    case Op::cancel:
+        return S_OK;
+    case Op::cleanup:
+        delete deferred;
+        return S_OK;
+    }
+    return S_OK;
+}
 } // namespace
 
+HRESULT start(XAsyncBlock *block, const void *identity, std::function<void(Outcome)> work) {
+    if (!block)
+        return E_INVALIDARG;
+    return begin(block, new Deferred{{e_pending, {}}, std::move(work)}, identity,
+                 &deferred_provider);
+}
 HRESULT finish(XAsyncBlock *block, const void *identity, HRESULT status,
                std::vector<std::uint8_t> payload) {
     if (!block)

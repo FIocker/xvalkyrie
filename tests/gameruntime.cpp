@@ -1,0 +1,176 @@
+#include "runtime/modules/gameruntime.hpp"
+#include "runtime/common/runtime.hpp"
+#include "runtime/modules/gameruntime/gameruntime.hpp"
+#include <catch2/catch.hpp>
+#include <cstring>
+#include <ctime>
+#include <string_view>
+
+// The Gaming Runtime as a title's half reaches it: QueryApiImpl for the table of an API, then
+// a slot of the table with the table first.
+namespace {
+using namespace xv::runtime;
+using modules::gameruntime::XAsyncBlock;
+
+struct Table {
+    void **slots;
+};
+Table *table_of(std::string_view api) {
+    static const auto query = [] {
+        static Registry registry;
+        modules::install_gameruntime(registry);
+        ConsoleSettings settings;
+        settings.keyboard_dialog = false;
+        detail::set_console_settings(settings);
+        using Query = HRESULT WINAPI(const GUID *, const GUID *, void **);
+        return reinterpret_cast<Query *>(registry.find("xgameruntime.dll", "QueryApiImpl"));
+    }();
+    for (const auto &known : modules::gameruntime::known_interfaces())
+        if (known.name == api) {
+            void *table = nullptr;
+            REQUIRE(query(&known.api, &known.iid, &table) == S_OK);
+            return static_cast<Table *>(table);
+        }
+    FAIL("no such API");
+    return nullptr;
+}
+std::uint16_t slot_of(std::string_view api, std::string_view method) {
+    for (const auto &known : modules::gameruntime::known_interfaces())
+        if (known.name == api)
+            for (const auto &one : known.methods)
+                if (one.name == method)
+                    return one.slot;
+    FAIL("no such method");
+    return 0;
+}
+template <class Result, class... Arguments>
+Result call(std::string_view api, std::string_view method, Arguments... arguments) {
+    auto *const table = table_of(api);
+    using Function = Result WINAPI(Table *, Arguments...);
+    return reinterpret_cast<Function *>(table->slots[slot_of(api, method)])(table, arguments...);
+}
+HRESULT wait(XAsyncBlock *block) {
+    return call<HRESULT, XAsyncBlock *, bool>("XAsync", "XAsyncGetStatus", block, true);
+}
+} // namespace
+
+TEST_CASE("the store owns the title and sells nothing") {
+    void *context = nullptr;
+    REQUIRE(call<HRESULT, void *, void **>("XStore", "XStoreCreateContext", nullptr, &context) ==
+            S_OK);
+    REQUIRE(context);
+    struct GameLicense {
+        char sku_store_id[18];
+        bool is_active, is_trial_owned_by_this_user, is_disc_license, is_trial;
+        std::uint32_t trial_time_remaining_in_seconds;
+        char trial_unique_id[64];
+        std::time_t expiration_date;
+    } license{};
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, void *, XAsyncBlock *>("XStore", "XStoreQueryGameLicenseAsync", context,
+                                                 &block) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    REQUIRE(call<HRESULT, XAsyncBlock *, GameLicense *>("XStore", "XStoreQueryGameLicenseResult",
+                                                        &block, &license) == S_OK);
+    CHECK(license.is_active);
+    CHECK_FALSE(license.is_trial);
+
+    block = {};
+    REQUIRE(call<HRESULT, void *, XAsyncBlock *>(
+                "XStore", "XStoreQueryGameAndDlcPackageUpdatesAsync", context, &block) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    std::uint32_t count = 7;
+    CHECK(call<HRESULT, XAsyncBlock *, std::uint32_t *>(
+              "XStore", "XStoreQueryGameAndDlcPackageUpdatesResultCount", &block, &count) == S_OK);
+    CHECK(count == 0);
+
+    block = {};
+    REQUIRE(call<HRESULT, void *, std::uint32_t, std::uint32_t, XAsyncBlock *>(
+                "XStore", "XStoreQueryAssociatedProductsAsync", context, 0xff, 25, &block) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    void *query = nullptr;
+    REQUIRE(call<HRESULT, XAsyncBlock *, void **>("XStore", "XStoreQueryAssociatedProductsResult",
+                                                  &block, &query) == S_OK);
+    REQUIRE(query);
+    CHECK_FALSE(call<bool, void *>("XStore", "XStoreProductsQueryHasMorePages", query));
+
+    block = {};
+    REQUIRE(call<HRESULT, void *, const char *, const char *, const char *, XAsyncBlock *>(
+                "XStore", "XStoreShowPurchaseUIAsync", context, "9NBLGGH4R315", nullptr, nullptr,
+                &block) == S_OK);
+    CHECK(wait(&block) == E_ABORT);
+}
+
+TEST_CASE("the system keyboard answers with the text the title suggests") {
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, XAsyncBlock *, const char *, const char *, const char *, std::uint32_t,
+                 std::uint32_t>("XGameUi", "XGameUiShowTextEntryAsync", &block, "Name", "Yours",
+                                "Valkyrie", 0, 32) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    std::uint32_t size = 0, used = 0;
+    REQUIRE(call<HRESULT, XAsyncBlock *, std::uint32_t *>(
+                "XGameUi", "XGameUiShowTextEntryResultSize", &block, &size) == S_OK);
+    REQUIRE(size == 9);
+    char text[16] = {};
+    REQUIRE(call<HRESULT, XAsyncBlock *, std::uint32_t, char *, std::uint32_t *>(
+                "XGameUi", "XGameUiShowTextEntryResult", &block, sizeof text, text, &used) == S_OK);
+    CHECK(used == 9);
+    CHECK(std::string_view(text) == "Valkyrie");
+}
+
+TEST_CASE("a message dialog answers with its default button") {
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, XAsyncBlock *, const char *, const char *, const char *, const char *,
+                 const char *, std::uint32_t, std::uint32_t>(
+                "XGameUi", "XGameUiShowMessageDialogAsync", &block, "Save", "Overwrite?", "Yes",
+                "No", nullptr, 1, 1) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    std::uint32_t button = 9;
+    REQUIRE(call<HRESULT, XAsyncBlock *, std::uint32_t *>(
+                "XGameUi", "XGameUiShowMessageDialogResult", &block, &button) == S_OK);
+    CHECK(button == 1);
+}
+
+TEST_CASE("speech is a WAV file") {
+    void *synthesizer = nullptr, *stream = nullptr;
+    REQUIRE(call<HRESULT, void **>("XAccessibility", "XSpeechSynthesizerCreate", &synthesizer) ==
+            S_OK);
+    REQUIRE(call<HRESULT, void *, const char *, void **>("XAccessibility",
+                                                         "XSpeechSynthesizerCreateStreamFromText",
+                                                         synthesizer, "hello", &stream) == S_OK);
+    std::size_t size = 0, used = 0;
+    REQUIRE(call<HRESULT, void *, std::size_t *>(
+                "XAccessibility", "XSpeechSynthesizerGetStreamDataSize", stream, &size) == S_OK);
+    REQUIRE(size >= 44);
+    std::vector<std::uint8_t> data(size);
+    CHECK(call<HRESULT, void *, std::size_t, void *, std::size_t *>(
+              "XAccessibility", "XSpeechSynthesizerGetStreamData", stream, size - 1, data.data(),
+              &used) == modules::gameruntime::e_not_sufficient_buffer);
+    REQUIRE(call<HRESULT, void *, std::size_t, void *, std::size_t *>(
+                "XAccessibility", "XSpeechSynthesizerGetStreamData", stream, size, data.data(),
+                &used) == S_OK);
+    CHECK(used == size);
+    CHECK(!std::memcmp(data.data(), "RIFF", 4));
+    CHECK(!std::memcmp(data.data() + 8, "WAVEfmt ", 8));
+    std::uint32_t samples = 0;
+    std::memcpy(&samples, data.data() + 40, 4);
+    CHECK(samples == size - 44);
+    CHECK(call<HRESULT, void *>("XAccessibility", "XSpeechSynthesizerCloseStreamHandle", stream) ==
+          S_OK);
+}
+
+TEST_CASE("every chunk of the package is installed") {
+    void *monitor = nullptr;
+    REQUIRE(
+        call<HRESULT, const char *, std::uint32_t, const void *, std::uint32_t, void *, void **>(
+            "XPackage", "XPackageCreateInstallationMonitor", "package", 0, nullptr, 1000, nullptr,
+            &monitor) == S_OK);
+    struct Progress {
+        std::uint64_t total_bytes, installed_bytes, launch_bytes;
+        bool launchable, completed;
+    } progress{};
+    call<void, void *, Progress *>("XPackage", "XPackageGetInstallationProgress", monitor,
+                                   &progress);
+    CHECK(progress.completed);
+    CHECK(progress.installed_bytes == progress.total_bytes);
+}
