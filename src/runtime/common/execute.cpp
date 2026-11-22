@@ -558,12 +558,20 @@ int report_fault(EXCEPTION_POINTERS *info) {
             std::filesystem::path(name).filename().c_str(),
             static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(host)));
     }
-    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2)
-        std::fprintf(stderr, "[Runtime] %s address 0x%llx\n",
+    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
+        MEMORY_BASIC_INFORMATION region{};
+        VirtualQuery(reinterpret_cast<void *>(record->ExceptionInformation[1]), &region,
+                     sizeof region);
+        std::fprintf(stderr,
+                     "[Runtime] %s address 0x%llx (allocation %p, region %p of 0x%zx bytes, "
+                     "state 0x%lx, protection 0x%lx)\n",
                      record->ExceptionInformation[0] == 1   ? "writing"
                      : record->ExceptionInformation[0] == 8 ? "running"
                                                             : "reading",
-                     static_cast<unsigned long long>(record->ExceptionInformation[1]));
+                     static_cast<unsigned long long>(record->ExceptionInformation[1]),
+                     region.AllocationBase, region.BaseAddress, region.RegionSize, region.State,
+                     region.Protect);
+    }
     report_cxx_type(record);
     report_guest_stack(info->ContextRecord);
     report_unwound_stack(info->ContextRecord);
