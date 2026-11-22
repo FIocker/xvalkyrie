@@ -546,6 +546,16 @@ class Desktop {
             open(title.path);
         if (ImGui::MenuItem("Open Directory"))
             host::show_in_file_manager(title.path);
+        // a shortcut that starts the title in xvboot, without this window
+        if (ImGui::MenuItem("Create Desktop Shortcut")) {
+            const auto name =
+                std::filesystem::path(std::u8string(title.name.begin(), title.name.end()))
+                    .wstring();
+            const auto made = host::create_desktop_shortcut(
+                name, L"xvboot.exe", L"exec \"" + title.path.wstring() + L"\" --allow-missing");
+            library_notice_ = made.empty() ? "The shortcut could not be made."
+                                           : "Shortcut on the desktop: " + utf8(made.filename());
+        }
         // read again from its files, pictures included, whatever the cache says
         if (ImGui::MenuItem("Refresh Cache", nullptr, false, !discovery_.valid())) {
             forget_cached_title(library_cache_file(), title.path);

@@ -14,6 +14,7 @@
 #include <windows.h>
 // after windows.h, which it needs
 #include <shellapi.h>
+#include <shlobj.h>
 
 namespace xv::host {
 namespace {
@@ -166,6 +167,41 @@ bool show_in_file_manager(const std::filesystem::path &path) {
     const auto select = L"/select,\"" + path.wstring() + L"\"";
     return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", L"explorer.exe",
                                                    select.c_str(), nullptr, SW_SHOWNORMAL)) > 32;
+}
+std::filesystem::path create_desktop_shortcut(const std::wstring &name, const std::wstring &program,
+                                              const std::wstring &arguments) {
+    // what a file name may not have
+    auto file = name;
+    for (auto &c : file)
+        if (c < 32 || std::wstring_view(L"<>:\"/\|?*").find(c) != std::wstring_view::npos)
+            c = L'_';
+    if (file.empty())
+        return {};
+    wchar_t *desktop = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)))
+        return {};
+    const auto shortcut = std::filesystem::path(desktop) / (file + L".lnk");
+    CoTaskMemFree(desktop);
+    const auto target = executable_directory() / program;
+    const bool initialized = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    IShellLinkW *link = nullptr;
+    IPersistFile *saved = nullptr;
+    const bool made = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                                 IID_PPV_ARGS(&link))) &&
+                      SUCCEEDED(link->SetPath(target.c_str())) &&
+                      SUCCEEDED(link->SetArguments(arguments.c_str())) &&
+                      SUCCEEDED(link->SetWorkingDirectory(target.parent_path().c_str())) &&
+                      SUCCEEDED(link->SetDescription(name.c_str())) &&
+                      SUCCEEDED(link->SetShowCmd(SW_SHOWMINNOACTIVE)) &&
+                      SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&saved))) &&
+                      SUCCEEDED(saved->Save(shortcut.c_str(), TRUE));
+    if (saved)
+        saved->Release();
+    if (link)
+        link->Release();
+    if (initialized)
+        CoUninitialize();
+    return made ? shortcut : std::filesystem::path{};
 }
 bool open_with_host(const std::filesystem::path &path) {
     return reinterpret_cast<INT_PTR>(

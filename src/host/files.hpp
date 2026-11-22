@@ -31,6 +31,11 @@ std::string status_text(std::uint32_t code);
 // Shows a folder, or the folder a file is in with the file selected, in the host's file
 // manager. False if it could not be asked to.
 bool show_in_file_manager(const std::filesystem::path &path);
+// Puts a shortcut called `name` on the user's desktop that runs the executable `program`
+// of this one's folder with `arguments`, its console minimized. The file made, empty if it
+// could not be.
+std::filesystem::path create_desktop_shortcut(const std::wstring &name, const std::wstring &program,
+                                              const std::wstring &arguments);
 // Opens a file with whatever the host opens its kind with. False if it could not.
 bool open_with_host(const std::filesystem::path &path);
 std::vector<std::uint8_t> read_snapshot(const std::filesystem::path &path, std::size_t limit);
