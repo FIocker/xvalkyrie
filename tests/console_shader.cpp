@@ -73,6 +73,24 @@ TEST_CASE("operations on a group's memory the host has no function for retry unt
     CHECK(parts.find("v4 = (v4 & 0xffffu) | (") != std::string::npos);
 }
 
+TEST_CASE("64-bit values are doubles of the host's and pairs of words") {
+    // v_cmp_lt_f64 vcc, 1.0, v[2:3]; v_cvt_i32_f64 v1, v[2:3]; v_cmp_class_f64 vcc, v[1:2], v2
+    const auto compared =
+        translated({0x3eu << 25 | 0x21 << 17 | 2 << 9 | 242, 0x3fu << 25 | 1 << 17 | 0x3 << 9 | v2,
+                    0x3eu << 25 | 0xa8 << 17 | 2 << 9 | v1});
+    CHECK(compared.find("asdouble(0x00000000u, 0x3ff00000u) < asdouble(v2, v3)") !=
+          std::string::npos);
+    CHECK(compared.find("double_class(v1, v2, v2)") != std::string::npos);
+    // v_fma_f64 v[4:5], |v[1:2]|, v[2:3], literal; v_cmp_ge_u64 s106, v[1:2], -1
+    const auto computed =
+        translated({0x35u << 26 | 0x14c << 16 | 1 << 8 | 4, v1 | v2 << 9 | 255 << 18, 0x40080000,
+                    0x35u << 26 | 0xe6 << 16 | 106, v1 | 193 << 9});
+    CHECK(computed.find("fma(asdouble(v1, (v2 & 0x7fffffffu)), asdouble(v2, v3), asdouble(0u, "
+                        "0x40080000u))") != std::string::npos);
+    CHECK(computed.find("!(v2 < 0xffffffffu || (v2 == 0xffffffffu && v1 < 0xffffffffu))") !=
+          std::string::npos);
+}
+
 TEST_CASE("a rectangle list's fourth corner comes from a geometry shader") {
     const char vertex[] = "struct Out { float4 position : SV_Position; float2 uv : TEXCOORD0; "
                           "nointerpolation uint layer : LAYER0; };\n"

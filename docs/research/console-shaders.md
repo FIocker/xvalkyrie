@@ -127,7 +127,9 @@ disassembly of the shaders of two titles, so it has the instructions those use a
 
 State on the first title it was run on (82 shaders up to its title screen):
 46 are translated and all of those compile; the title screen is drawn right. Not done:
-64-bit floats and integers in vector registers, the instructions that pick a register by
+what the host's shader model has no double for (rounding, roots, `frexp`, `ldexp`, the
+division helpers), 64-bit integers other than their comparisons and shifts, 64-bit words of
+a thread group's memory, the instructions that pick a register by
 an index (`*_movrel*`), global memory (`global_*`), typed buffers (`tbuffer_*`), compares
 with a bias or gradients, geometry and mesh shaders. A shader with any of these gets the
 stand-in that draws nothing, and `console_shader_source` says which.
@@ -146,6 +148,22 @@ makes them wait for each other (`GroupMemoryBarrierWithGroupSync`) wherever the 
 from writing the memory to reading it or back, and at each `s_barrier`. The host only
 allows that where every thread is sure to come by, so inside a block a branch may skip, or
 inside a loop, nothing is emitted and the threads race there. Not checked on a title.
+
+An operation the host has a function for is that function (`InterlockedAdd`,
+`InterlockedMin`...). The others (`ds_rsub`, `ds_inc`, `ds_dec`, the signed and float
+minimum and maximum, `ds_mskor`, `ds_wrap`, `ds_cmpst_f32`) read the word, work out what it
+becomes and store that with `InterlockedCompareExchange`, again if another thread got there
+first. What each one makes of the word and its data is AMD's description of it in the
+instruction set reference; none was seen in a title's shader.
+
+### 64-bit values
+
+A 64-bit value is two vector registers, the lower word first, or two scalar ones. Doubles
+are the host's (`asdouble` of the two words, and `asuint` back into them), which shader
+model 5 has for sums, products, `fma`, the lesser and the greater, division, comparisons
+and conversions. 64-bit integers are compared a word at a time. A 32-bit literal is the
+upper word of a double, as LLVM's disassembler reads it; a literal where a 64-bit integer
+is expected is not translated.
 
 ### Checking a change
 

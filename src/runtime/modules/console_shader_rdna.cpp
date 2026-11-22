@@ -1779,6 +1779,13 @@ class Translator {
             return;
         std::string a, b;
         std::uint32_t mask = 106;
+        if (is_wide(name)) {
+            if (ins.form == Ins::Form::sub_dword)
+                give_up(std::string(name) + " on part of a register");
+            const std::uint32_t codes[2] = {ins.w0 & 0x1ff, 256 + ((ins.w0 >> 9) & 0xff)};
+            emit_wide(ins, ins.format == F::vopc ? mask : destination, codes, 0, 0);
+            return;
+        }
         if (ins.form == Ins::Form::sub_dword) {
             const bool half = ends(name, "_f16");
             const auto part = [&](std::uint32_t code, std::uint32_t bits) {
@@ -2350,17 +2357,150 @@ class Translator {
         set_mask(mask, "carried");
         line("}");
     }
+    // The instructions on 64-bit values that have a translation: the comparisons, and of
+    // doubles what the host's shader model has (sums, products, the lesser and the greater,
+    // reciprocals and conversions).
+    static bool is_wide(std::string_view name) {
+        if (starts(name, "v_cmp"))
+            return ends(name, "_f64") || ends(name, "_i64") || ends(name, "_u64");
+        for (const auto *wide : {"v_add_f64", "v_mul_f64", "v_min_f64", "v_max_f64", "v_fma_f64",
+                                 "v_rcp_f64", "v_cvt_i32_f64", "v_cvt_f64_i32", "v_cvt_f32_f64",
+                                 "v_cvt_f64_f32", "v_cvt_u32_f64", "v_cvt_f64_u32"})
+            if (name == wide)
+                return true;
+        return false;
+    }
+    // The lower and upper words of a 64-bit operand: two registers, or a constant. A literal
+    // is the upper word of a double; what it is of an integer is not known here.
+    std::pair<std::string, std::string> wide_operand(const Ins &ins, std::uint32_t source,
+                                                     bool real) {
+        if (source >= 256)
+            return {v(source - 256), v(source - 255)};
+        if (source == 255) {
+            if (!real)
+                give_up("a literal as a 64-bit integer (" + std::string(ins.name) + ")");
+            return {"0u", hex(ins.literal)};
+        }
+        if (real && source >= 240 && source <= 248) {
+            static constexpr double doubles[] = {0.5,  -0.5, 1.0,  -1.0, 2.0,
+                                                 -2.0, 4.0,  -4.0, 0.15915494309189532};
+            const auto bits = std::bit_cast<std::uint64_t>(doubles[source - 240]);
+            return {hex(static_cast<std::uint32_t>(bits)),
+                    hex(static_cast<std::uint32_t>(bits >> 32))};
+        }
+        if ((source >= 128 && source <= 208) || source < 127)
+            return {operand(ins, source), operand_high(ins, source)};
+        give_up("64-bit operand " + std::to_string(source));
+    }
+    void emit_wide(const Ins &ins, std::uint32_t destination, std::span<const std::uint32_t> codes,
+                   std::uint32_t absolute, std::uint32_t negate) {
+        const auto name = ins.name;
+        const auto sign = [&](std::size_t n, std::string upper) {
+            if (absolute >> n & 1)
+                upper = "(" + upper + " & 0x7fffffffu)";
+            if (negate >> n & 1)
+                upper = "(" + upper + " ^ 0x80000000u)";
+            return upper;
+        };
+        const auto words = [&](std::size_t n, bool real) {
+            auto [lower, upper] = wide_operand(ins, codes[n], real);
+            return std::pair{lower, sign(n, upper)};
+        };
+        const auto real = [&](std::size_t n) {
+            const auto [lower, upper] = words(n, true);
+            return "asdouble(" + lower + ", " + upper + ")";
+        };
+        const auto narrow = [&](std::size_t n) { return sign(n, operand(ins, codes[n])); };
+        // a double goes to two registers, after everything it is made of was read
+        const auto set = [&](const std::string &value) {
+            const auto id = "x" + std::to_string(temporaries_++);
+            line("uint " + id + "l, " + id + "h; asuint(" + value + ", " + id + "l, " + id +
+                 "h);");
+            set_v(destination, id + "l");
+            set_v(destination + 1, id + "h");
+        };
+        if (starts(name, "v_cmp")) {
+            const bool is_real = ends(name, "_f64");
+            const auto [lower, upper] = words(0, is_real);
+            if (name.find("_class_") != std::string_view::npos) {
+                emit_compare(name, destination, lower, operand(ins, codes[1]), upper);
+            } else {
+                const auto [second, second_upper] = words(1, is_real);
+                emit_compare(name, destination, lower, second, upper, second_upper);
+            }
+        } else if (name == "v_cvt_i32_f64")
+            set_v(destination, "(uint)(int)clamp(" + real(0) + ", -2147483648.0L, 2147483647.0L)");
+        else if (name == "v_cvt_u32_f64")
+            set_v(destination, "(uint)clamp(" + real(0) + ", 0.0L, 4294967295.0L)");
+        else if (name == "v_cvt_f32_f64")
+            set_v(destination, u("(float)" + real(0)));
+        else if (name == "v_cvt_f64_i32")
+            set("(double)(int)" + narrow(0));
+        else if (name == "v_cvt_f64_u32")
+            set("(double)" + narrow(0));
+        else if (name == "v_cvt_f64_f32")
+            set("(double)" + f(narrow(0)));
+        else if (name == "v_rcp_f64")
+            set("1.0L / " + real(0));
+        else if (name == "v_add_f64")
+            set(real(0) + " + " + real(1));
+        else if (name == "v_mul_f64")
+            set(real(0) + " * " + real(1));
+        else if (name == "v_min_f64")
+            set("min(" + real(0) + ", " + real(1) + ")");
+        else if (name == "v_max_f64")
+            set("max(" + real(0) + ", " + real(1) + ")");
+        else if (name == "v_fma_f64")
+            set("fma(" + real(0) + ", " + real(1) + ", " + real(2) + ")");
+        else
+            give_up(std::string(name));
+    }
+    // `a_upper` and `b_upper` are the upper words of 64-bit operands
     void emit_compare(std::string_view full, std::uint32_t mask, const std::string &a,
-                      const std::string &b) {
+                      const std::string &b, const std::string &a_upper = {},
+                      const std::string &b_upper = {}) {
         // v_cmp[x]_<relation>_<type>
         const bool kills = starts(full, "v_cmpx_");
         auto rest = full.substr(kills ? 7 : 6);
         const auto split = rest.rfind('_');
         const auto how = rest.substr(0, split), type = rest.substr(split + 1);
         std::string condition;
-        if (type == "f32" || type == "f16") {
-            const auto x = type == "f16" ? "f16tof32(" + a + ")" : f(a),
-                       y = type == "f16" ? "f16tof32(" + b + ")" : f(b);
+        if (type == "i64" || type == "u64") {
+            const auto less = [&](const std::string &lower, const std::string &upper,
+                                  const std::string &than, const std::string &than_upper) {
+                return "(" +
+                       (type == "i64" ? "(int)" + upper + " < (int)" + than_upper
+                                      : upper + " < " + than_upper) +
+                       " || (" + upper + " == " + than_upper + " && " + lower + " < " + than +
+                       "))";
+            };
+            if (how == "f")
+                condition = "false";
+            else if (how == "t")
+                condition = "true";
+            else if (how == "eq")
+                condition = "(" + a + " == " + b + " && " + a_upper + " == " + b_upper + ")";
+            else if (how == "ne")
+                condition = "(" + a + " != " + b + " || " + a_upper + " != " + b_upper + ")";
+            else if (how == "lt")
+                condition = less(a, a_upper, b, b_upper);
+            else if (how == "gt")
+                condition = less(b, b_upper, a, a_upper);
+            else if (how == "le")
+                condition = "!" + less(b, b_upper, a, a_upper);
+            else if (how == "ge")
+                condition = "!" + less(a, a_upper, b, b_upper);
+            else
+                give_up(std::string(full));
+        } else if (type == "f64" && how == "class") {
+            condition = "double_class(" + a + ", " + a_upper + ", " + b + ")";
+        } else if (type == "f32" || type == "f16" || type == "f64") {
+            const auto x = type == "f64"   ? "asdouble(" + a + ", " + a_upper + ")"
+                           : type == "f16" ? "f16tof32(" + a + ")"
+                                           : f(a),
+                       y = type == "f64"   ? "asdouble(" + b + ", " + b_upper + ")"
+                           : type == "f16" ? "f16tof32(" + b + ")"
+                                           : f(b);
             if (how == "lt")
                 condition = x + " < " + y;
             else if (how == "eq")
@@ -2452,6 +2592,13 @@ class Translator {
                 set_s(destination & 0x7f, operand(ins, codes[0]));
             else if (!(stands_in(known_[*slot]) && !known_[*slot].maybe))
                 set_s(destination & 0x7f, variable(*slot));
+            return;
+        }
+        if (is_wide(name)) {
+            if ((modifier || clamp) && !starts(name, "v_cmp"))
+                give_up(std::string(name) + " with a modifier");
+            emit_wide(ins, ins.op < 0x100 ? destination & 0x7f : destination, codes, absolute,
+                      negate);
             return;
         }
         // which sources each operation has, so that no register is read that is not one
@@ -3472,6 +3619,11 @@ class Translator {
         "uint e = (b >> 23) & 255u; uint m = b & 0x7fffffu;\n"
         "    uint c = e == 255u ? (m != 0u ? ((m >> 22) != 0u ? 2u : 1u) : (neg ? 4u : 512u)) : e "
         "== 0u ? (m == 0u ? (neg ? 32u : 64u) : (neg ? 16u : 128u)) : (neg ? 8u : 256u);\n"
+        "    return (mask & c) != 0u; }\n"
+        "bool double_class(uint lo, uint hi, uint mask) { bool neg = (hi >> 31) != 0u; uint e = "
+        "(hi >> 20) & 2047u; bool none = ((hi & 0xfffffu) | lo) == 0u;\n"
+        "    uint c = e == 2047u ? (!none ? (((hi >> 19) & 1u) != 0u ? 2u : 1u) : (neg ? 4u : "
+        "512u)) : e == 0u ? (none ? (neg ? 32u : 64u) : (neg ? 16u : 128u)) : (neg ? 8u : 256u);\n"
         "    return (mask & c) != 0u; }\n";
 
     Stage stage_;

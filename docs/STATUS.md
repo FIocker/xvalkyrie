@@ -374,9 +374,9 @@ translated when all of its instructions do, and its resources are followed.
 | program control | 31 | 37 |
 | scalar memory | 10 | 78 |
 | vector, two operands | 47 | 48 |
-| vector, one operand | 56 | 81 |
-| vector compare | 124 | 190 |
-| vector, three operands | 300 | 428 |
+| vector, one operand | 63 | 81 |
+| vector compare | 190 | 190 |
+| vector, three operands | 378 | 428 |
 | packed vector | 22 | 22 |
 | interpolation | 3 | 3 |
 | shared memory | 71 | 147 |
@@ -416,21 +416,15 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>vector, one operand: 25 not handled</summary>
+<details><summary>vector, one operand: 18 not handled</summary>
 
-`v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
-
-</details>
-
-<details><summary>vector compare: 66 not handled</summary>
-
-`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`
+`v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
 
 </details>
 
-<details><summary>vector, three operands: 128 not handled</summary>
+<details><summary>vector, three operands: 50 not handled</summary>
 
-`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`, `v_fma_f64`, `v_mullit_f32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_add_f64`, `v_mul_f64`, `v_min_f64`, `v_max_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_perm_b32`, `v_interp_p2_f16`, `v_div_fixup_f16`, `v_writelane_b32`, `v_mbcnt_lo_u32_b32`, `v_mbcnt_hi_u32_b32`, `v_permlane16_b32`, `v_permlanex16_b32`
+`v_mullit_f32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_perm_b32`, `v_interp_p2_f16`, `v_div_fixup_f16`, `v_writelane_b32`, `v_mbcnt_lo_u32_b32`, `v_mbcnt_hi_u32_b32`, `v_permlane16_b32`, `v_permlanex16_b32`
 
 </details>
 
