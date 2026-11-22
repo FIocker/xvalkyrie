@@ -146,6 +146,39 @@ HRESULT STDMETHODCALLTYPE adapter_parent(Forwarder *self, REFIID iid, void **par
     *parent = factory_forwarder(factory);
     return S_OK;
 }
+// IDXGIOutput::GetGammaControlCapabilities, which the host only answers for an output a
+// swap chain owns full screen: a title that asks gives up on the failure. The console's
+// display has a ramp of 1025 points from 0 to 1.
+HRESULT STDMETHODCALLTYPE gamma_capabilities(Forwarder *,
+                                             DXGI_GAMMA_CONTROL_CAPABILITIES *capabilities) {
+    if (!capabilities)
+        return E_POINTER;
+    *capabilities = {};
+    capabilities->MaxConvertedValue = 1.0f;
+    capabilities->NumGammaControlPoints = 1025;
+    for (UINT point = 0; point < 1025; ++point)
+        capabilities->ControlPointPositions[point] = static_cast<float>(point) / 1024.0f;
+    return S_OK;
+}
+// SetGammaControl: taken and dropped, the picture keeps the host's ramp
+HRESULT STDMETHODCALLTYPE set_gamma(Forwarder *, const DXGI_GAMMA_CONTROL *) { return S_OK; }
+HRESULT output_query(Forwarder *self, REFIID iid, void **object) {
+    if (is_any<IUnknown, IDXGIObject, IDXGIOutput>(iid))
+        return keep(self, object);
+    return forwarder_host(self)->QueryInterface(iid, object);
+}
+// IDXGIAdapter::EnumOutputs
+HRESULT STDMETHODCALLTYPE adapter_outputs(Forwarder *self, UINT index, IDXGIOutput **output) {
+    IDXGIOutput *host = nullptr;
+    const auto result =
+        static_cast<IDXGIAdapter *>(forwarder_host(self))->EnumOutputs(index, &host);
+    if (FAILED(result))
+        return result;
+    *output = reinterpret_cast<IDXGIOutput *>(
+        make_forwarder(host, 19, &output_query,
+                       {{13, slot(&gamma_capabilities)}, {14, slot(&set_gamma)}}, dxgi_inserted));
+    return S_OK;
+}
 bool latest_adapter = false;
 HRESULT adapter_query(Forwarder *self, REFIID iid, void **object) {
     if (is_any<IUnknown, IDXGIObject, IDXGIAdapter, IDXGIAdapter1, IDXGIAdapter2>(iid) ||
@@ -170,7 +203,7 @@ HRESULT wrap_adapter(IDXGIAdapter *host, IDXGIAdapter **adapter) {
         return result;
     *adapter = reinterpret_cast<IDXGIAdapter *>(
         make_forwarder(latest, latest_adapter ? 19 : 12, &adapter_query,
-                       {{6, slot(&adapter_parent)}}, dxgi_inserted));
+                       {{6, slot(&adapter_parent)}, {7, slot(&adapter_outputs)}}, dxgi_inserted));
     return S_OK;
 }
 // IDXGIDevice::GetAdapter
@@ -343,26 +376,58 @@ void install_d3d11x(Registry &registry) {
         return const_cast<GUID *>(&value);
     };
 #define XV_IID(Interface) {"IID_" #Interface, iid(static_cast<const Interface *>(nullptr))}
-    const std::pair<const char *, void *> ids[] = {
-        XV_IID(IDXGIObject),         XV_IID(IDXGIDeviceSubObject),  XV_IID(IDXGIResource),
-        XV_IID(IDXGISurface),        XV_IID(IDXGISurface1),         XV_IID(IDXGIAdapter),
-        XV_IID(IDXGIAdapter1),       XV_IID(IDXGIAdapter2),         XV_IID(IDXGIOutput),
-        XV_IID(IDXGISwapChain),      XV_IID(IDXGISwapChain1),       XV_IID(IDXGIFactory),
-        XV_IID(IDXGIFactory1),       XV_IID(IDXGIFactory2),         XV_IID(IDXGIDevice),
-        XV_IID(IDXGIDevice1),        XV_IID(IDXGIDevice2),          XV_IID(ID3D11Device),
-        XV_IID(ID3D11Device1),       XV_IID(ID3D11DeviceContext),   XV_IID(ID3D11DeviceContext1),
-        XV_IID(ID3D11DeviceChild),   XV_IID(ID3D11Resource),        XV_IID(ID3D11Buffer),
-        XV_IID(ID3D11Texture1D),     XV_IID(ID3D11Texture2D),       XV_IID(ID3D11Texture3D),
-        XV_IID(ID3D11View),          XV_IID(ID3D11ShaderResourceView),
-        XV_IID(ID3D11RenderTargetView), XV_IID(ID3D11DepthStencilView),
-        XV_IID(ID3D11UnorderedAccessView), XV_IID(ID3D11VertexShader), XV_IID(ID3D11PixelShader),
-        XV_IID(ID3D11GeometryShader), XV_IID(ID3D11HullShader),     XV_IID(ID3D11DomainShader),
-        XV_IID(ID3D11ComputeShader), XV_IID(ID3D11InputLayout),     XV_IID(ID3D11SamplerState),
-        XV_IID(ID3D11BlendState),    XV_IID(ID3D11DepthStencilState),
-        XV_IID(ID3D11RasterizerState), XV_IID(ID3D11Query),         XV_IID(ID3D11Predicate),
-        XV_IID(ID3D11Counter),       XV_IID(ID3D11CommandList),     XV_IID(ID3D11ClassLinkage),
-        XV_IID(ID3D11ClassInstance), XV_IID(ID3D11Asynchronous),    XV_IID(ID3D11Debug),
-        XV_IID(ID3D11InfoQueue)};
+    const std::pair<const char *, void *> ids[] = {XV_IID(IDXGIObject),
+                                                   XV_IID(IDXGIDeviceSubObject),
+                                                   XV_IID(IDXGIResource),
+                                                   XV_IID(IDXGISurface),
+                                                   XV_IID(IDXGISurface1),
+                                                   XV_IID(IDXGIAdapter),
+                                                   XV_IID(IDXGIAdapter1),
+                                                   XV_IID(IDXGIAdapter2),
+                                                   XV_IID(IDXGIOutput),
+                                                   XV_IID(IDXGISwapChain),
+                                                   XV_IID(IDXGISwapChain1),
+                                                   XV_IID(IDXGIFactory),
+                                                   XV_IID(IDXGIFactory1),
+                                                   XV_IID(IDXGIFactory2),
+                                                   XV_IID(IDXGIDevice),
+                                                   XV_IID(IDXGIDevice1),
+                                                   XV_IID(IDXGIDevice2),
+                                                   XV_IID(ID3D11Device),
+                                                   XV_IID(ID3D11Device1),
+                                                   XV_IID(ID3D11DeviceContext),
+                                                   XV_IID(ID3D11DeviceContext1),
+                                                   XV_IID(ID3D11DeviceChild),
+                                                   XV_IID(ID3D11Resource),
+                                                   XV_IID(ID3D11Buffer),
+                                                   XV_IID(ID3D11Texture1D),
+                                                   XV_IID(ID3D11Texture2D),
+                                                   XV_IID(ID3D11Texture3D),
+                                                   XV_IID(ID3D11View),
+                                                   XV_IID(ID3D11ShaderResourceView),
+                                                   XV_IID(ID3D11RenderTargetView),
+                                                   XV_IID(ID3D11DepthStencilView),
+                                                   XV_IID(ID3D11UnorderedAccessView),
+                                                   XV_IID(ID3D11VertexShader),
+                                                   XV_IID(ID3D11PixelShader),
+                                                   XV_IID(ID3D11GeometryShader),
+                                                   XV_IID(ID3D11HullShader),
+                                                   XV_IID(ID3D11DomainShader),
+                                                   XV_IID(ID3D11ComputeShader),
+                                                   XV_IID(ID3D11InputLayout),
+                                                   XV_IID(ID3D11SamplerState),
+                                                   XV_IID(ID3D11BlendState),
+                                                   XV_IID(ID3D11DepthStencilState),
+                                                   XV_IID(ID3D11RasterizerState),
+                                                   XV_IID(ID3D11Query),
+                                                   XV_IID(ID3D11Predicate),
+                                                   XV_IID(ID3D11Counter),
+                                                   XV_IID(ID3D11CommandList),
+                                                   XV_IID(ID3D11ClassLinkage),
+                                                   XV_IID(ID3D11ClassInstance),
+                                                   XV_IID(ID3D11Asynchronous),
+                                                   XV_IID(ID3D11Debug),
+                                                   XV_IID(ID3D11InfoQueue)};
 #undef XV_IID
     for (const auto &[name, value] : ids)
         registry.add("d3d11_x.dll", name, value);
