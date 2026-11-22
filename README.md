@@ -60,24 +60,8 @@ out on the way, with the evidence for it.
 4. **Translate.** Direct3D calls go to the host's Direct3D 11 or 12 through objects with the
    console's layout. Console shaders are translated to HLSL once and kept in a cache.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) is the tour of the code.
-
-```
-src/
-  formats/    PE, MicrosoftGame.config, AppxManifest.xml, XVD headers, resources.pri
-  analysis/   import classification, console detection
-  loader/     image mapping
-  runtime/    the console side: what a title's imports are bound to
-    common/     import registry and resolver, guest execution
-    modules/    modules both consoles have: Direct3D 12, Gaming Runtime, memory, shaders
-    durango/    Xbox One only: kernelx, Direct3D 11.X, WinRT
-    scarlett/   Xbox Series X|S only
-  backends/   graphics, audio, input and the window, per host technology
-  launcher/   game library, configuration, whether a title can start
-  app/        xvalkyrie (the window) and xvboot (runs a title; the command line)
-tools/        generators for tables and reports
-docs/         research notes and the generated status report
-```
+[ARCHITECTURE.md](ARCHITECTURE.md) is the tour of the code: what each directory is for, how
+the layers depend on each other and where new code goes.
 
 ## Building
 
