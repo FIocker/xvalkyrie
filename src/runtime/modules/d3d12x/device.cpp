@@ -3009,6 +3009,27 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     return vtable;
 }
 std::array<Slot, list_slots> list_vtable = list_vtable_of(std::make_index_sequence<list_slots>{});
+// Titles with the later queue layout (see later_queue) have two more methods in their lists
+// as well, at 59 and 60: every method from there on is two slots further. What the two are
+// is not known. A list is made before the layout shows, so each call looks.
+template <std::size_t Index>
+std::uint64_t STDMETHODCALLTYPE list_by_layout(void *self, std::uint64_t a, std::uint64_t b,
+                                               std::uint64_t c, std::uint64_t d, std::uint64_t e,
+                                               std::uint64_t f, std::uint64_t g, std::uint64_t h,
+                                               std::uint64_t i, std::uint64_t j) {
+    if (later_queue && Index < 61)
+        return 0;
+    return reinterpret_cast<Raw>(list_vtable[later_queue ? Index - 2 : Index])(self, a, b, c, d, e,
+                                                                               f, g, h, i, j);
+}
+template <std::size_t... Index>
+std::array<Slot, list_slots> layout_list_vtable_of(std::index_sequence<Index...>) {
+    std::array<Slot, list_slots> vtable{};
+    ((vtable[59 + Index] = reinterpret_cast<Slot>(&list_by_layout<59 + Index>)), ...);
+    return vtable;
+}
+std::array<Slot, list_slots> layout_list_vtable =
+    layout_list_vtable_of(std::make_index_sequence<list_slots - 59>{});
 // BeginRenderPass: the views in its descriptions are console handles
 void STDMETHODCALLTYPE begin_render_pass(void *self, UINT count,
                                          const D3D12_RENDER_PASS_RENDER_TARGET_DESC *targets,
@@ -3143,7 +3164,13 @@ void configure_lists() {
 }
 void *make_list_proxy(List *host) {
     auto *const proxy = new ListProxy{};
-    proxy->vtable = list_vtable.data();
+    // the slots both layouts share, as they are now
+    static const bool filled = [] {
+        std::copy_n(list_vtable.begin(), 59, layout_list_vtable.begin());
+        return true;
+    }();
+    static_cast<void>(filled);
+    proxy->vtable = console == Target::scarlett ? layout_list_vtable.data() : list_vtable.data();
     proxy->host = host;
     proxy->references = 1;
     const std::lock_guard lock(proxy_mutex);
