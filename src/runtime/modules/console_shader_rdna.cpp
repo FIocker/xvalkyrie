@@ -2863,9 +2863,9 @@ class Translator {
                        (at + part.size() == parts.size() || parts[at + part.size()] == '_');
             };
             const bool gather = starts(name, "image_gather4"), compare = has("_c"),
-                       offset = has("_o"), gradients = has("_d"), level = has("_l"),
-                       bias = has("_b"), zero = has("_lz");
-            if (has("_cl"))
+                       offset = has("_o"), gradients = has("_d") || has("_cd"), level = has("_l"),
+                       bias = has("_b"), zero = has("_lz"), clamped = has("_cl");
+            if (has("_g16") || (gather && clamped))
                 give_up(std::string(name));
             std::string offset_value, bias_value, reference, ddx_value, ddy_value, level_value;
             const auto real = [&](const std::string &reg) {
@@ -2906,6 +2906,17 @@ class Translator {
                 where = "cube_direction(" + where + ")";
             if (level)
                 level_value = real(take());
+            // The least level a sample may come from. The host takes it after an offset,
+            // which a cube has none of.
+            std::string clamp_value;
+            if (clamped) {
+                static constexpr const char *none[] = {", 0", ", int2(0, 0)", ", int3(0, 0, 0)",
+                                                       "",    ", 0",          ", int2(0, 0)"};
+                if (dimension >= 6)
+                    give_up(std::string(name));
+                clamp_value = (offset_value.empty() ? std::string(none[dimension]) : "") + ", " +
+                              real(take());
+            }
             const auto texture_name = object(texture, std::string(types[dimension]) + "<float4>");
             const auto sampler = object(state, compare ? "SamplerComparisonState" : "SamplerState");
             if (name == "image_get_lod") {
@@ -2935,22 +2946,28 @@ class Translator {
                     set_v(data + c, u(sample + "." + "xyzw"[c]));
                 return;
             }
+            const bool implicit = stage_ == Stage::pixel && open_loops_.empty();
             if (compare) {
-                if (!zero && !level)
+                if (bias || gradients)
                     give_up(std::string(name));
-                result = "(" + object + ".SampleCmpLevelZero(" + sampler + ", " + where + ", " +
-                         reference + offset_value + ")).xxxx";
+                if (!zero && !level && implicit)
+                    result = "(" + object + ".SampleCmp(" + sampler + ", " + where + ", " +
+                             reference + offset_value + clamp_value + ")).xxxx";
+                else
+                    result = "(" + object + ".SampleCmpLevelZero(" + sampler + ", " + where + ", " +
+                             reference + offset_value + ")).xxxx";
             } else if (gradients) {
                 result = object + ".SampleGrad(" + sampler + ", " + where + ", " + ddx_value +
-                         ", " + ddy_value + offset_value + ")";
+                         ", " + ddy_value + offset_value + clamp_value + ")";
             } else if (zero || level || stage_ != Stage::pixel || !open_loops_.empty()) {
                 result = object + ".SampleLevel(" + sampler + ", " + where + ", " +
                          (level ? level_value : std::string("0.0")) + offset_value + ")";
             } else if (bias) {
                 result = object + ".SampleBias(" + sampler + ", " + where + ", " + bias_value +
-                         offset_value + ")";
+                         offset_value + clamp_value + ")";
             } else {
-                result = object + ".Sample(" + sampler + ", " + where + offset_value + ")";
+                result =
+                    object + ".Sample(" + sampler + ", " + where + offset_value + clamp_value + ")";
             }
         }
         const auto sample = "x" + std::to_string(temporaries_++);
