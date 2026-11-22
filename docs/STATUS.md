@@ -32,7 +32,7 @@ everything else.
 | `mmdevapi.dll` | 6 | 0 | mmdevapi.dll |
 | `msvcp_win.dll` | 0 | 0 | msvcp_win.dll |
 | `pixevt.dll` | 15 | 0 |  |
-| `toolhelpx.dll` | 3 | 0 | kernel32.dll |
+| `toolhelpx.dll` | 4 | 0 | kernel32.dll |
 | `vccorlib110.dll` | 1 | 0 |  |
 | `vccorlib140.dll` | 1 | 0 |  |
 | `windows.media.mediacontrol.dll` | 1 | 0 |  |
@@ -121,9 +121,9 @@ everything else.
 
 </details>
 
-<details><summary><code>toolhelpx.dll</code>: 3 functions</summary>
+<details><summary><code>toolhelpx.dll</code>: 4 functions</summary>
 
-`GetSourceLineFromAddress`, `GetSymbolFromAddress`, `QuerySystemHardwareInfo`
+`GetSourceLineFromAddress`, `GetSymbolFromAddress`, `MiniDumpWriteDump`, `QuerySystemHardwareInfo`
 
 </details>
 
