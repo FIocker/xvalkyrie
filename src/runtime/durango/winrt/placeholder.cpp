@@ -156,10 +156,21 @@ bool looks_like_event_add(void *first, void *second) {
     return detail::in_title(*static_cast<void **>(first));
 }
 
+// The interface C++/CX compares two objects through ({DE0CBAEC-...}): Equals(Object ^, bool *)
+// is its one method. The facets of a class are one object here, so another placeholder of
+// the same class is the same.
+constexpr GUID equatable{
+    0xde0cbaec, 0xe077, 0x4e92, {0x84, 0xbe, 0xc6, 0xd4, 0x8d, 0xca, 0x30, 0x06}};
+bool same_object(const Placeholder *self, void *other);
+
 template <std::size_t Index>
 HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, void *third,
                                  void *fourth, void *a5, void *a6, void *a7, void *a8, void *a9,
                                  void *a10, void *a11) {
+    if (Index == 6 && self->iid == equatable && second) {
+        *static_cast<std::uint8_t *>(second) = same_object(self, first);
+        return S_OK;
+    }
     if (const auto *known = inert_method(self->name.c_str(), self->iid, Index)) {
         void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
         void **const at = known->argument >= 1 && known->argument <= std::size(arguments)
@@ -416,6 +427,19 @@ long weak_reference_source(void *target, void **object) {
     *object = new WeakSource(static_cast<IUnknown *>(target));
     return S_OK;
 }
+
+namespace {
+bool same_object(const Placeholder *self, void *other) {
+    if (other == self)
+        return true;
+    MEMORY_BASIC_INFORMATION memory{};
+    if (!other || !VirtualQuery(other, &memory, sizeof memory) || memory.State != MEM_COMMIT)
+        return false;
+    const auto *const table = *static_cast<void *const *const *>(other);
+    return (table == vtable.data() || table == factory_vtable.data()) &&
+           static_cast<const Placeholder *>(other)->name == self->name;
+}
+} // namespace
 
 void *make_placeholder(const wchar_t *name, const GUID &iid) {
     // once per class and interface: titles may make the same one every frame
