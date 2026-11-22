@@ -530,6 +530,45 @@ std::optional<std::string> console_shader_source(ShaderStage stage, Bytes contai
     return translated_source(stage, container, why);
 }
 
+std::string console_shader_probe(std::span<const std::uint32_t> words) {
+    // Before the words, what gives them something to work on: a descriptor of the first
+    // table in s[12:19] and a sampler of the second in s[24:27].
+    static constexpr std::uint32_t before[] = {
+        0xbe940305,             // s_mov_b32 s20, s5
+        0xf40c0302, 0xfa000000, // s_load_dwordx8 s[12:19], s[4:5], 0
+        0xf408060a, 0xfa000000, // s_load_dwordx4 s[24:27], s[20:21], 0
+    };
+    std::vector<std::uint32_t> code(std::begin(before), std::end(before));
+    code.insert(code.end(), words.begin(), words.end());
+    // the least of a code file: where the code is and how long, four words of thread group
+    // sizes, a hash, the code, and the record that ends the records
+    constexpr std::size_t region = 0x140, start = region + 0x28;
+    std::vector<std::uint8_t> file(start + 4 * code.size() + 20, 0);
+    const auto put = [&](std::size_t at, std::uint32_t value) { std::memcpy(file.data() + at, &value, 4); };
+    std::memcpy(file.data(), "FSSM", 4);
+    put(0xc0, static_cast<std::uint32_t>(region));
+    put(0xc8, static_cast<std::uint32_t>(0x28 + 4 * code.size()));
+    for (std::size_t n = 0; n < 3; ++n)
+        put(region + 4 + 4 * n, 1);
+    for (std::size_t n = 0; n < code.size(); ++n)
+        put(start + 4 * n, code[n]);
+    put(start + 4 * code.size() + 8, ~0u);
+    // A root signature of two tables: resources without end, and samplers. Version 1: the
+    // header, two parameters (type, visibility, offset), each table (ranges, offset) and
+    // its ranges (type, count, register, space, offset in the table).
+    static constexpr std::uint32_t signature[] = {
+        1, 2, 24, 0, 48, 0,   // version, parameters and where, static samplers and where, flags
+        0, 0, 48, 0, 0, 76,   // the two tables
+        1, 56, 0, ~0u, 0, 0, 0, // resources: one range of shader resources from t0
+        1, 84, 3, 16, 0, 0, 0,  // samplers: sixteen from s0
+    };
+    rdna::Shader shader;
+    shader.file = file;
+    shader.root_signature = {reinterpret_cast<const std::uint8_t *>(signature), sizeof signature};
+    std::string why;
+    return rdna::translate(ShaderStage::compute, shader, &why) ? std::string{} : why;
+}
+
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
     // with console code may have its bitcode as well, and then the host runs that.

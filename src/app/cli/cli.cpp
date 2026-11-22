@@ -8,6 +8,8 @@
 #include "launcher/launch.hpp"
 #include "loader/image.hpp"
 #include "runtime/console.hpp"
+#include "runtime/modules/console_shader.hpp"
+#include <cctype>
 #include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -36,7 +38,9 @@ const std::string_view commands =
     "  xvboot inspect-package FILE      identify an XVD/XVC header; never opens it\n"
     "  xvboot bind FILE                 show where each import would bind; never runs it\n"
     "  xvboot properties FILE           all of that in one report, as the window shows it\n"
-    "  xvboot modules durango|scarlett  the console modules and functions implemented here\n";
+    "  xvboot modules durango|scarlett  the console modules and functions implemented here\n"
+    "  xvboot shader-probe              what stops the translation of the shader code on each\n"
+    "                                   line of the input, as hexadecimal words\n";
 
 std::optional<int> run(int argc, wchar_t **argv) {
     if (argc < 2)
@@ -101,6 +105,24 @@ std::optional<int> run(int argc, wchar_t **argv) {
                          runtime::console_system_directory(title_executable(argv[2])))
                          .dump(2)
                   << '\n';
+        return 0;
+    }
+    if (argc == 2 && command == "shader-probe") {
+        // one shader a line, as hexadecimal words of machine code: what stops its
+        // translation, or nothing
+        auto report = nlohmann::json::array();
+        for (std::string line; std::getline(std::cin, line);) {
+            std::vector<std::uint32_t> words;
+            for (std::size_t at = 0, used = 0; at < line.size(); at += used) {
+                while (at < line.size() && std::isspace(static_cast<unsigned char>(line[at])))
+                    ++at;
+                if (at == line.size())
+                    break;
+                words.push_back(static_cast<std::uint32_t>(std::stoul(line.substr(at), &used, 16)));
+            }
+            report.push_back(runtime::modules::console_shader_probe(words));
+        }
+        std::cout << report.dump() << '\n';
         return 0;
     }
     if (argc == 3 && command == "modules") {
