@@ -90,6 +90,28 @@ TEST_CASE("64-bit values are doubles of the host's and pairs of words") {
           std::string::npos);
 }
 
+TEST_CASE("a wave is this one lane where its lanes are counted") {
+    // s_mov_b64 s[8:9], exec; s_bcnt1_i32_b64 s4, s[8:9]; v_mbcnt_lo_u32_b32 v1, -1, v2
+    const auto source = translated({0xbe88047e, 0xbe841008, 0xd7650001, 0x000204c1});
+    CHECK(source.find("s4 = (s8 != 0u ? 1u : 0u);") != std::string::npos);
+    CHECK(source.find("v1 = v2;") != std::string::npos);
+    // s_mov_b32 s8, 7; s_bcnt1_i32_b64 s4, s[8:9]: a number's bits are counted
+    const auto number = translated({0xbe880387, 0xbe841008});
+    CHECK(number.find("countbits(s8)") != std::string::npos);
+}
+
+TEST_CASE("a register that holds one of two descriptors is used as each") {
+    // s_load_dwordx8 s[12:19], s[4:5], 0x20; s_cbranch_scc0 over the next;
+    // s_load_dwordx8 s[12:19], s[4:5], 0x40; image_load v3, v[0:1], s[12:19]
+    const auto source = translated(
+        {0xf40c0302, 0xfa000020, 0xbf840002, 0xf40c0302, 0xfa000040, 0xf0001108, 0x00030300});
+    CHECK(count(source, "if (c5 == ") == 2);
+    CHECK(source.find("c5 = 5u;") != std::string::npos);
+    CHECK(source.find("c5 = 8u;") != std::string::npos);
+    CHECK(source.find("t1_0.Load(") != std::string::npos);
+    CHECK(source.find("t2_0.Load(") != std::string::npos);
+}
+
 TEST_CASE("a rectangle list's fourth corner comes from a geometry shader") {
     const char vertex[] = "struct Out { float4 position : SV_Position; float2 uv : TEXCOORD0; "
                           "nointerpolation uint layer : LAYER0; };\n"
