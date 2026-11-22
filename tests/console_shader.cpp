@@ -100,6 +100,29 @@ TEST_CASE("a wave is this one lane where its lanes are counted") {
     CHECK(number.find("countbits(s8)") != std::string::npos);
 }
 
+TEST_CASE("a sum over a wave's lanes is this lane's own value") {
+    // v_add_nc_u32_dpp8 v2, v2, v2 from the lane beside; v_add_nc_u32_dpp v3, v3, v3 from the
+    // lane before, with zero for none, and from two before, with nothing for none;
+    // v_permlanex16_b32 v4, v3, -1, -1; v_readlane_b32 s3, v3, 31; s_mov_b32 exec_lo, 0xffff0000
+    const auto source =
+        translated({0x4a0404e9, 0xde54c102, 0x4a0606fa, 0xff091103, 0x4a0606fa, 0xff011203,
+                    0xd7784804, 0x03058303, 0xd7600003, 0x00013f03, 0xbefe03ff, 0xffff0000});
+    CHECK(source.find("v2 = 0u + v2;") != std::string::npos);
+    CHECK(count(source, "v3 = 0u + v3;") == 1);
+    CHECK(source.find("v4 = 0u;") != std::string::npos);
+    CHECK(source.find("s3 = 0u;") != std::string::npos);
+    CHECK(source.find("s126 = 0u;") != std::string::npos);
+}
+
+TEST_CASE("a register picked by M0 and bytes picked by a selector") {
+    // v_movreld_b32 v18, v55; v_perm_b32 v1, v1, v2, v3
+    const auto source =
+        translated({0x7e248537, 0x35u << 26 | 0x344 << 16 | 1, v1 | v2 << 9 | v3 << 18});
+    CHECK(source.find("switch (s124) {") != std::string::npos);
+    CHECK(source.find("v19 = v55;") != std::string::npos);
+    CHECK(source.find("v1 = perm_bytes(v1, v2, v3);") != std::string::npos);
+}
+
 TEST_CASE("a register that holds one of two descriptors is used as each") {
     // s_load_dwordx8 s[12:19], s[4:5], 0x20; s_cbranch_scc0 over the next;
     // s_load_dwordx8 s[12:19], s[4:5], 0x40; image_load v3, v[0:1], s[12:19]

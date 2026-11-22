@@ -485,6 +485,9 @@ class Translator {
                 wave64_ = true;
             if (ins.format == F::ds && ins.name != "ds_swizzle_b32" && ins.name != "ds_nop")
                 uses_shared_ = true;
+            if (stage_ == Stage::compute &&
+                (ins.form == Ins::Form::lanes || starts(ins.name, "v_permlane")))
+                sums_lanes_ = true;
         }
     }
 
@@ -975,6 +978,10 @@ class Translator {
             const auto &ins = code_list_[i];
             if (i + 1 == block.end && (branch(ins) || ins.name == "s_endpgm"))
                 break;
+            // what the instruction makes of what was known before it: writing a register
+            // forgets it, and the instruction may be giving it what it reads from itself
+            auto tracked = known_;
+            track(ins, tracked);
             try {
                 emit_chosen(ins);
             } catch (Unsupported &unsupported) {
@@ -982,7 +989,7 @@ class Translator {
                     unsupported.at = ins.at;
                 throw;
             }
-            track(ins, known_);
+            known_ = tracked;
         }
         const auto &last = code_list_[block.end - 1];
         const auto to = target_block_[index];
@@ -1196,7 +1203,11 @@ class Translator {
             return reg < 128 && stands_in(known_[reg]) && !known_[reg].maybe;
         };
         if (name == "s_mov_b32") {
-            if (!only_known(source))
+            // lanes named one by one: this one is the first
+            if (const auto lanes = constant_of(source, ins.literal);
+                destination == 126 && lanes && !(*lanes & 1))
+                set_s(destination, "0u");
+            else if (!only_known(source))
                 set_s(destination, operand(ins, source));
             return;
         }
@@ -1957,13 +1968,75 @@ class Translator {
 
     // The instructions with one or two sources in one word. A second word may say which
     // byte or half of each source is meant, and which of the destination is written.
-    void emit_short(const Ins &ins) {
-        if (ins.form == Ins::Form::lanes)
+    // An instruction whose first source is another lane's register. A compute shader's
+    // wave is the one lane it is run for, lane 0: the lanes around it hold nothing, which is
+    // what code that sums over a wave has put in the lanes that are not active. Only the
+    // operations nothing changes are taken, so that such a sum comes out as this lane's own.
+    void emit_lanes(const Ins &ins) {
+        const auto name = ins.name;
+        const bool known = name == "v_mov_b32" || name == "v_add_nc_u32" || name == "v_or_b32" ||
+                           name == "v_xor_b32" || name == "v_max_u32";
+        if (stage_ != Stage::compute || !known)
             give_up("an instruction that reads another lane");
+        const auto destination = (ins.w0 >> 17) & 0xff, modifier = ins.modifier;
+        // own: the lane read is this one; there: it is a lane of the wave at all
+        bool own = false, there = true, bound = false, enabled = true;
+        if ((ins.w0 & 0x1ff) == 250) {
+            const auto control = (modifier >> 8) & 0x1ff;
+            bound = modifier >> 19 & 1;
+            enabled = (modifier >> 24 & 1) && (modifier >> 28 & 1);
+            if (modifier >> 20 & 0xf)
+                give_up("an instruction that reads another lane");
+            if (control < 0x100) // each lane of four reads one of the four
+                own = (control & 3) == 0;
+            else if ((control >= 0x111 && control <= 0x11f) || control == 0x138)
+                there = false; // moved up from the lane before the first
+            else if (control >= 0x150 && control <= 0x16f)
+                own = (control & 15) == 0; // one lane for the row, or the lane's number changed
+            else if (!((control >= 0x101 && control <= 0x10f) ||
+                       (control >= 0x121 && control <= 0x12f) || control == 0x130 ||
+                       control == 0x134 || control == 0x13c || control == 0x140 ||
+                       control == 0x141))
+                give_up("an instruction that reads another lane");
+        } else {
+            own = ((modifier >> 8) & 7) == 0; // each lane of eight reads one of the eight
+        }
+        if (!enabled || (!own && !there && !bound))
+            return;
+        const auto a = own ? v(modifier & 0xff) : std::string("0u");
+        if (name == "v_mov_b32")
+            set_v(destination, a);
+        else
+            set_v(destination, binary(name, a, v((ins.w0 >> 9) & 0xff), v(destination)));
+    }
+    void emit_short(const Ins &ins) {
+        if (ins.form == Ins::Form::lanes) {
+            emit_lanes(ins);
+            return;
+        }
         const auto destination = (ins.w0 >> 17) & 0xff, modifier = ins.modifier;
         const auto name = ins.name;
         if (name == "v_nop")
             return;
+        if (starts(name, "v_movrel")) {
+            // A register picked by M0, counted from the one named: of the source
+            // (v_movrels), the destination (v_movreld) or both.
+            const auto source = ins.w0 & 0x1ff;
+            const bool to = name != "v_movrels_b32", from = name != "v_movreld_b32";
+            if (name == "v_movrelsd_2_b32" || ins.form != Ins::Form::plain ||
+                (from && source < 256))
+                give_up(std::string(name));
+            const auto last = std::max(to ? destination : 0u, from ? source - 256 : 0u);
+            line("switch (" + s(124) + ") {");
+            for (std::uint32_t n = 0; n < std::min(256 - last, 128u); ++n) {
+                line("case " + std::to_string(n) + "u:");
+                set_v(to ? destination + n : destination,
+                      from ? v(source - 256 + n) : operand(ins, source));
+                line("break;");
+            }
+            line("}");
+            return;
+        }
         std::string a, b;
         std::uint32_t mask = 106;
         if (is_wide(name)) {
@@ -2761,10 +2834,22 @@ class Translator {
             }
             const auto slot =
                 lane && codes[0] >= 256 ? spill(codes[0] - 256, *lane, false) : std::nullopt;
-            if (!slot)
+            if (!slot && sums_lanes_ && lane && *lane)
+                set_s(destination & 0x7f, "0u"); // a lane around this one: see emit_lanes
+            else if (!slot)
                 set_s(destination & 0x7f, operand(ins, codes[0]));
             else if (!(stands_in(known_[*slot]) && !known_[*slot].maybe))
                 set_s(destination & 0x7f, variable(*slot));
+            return;
+        }
+        if (name == "v_permlane16_b32" || name == "v_permlanex16_b32") {
+            // each lane reads one of its row of sixteen, or of the row beside it
+            if (stage_ != Stage::compute)
+                give_up("an instruction that reads another lane");
+            const auto select = constant_of(codes[1], ins.literal);
+            set_v(destination, name == "v_permlane16_b32" && select && !(*select & 15)
+                                   ? operand(ins, codes[0])
+                                   : std::string("0u"));
             return;
         }
         if (is_wide(name)) {
@@ -2919,6 +3004,8 @@ class Translator {
             value = u("cube_ma(" + fx(0) + ", " + fx(1) + ", " + fx(2) + ")");
         else if (name == "v_ldexp_f32")
             value = u("ldexp(" + fx(0) + ", (float)(int)" + x[1] + ")");
+        else if (name == "v_perm_b32")
+            value = "perm_bytes(" + x[0] + ", " + x[1] + ", " + x[2] + ")";
         else if (starts(name, "v_mbcnt_"))
             value = x[1]; // no lane of the wave comes before this one
         else if (name == "v_readlane_b32") {
@@ -3796,6 +3883,13 @@ class Translator {
         "uint sad_bytes(uint a, uint b, bool masked) { uint r = 0u; for (uint i = 0u; i < 32u; i "
         "+= 8u) { int x = (int)((a >> i) & 255u), y = (int)((b >> i) & 255u); if (!masked || y "
         "!= 0) r += (uint)abs(x - y); } return r; }\n"
+        "uint perm_byte(uint hi, uint lo, uint s) { s &= 255u; if (s < 4u) return (lo >> (8u * "
+        "s)) & 255u; if (s < 8u) return (hi >> (8u * (s - 4u))) & 255u;\n"
+        "    if (s < 12u) return (((s < 10u ? lo : hi) >> (16u * (s & 1u) + 15u)) & 1u) != 0u ? "
+        "255u : 0u; return s == 12u ? 0u : 255u; }\n"
+        "uint perm_bytes(uint hi, uint lo, uint s) { return perm_byte(hi, lo, s) | (perm_byte(hi, "
+        "lo, s >> 8) << 8) | (perm_byte(hi, lo, s >> 16) << 16) | (perm_byte(hi, lo, s >> 24) << "
+        "24); }\n"
         "float3 cube_direction(float3 place) { float2 at = (place.xy - 1.5) * 2.0; int face = "
         "(int)round(place.z);\n"
         "    return face == 0 ? float3(1.0, -at.y, -at.x) : face == 1 ? float3(-1.0, -at.y, at.x) "
@@ -3846,6 +3940,7 @@ class Translator {
     std::string declarations_, prologue_, body_, indent_ = "    ";
     int temporaries_ = 0;
     bool exec_changes_ = false, wave64_ = false;
+    bool sums_lanes_ = false; // a compute shader with instructions that read other lanes
     bool unlearned_ = false; // an instruction was left out for a descriptor of a kind not known yet
     bool fetched_ = false, exported_ = false, vertex_id_ = false, instance_id_ = false;
 };

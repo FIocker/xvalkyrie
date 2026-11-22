@@ -3730,10 +3730,13 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     configure_lists();
     using Create = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
     static const auto create = host_d3d12<Create>("D3D12CreateDevice");
-    if (std::getenv("XV_D3D_DEBUG")) {
+    // XV_D3D_DRED: what the GPU was doing when the host drops the device, without the debug
+    // layer, which runs the queues one after the other and so hides what they do at once
+    if (std::getenv("XV_D3D_DEBUG") || std::getenv("XV_D3D_DRED")) {
         using GetDebug = HRESULT(WINAPI *)(REFIID, void **);
         static const auto get_debug = host_d3d12<GetDebug>("D3D12GetDebugInterface");
-        if (ID3D12Debug *debug = nullptr; get_debug && SUCCEEDED(get_debug(IID_PPV_ARGS(&debug)))) {
+        if (ID3D12Debug *debug = nullptr; std::getenv("XV_D3D_DEBUG") && get_debug &&
+                                          SUCCEEDED(get_debug(IID_PPV_ARGS(&debug)))) {
             debug->EnableDebugLayer();
             // XV_D3D_DEBUG=2: also what each draw reads, checked on the GPU (slow)
             if (ID3D12Debug1 *gpu = nullptr; std::atoi(std::getenv("XV_D3D_DEBUG")) >= 2 &&
