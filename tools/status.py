@@ -207,54 +207,146 @@ def report(data):
 
 
 def picture(data):
-    """One square for each thing counted, in sections."""
-    done, absent, hosted = "#2ea043", "#8b949e", "#388bfd"
+    """Panels of blocks: a block for each module, API, instruction format and roadmap phase,
+    with one square for each thing counted. Green is done, blue is the host's, grey not yet."""
+    done, hosted, absent, ink, soft = "#2da44e", "#218bff", "#8c959f", "#8b949e", "#6e7681"
+    width, gap, pad, size, step = 920, 14, 16, 9, 11
+    parts = []
 
-    def faded(colour):
-        return ' opacity=".35"' if colour == absent else ""
+    def text(x, y, value, kind, anchor="start"):
+        value = str(value).replace("&", "&amp;").replace("<", "&lt;")
+        parts.append(f'<text x="{x:.0f}" y="{y:.0f}" class="{kind}" text-anchor="{anchor}">{value}</text>')
 
-    size, gap, columns, left = 9, 2, 96, 0
-    sections = []
-    for console, label in CONSOLES:
-        squares = []
-        for name, entry in sorted(data["modules"][console]["modules"].items()):
-            squares += [done] * sum(not data_symbol(s) for s in entry["symbols"])
-            squares += [hosted] if entry["host"] and not entry["symbols"] else []
-        sections.append((f"Console modules, {label}: {squares.count(done)} functions", squares))
+    def square(x, y, colour):
+        faded = ' opacity=".28"' if colour == absent else ""
+        parts.append(f'<rect x="{x:.0f}" y="{y:.0f}" width="{size}" height="{size}" rx="2" fill="{colour}"{faded}/>')
+
+    def block_size(name, colours):
+        named = int((6.1 * len(name) + 2) // step)
+        across = min(len(colours), max(6, round((2.4 * len(colours)) ** 0.5), named))
+        rows = (len(colours) - 1) // across + 1
+        return across, max(across * step - 2, 6.1 * len(name)), 16 + rows * step
+
+    def blocks(x, y, room, items, in_order=False):
+        """Blocks in rows; returns where the last row ends. Unless they come in an order of
+        their own, the tallest go first and each goes to the first row with room for it."""
+        if not in_order:
+            items = sorted(items, key=lambda item: (-block_size(*item)[2], -len(item[1]), item[0]))
+        rows = []
+        for item in items:
+            wide = block_size(*item)[1]
+            fits = [row for row in rows if row["used"] + wide <= room]
+            if not fits or (in_order and fits[-1] is not rows[-1]):
+                rows.append({"used": 0, "items": []})
+                fits = rows[-1:]
+            row = fits[-1] if in_order else fits[0]
+            row["items"].append((row["used"], item))
+            row["used"] += wide + 16
+        for row in rows:
+            for at, (name, colours) in row["items"]:
+                across = block_size(name, colours)[0]
+                text(x + at, y + 9, name, "n")
+                for n, colour in enumerate(colours):
+                    square(x + at + step * (n % across), y + 15 + step * (n // across), colour)
+            y += max(block_size(*item)[2] for _, item in row["items"]) + 10
+        return y - 10
+
+    def frame(x, y, wide, bottom):
+        parts.append(f'<rect x="{x + .5}" y="{y + .5}" width="{wide - 1}" height="{bottom - y - 1:.0f}" rx="10" '
+                     f'fill="none" stroke="{absent}" stroke-opacity=".35"/>')
+
+    def panel(x, y, wide, title, count, share, fill, framed=True):
+        """A panel's head and what `fill` draws inside; returns where the panel ends."""
+        text(x + pad, y + 26, title, "h")
+        text(x + wide - pad, y + 26, count, "k", "end")
+        bottom = fill(x + pad, y + 44, wide - 2 * pad) + pad
+        if share is not None:
+            parts.append(f'<rect x="{x + pad}" y="{y + 33}" width="{wide - 2 * pad}" height="3" rx="1.5" '
+                         f'fill="{absent}" opacity=".28"/>')
+            parts.append(f'<rect x="{x + pad}" y="{y + 33}" width="{(wide - 2 * pad) * share:.0f}" height="3" '
+                         f'rx="1.5" fill="{done}"/>')
+        if framed:
+            frame(x, y, wide, bottom)
+        return bottom
+
+    def console_modules(console):
+        entries = data["modules"][console]["modules"]
+        own = [(name, [done] * sum(not data_symbol(s) for s in entry["symbols"]))
+               for name, entry in entries.items() if entry["symbols"]]
+        host = sorted(name for name, entry in entries.items() if entry["host"])
+
+        def fill(x, y, room):
+            y = blocks(x, y, room, [(name, colours) for name, colours in own if colours]) + 14
+            at = x
+            for name in host:
+                wide = size + 5 + 6.1 * len(name)
+                if at > x and at + wide > x + room:
+                    at, y = x, y + 16
+                square(at, y, hosted)
+                text(at + size + 5, y + 8, name, "n")
+                at += wide + 14
+            return y + size
+        return sum(len(colours) for _, colours in own), fill
+
     methods = [flag for _, names in data["runtime"] for _, flag in names]
-    sections.append((f"Gaming Runtime: {sum(methods)} of {len(methods)} functions",
-                     [done if flag else absent for flag in methods]))
     handled = [flag for _, _, flag in data["instructions"]]
-    sections.append((f"Console shader code: {sum(handled)} of {len(handled)} instructions",
-                     [done if flag else absent for flag in handled]))
-    items = [(heading, [done] * finished + [absent] * (total - finished))
-             for heading, finished, total in data["roadmap"]]
-    sections.append((f"Roadmap: {sum(s.count(done) for _, s in items)} of {sum(len(s) for _, s in items)} items",
-                     [colour for _, squares in items for colour in squares]))
-    width = left + columns * (size + gap)
-    parts, y = [], 0
-    for title, squares in sections:
-        y += 16
-        parts.append(f'<text x="{left}" y="{y}" class="t">{title.replace("&", "&amp;").replace("|", "/")}</text>')
-        y += 8
-        for n, colour in enumerate(squares):
-            x = left + (n % columns) * (size + gap)
-            parts.append(f'<rect x="{x}" y="{y + (n // columns) * (size + gap)}" width="{size}" '
-                         f'height="{size}" rx="2" fill="{colour}"{faded(colour)}/>')
-        y += ((len(squares) - 1) // columns + 1) * (size + gap) + 8
-    legend = [(done, "implemented"), (hosted, "answered by the host"), (absent, "not yet")]
-    y += 12
-    x = left
-    for colour, text in legend:
-        parts.append(f'<rect x="{x}" y="{y - 9}" width="{size}" height="{size}" rx="2" fill="{colour}"'
-                     f'{faded(colour)}/>')
-        parts.append(f'<text x="{x + size + 5}" y="{y}" class="l">{text}</text>')
-        x += size + 5 + 7 * len(text) + 18
-    y += 8
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{y}" viewBox="0 0 {width} {y}">\n'
-            '<style>.t{font:600 12px -apple-system,Segoe UI,Helvetica,Arial,sans-serif;fill:#8b949e}'
-            '.l{font:11px -apple-system,Segoe UI,Helvetica,Arial,sans-serif;fill:#8b949e}</style>\n' +
-            "\n".join(parts) + "\n</svg>\n")
+    phases = data["roadmap"]
+    finished, total = sum(d for _, d, _ in phases), sum(t for _, _, t in phases)
+    functions = sum(not data_symbol(s) for console, _ in CONSOLES
+                    for entry in data["modules"][console]["modules"].values() for s in entry["symbols"])
+
+    # the whole of it in one bar: everything that is counted against a total
+    parts_done, parts_all = sum(methods) + sum(handled) + finished, len(methods) + len(handled) + total
+    areas = (("Gaming Runtime", sum(methods), len(methods)), ("Shader code", sum(handled), len(handled)),
+             ("Roadmap", finished, total))
+    text(pad, 30, "XValkyrie", "t")
+    text(pad + 104, 30, f"{100 * parts_done / parts_all:.0f}% covered", "h")
+    text(width - pad, 30, f"{functions} console functions implemented", "k", "end")
+    bar_y, bar_wide, at = 42, width - 2 * pad, pad
+    for n, (name, part, whole) in enumerate(areas):
+        wide = (bar_wide - 4 * (len(areas) - 1)) * whole / parts_all
+        parts.append(f'<rect x="{at:.0f}" y="{bar_y}" width="{wide:.0f}" height="10" rx="3" fill="{absent}" opacity=".28"/>')
+        parts.append(f'<rect x="{at:.0f}" y="{bar_y}" width="{wide * part / whole:.0f}" height="10" rx="3" fill="{done}"/>')
+        last = n == len(areas) - 1
+        text(at + wide if last else at, bar_y + 26, f"{name} {100 * part / whole:.0f}%", "n", "end" if last else "start")
+        at += wide + 4
+    frame(0, 0, width, 84)
+    y = 84 + gap
+
+    half = (width - gap) // 2
+    ends = []
+    for n, (console, name) in enumerate(CONSOLES):
+        count, fill = console_modules(console)
+        ends.append(panel(n * (half + gap), y, half, name, f"{count} functions", None, fill, framed=False))
+    for n in range(len(CONSOLES)):
+        frame(n * (half + gap), y, half, max(ends))
+    y = max(ends) + gap
+
+    y = gap + panel(0, y, width, "Gaming Runtime", f"{sum(methods)} / {len(methods)} functions",
+                    sum(methods) / len(methods),
+                    lambda x, at, room: blocks(x, at, room, [(api, [done if flag else absent for _, flag in names])
+                                                             for api, names in data["runtime"]]))
+    by_format = collections.OrderedDict()
+    for fmt, _, flag in data["instructions"]:
+        by_format.setdefault(FORMATS.get(fmt, fmt), []).append(done if flag else absent)
+    y = gap + panel(0, y, width, "Console shader code", f"{sum(handled)} / {len(handled)} instructions",
+                    sum(handled) / len(handled),
+                    lambda x, at, room: blocks(x, at, room, list(by_format.items())))
+    y = panel(0, y, width, "Roadmap", f"{finished} / {total} items", finished / total,
+              lambda x, at, room: blocks(x, at, room, [(title, [done] * d + [absent] * (t - d))
+                                                       for title, d, t in phases], in_order=True))
+    y += 22
+    x = 2
+    for colour, meaning in ((done, "implemented"), (hosted, "answered by the host's DLL"), (absent, "not yet")):
+        square(x, y - size, colour)
+        text(x + size + 6, y, meaning, "n")
+        x += size + 6 + 6.1 * len(meaning) + 22
+    y += 6
+    style = ("text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}"
+             f".t{{font-size:18px;font-weight:700;fill:{ink}}}.h{{font-size:15px;font-weight:600;fill:{ink}}}.k{{font-size:12px;font-weight:600;fill:{ink}}}"
+             f".n{{font-size:11px;fill:{soft}}}")
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{y:.0f}" viewBox="0 0 {width} {y:.0f}" '
+            f'role="img" aria-label="XValkyrie status">\n<style>{style}</style>\n' + "\n".join(parts) + "\n</svg>\n")
 
 
 def readme_block(data):
