@@ -265,37 +265,49 @@ BOOL WINAPI get_disk_free_space_w(const wchar_t *name, DWORD *sectors, DWORD *by
 }
 // The C runtime's file functions open files without going through the functions above, so
 // the console's drives are put in their paths here as well.
+// They are the functions of the C runtime the title has, not of this program's: a FILE of
+// one runtime means nothing to another's fread. Titles of the older kits bring msvcr110
+// or msvcr120; the newer ones share the system's.
+template <class Function> Function *title_crt(const char *name, Function *own) {
+    for (const auto *runtime : {"msvcr110.dll", "msvcr120.dll", "msvcr100.dll", "ucrtbase.dll"})
+        if (const auto module = GetModuleHandleA(runtime))
+            if (const auto found = GetProcAddress(module, name))
+                return reinterpret_cast<Function *>(found);
+    return own;
+}
+#define XV_TITLE_CRT(function) title_crt(#function, &function)
 FILE *crt_wfopen(const wchar_t *name, const wchar_t *mode) {
-    return _wfsopen(console_path(name).c_str(), mode, _SH_DENYNO);
+    return XV_TITLE_CRT(_wfsopen)(console_path(name).c_str(), mode, _SH_DENYNO);
 }
 errno_t crt_wfopen_s(FILE **file, const wchar_t *name, const wchar_t *mode) {
-    return _wfopen_s(file, console_path(name).c_str(), mode);
+    return XV_TITLE_CRT(_wfopen_s)(file, console_path(name).c_str(), mode);
 }
 FILE *crt_wfsopen(const wchar_t *name, const wchar_t *mode, int share) {
-    return _wfsopen(console_path(name).c_str(), mode, share);
+    return XV_TITLE_CRT(_wfsopen)(console_path(name).c_str(), mode, share);
 }
 FILE *crt_fopen(const char *name, const char *mode) {
-    return _fsopen(console_path(name).c_str(), mode, _SH_DENYNO);
+    return XV_TITLE_CRT(_fsopen)(console_path(name).c_str(), mode, _SH_DENYNO);
 }
 errno_t crt_fopen_s(FILE **file, const char *name, const char *mode) {
-    return fopen_s(file, console_path(name).c_str(), mode);
+    return XV_TITLE_CRT(fopen_s)(file, console_path(name).c_str(), mode);
 }
 FILE *crt_fsopen(const char *name, const char *mode, int share) {
-    return _fsopen(console_path(name).c_str(), mode, share);
+    return XV_TITLE_CRT(_fsopen)(console_path(name).c_str(), mode, share);
 }
 int crt_wstat64(const wchar_t *name, struct _stat64 *status) {
-    return _wstat64(console_path(name).c_str(), status);
+    return XV_TITLE_CRT(_wstat64)(console_path(name).c_str(), status);
 }
 int crt_stat64i32(const char *name, struct _stat64i32 *status) {
-    return _stat64i32(console_path(name).c_str(), status);
+    return XV_TITLE_CRT(_stat64i32)(console_path(name).c_str(), status);
 }
-int crt_remove(const char *name) { return std::remove(console_path(name).c_str()); }
-int crt_wremove(const wchar_t *name) { return _wremove(console_path(name).c_str()); }
+int crt_remove(const char *name) { return XV_TITLE_CRT(remove)(console_path(name).c_str()); }
+int crt_wremove(const wchar_t *name) { return XV_TITLE_CRT(_wremove)(console_path(name).c_str()); }
 int crt_wrename(const wchar_t *from, const wchar_t *to) {
-    return _wrename(console_path(from).c_str(), console_path(to).c_str());
+    return XV_TITLE_CRT(_wrename)(console_path(from).c_str(), console_path(to).c_str());
 }
-int crt_wrmdir(const wchar_t *name) { return _wrmdir(console_path(name).c_str()); }
-int crt_wmkdir(const wchar_t *name) { return _wmkdir(console_path(name).c_str()); }
+int crt_wrmdir(const wchar_t *name) { return XV_TITLE_CRT(_wrmdir)(console_path(name).c_str()); }
+int crt_wmkdir(const wchar_t *name) { return XV_TITLE_CRT(_wmkdir)(console_path(name).c_str()); }
+#undef XV_TITLE_CRT
 // What a title writes for a debugger: its own log, which is what says why it gives up.
 // Lines go to stderr as they come, without the trailing newline titles usually add.
 void WINAPI output_debug_string_w(const wchar_t *text) {
