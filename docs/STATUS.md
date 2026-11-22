@@ -308,36 +308,36 @@ implementation says so in the log when a title calls it, and fails.
 
 | API | Implemented | Known |
 |---|---|---|
-| XUser | 35 | 44 |
+| XUser | 36 | 44 |
 | XUserGamertag | 1 | 1 |
 | XDisplay | 1 | 1 |
 | XGameInvite | 4 | 5 |
 | XAsync | 28 | 28 |
-| XGameStreaming | 3 | 32 |
+| XGameStreaming | 7 | 32 |
 | XGameStreamingExperimental | 0 | 4 |
-| XStore | 0 | 78 |
-| XAppBroadcast | 1 | 16 |
+| XStore | 61 | 78 |
+| XAppBroadcast | 14 | 16 |
 | XLauncher | 3 | 3 |
 | XNetworking | 8 | 18 |
-| XAccessibility | 0 | 19 |
+| XAccessibility | 18 | 19 |
 | XGameSave | 30 | 47 |
-| XUserDevice | 5 | 8 |
+| XUserDevice | 6 | 8 |
 | XGameActivation | 2 | 3 |
 | XGameRuntimeFeature | 1 | 1 |
 | XError | 3 | 3 |
 | XGameProtocol | 2 | 2 |
-| XGame | 2 | 3 |
-| XAppCapture | 0 | 15 |
-| XPackage | 15 | 35 |
+| XGame | 3 | 3 |
+| XAppCapture | 2 | 15 |
+| XPackage | 25 | 35 |
 | XSystemAnalytics | 1 | 1 |
 | XGameEvent | 1 | 1 |
-| XGameUi | 0 | 42 |
-| XSystem | 3 | 6 |
-| XPersistentLocalStorage | 3 | 6 |
+| XGameUi | 19 | 42 |
+| XSystem | 6 | 6 |
+| XPersistentLocalStorage | 5 | 6 |
 
-<details><summary>XUser: 9 not implemented</summary>
+<details><summary>XUser: 8 not implemented</summary>
 
-`XUserAddByIdWithUiAsync`, `XUserAddByIdWithUiResult`, `XUserPlatformRemoteConnectSetEventHandlers`, `XUserPlatformRemoteConnectCancelPrompt`, `XUserPlatformSpopPromptSetEventHandlers`, `XUserPlatformSpopPromptComplete`, `XUserIsSignOutPresent`, `XUserSignOutAsync`, `XUserSignOutResult`
+`XUserAddByIdWithUiAsync`, `XUserAddByIdWithUiResult`, `XUserPlatformRemoteConnectSetEventHandlers`, `XUserPlatformRemoteConnectCancelPrompt`, `XUserPlatformSpopPromptSetEventHandlers`, `XUserPlatformSpopPromptComplete`, `XUserSignOutAsync`, `XUserSignOutResult`
 
 </details>
 
@@ -347,9 +347,9 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XGameStreaming: 29 not implemented</summary>
+<details><summary>XGameStreaming: 25 not implemented</summary>
 
-`XGameStreamingRegisterClientPropertiesChanged`, `XGameStreamingUnregisterClientPropertiesChanged`, `XGameStreamingGetStreamPhysicalDimensions`, `XGameStreamingGetClientCount`, `XGameStreamingGetClients`, `XGameStreamingGetConnectionState`, `XGameStreamingRegisterConnectionStateChanged`, `XGameStreamingUnregisterConnectionStateChanged`, `XGameStreamingGetStreamAddedLatency`, `XGameStreamingGetServerLocationNameSize`, `XGameStreamingGetServerLocationName`, `XGameStreamingHideTouchControls`, `XGameStreamingShowTouchControlLayout`, `XGameStreamingHideTouchControlsOnClient`, `XGameStreamingShowTouchControlLayoutOnClient`, `XGameStreamingIsTouchInputEnabled`, `XGameStreamingGetLastFrameDisplayed`, `XGameStreamingGetAssociatedFrame`, `XGameStreamingGetGamepadPhysicality`, `XGameStreamingUpdateTouchControlsState`, `XGameStreamingUpdateTouchControlsStateOnClient`, `XGameStreamingShowTouchControlsWithStateUpdate`, `XGameStreamingShowTouchControlsWithStateUpdateOnClient`, `XGameStreamingGetTouchBundleVersionNameSize`, `XGameStreamingGetTouchBundleVersion`, `XGameStreamingGetClientIPAddress`, `XGameStreamingGetSessionId`, `XGameStreamingGetDisplayDetails`, `XGameStreamingSetResolution`
+`XGameStreamingRegisterClientPropertiesChanged`, `XGameStreamingUnregisterClientPropertiesChanged`, `XGameStreamingGetStreamPhysicalDimensions`, `XGameStreamingGetConnectionState`, `XGameStreamingRegisterConnectionStateChanged`, `XGameStreamingUnregisterConnectionStateChanged`, `XGameStreamingGetStreamAddedLatency`, `XGameStreamingGetServerLocationNameSize`, `XGameStreamingGetServerLocationName`, `XGameStreamingHideTouchControlsOnClient`, `XGameStreamingShowTouchControlLayoutOnClient`, `XGameStreamingIsTouchInputEnabled`, `XGameStreamingGetLastFrameDisplayed`, `XGameStreamingGetAssociatedFrame`, `XGameStreamingGetGamepadPhysicality`, `XGameStreamingUpdateTouchControlsState`, `XGameStreamingUpdateTouchControlsStateOnClient`, `XGameStreamingShowTouchControlsWithStateUpdate`, `XGameStreamingShowTouchControlsWithStateUpdateOnClient`, `XGameStreamingGetTouchBundleVersionNameSize`, `XGameStreamingGetTouchBundleVersion`, `XGameStreamingGetClientIPAddress`, `XGameStreamingGetSessionId`, `XGameStreamingGetDisplayDetails`, `XGameStreamingSetResolution`
 
 </details>
 
@@ -359,15 +359,15 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XStore: 78 not implemented</summary>
+<details><summary>XStore: 17 not implemented</summary>
 
-`XStoreCreateContext`, `XStoreCloseContextHandle`, `XStoreQueryAssociatedProductsAsync`, `XStoreQueryAssociatedProductsResult`, `XStoreQueryProductsAsync`, `XStoreQueryProductsResult`, `XStoreQueryEntitledProductsAsync`, `XStoreQueryEntitledProductsResult`, `XStoreQueryProductForCurrentGameAsync`, `XStoreQueryProductForCurrentGameResult`, `XStoreQueryProductForPackageAsync`, `XStoreQueryProductForPackageResult`, `XStoreEnumerateProductsQuery`, `XStoreProductsQueryHasMorePages`, `XStoreProductsQueryNextPageAsync`, `XStoreProductsQueryNextPageResult`, `XStoreCloseProductsQueryHandle`, `XStoreAcquireLicenseForPackageAsync`, `XStoreAcquireLicenseForPackageResult`, `XStoreIsLicenseValid`, `XStoreCloseLicenseHandle`, `XStoreCanAcquireLicenseForStoreIdAsync`, `XStoreCanAcquireLicenseForStoreIdResult`, `XStoreCanAcquireLicenseForPackageAsync`, `XStoreCanAcquireLicenseForPackageResult`, `XStoreQueryGameLicenseAsync`, `XStoreQueryGameLicenseResult`, `XStoreQueryAddOnLicensesAsync`, `XStoreQueryAddOnLicensesResultCount`, `XStoreQueryAddOnLicensesResult`, `XStoreQueryConsumableBalanceRemainingAsync`, `XStoreQueryConsumableBalanceRemainingResult`, `XStoreReportConsumableFulfillmentAsync`, `XStoreReportConsumableFulfillmentResult`, `XStoreGetUserCollectionsIdAsync`, `XStoreGetUserCollectionsIdResultSize`, `XStoreGetUserCollectionsIdResult`, `XStoreGetUserPurchaseIdAsync`, `XStoreGetUserPurchaseIdResultSize`, `XStoreGetUserPurchaseIdResult`, `XStoreQueryLicenseTokenAsync`, `XStoreQueryLicenseTokenResultSize`, `XStoreQueryLicenseTokenResult`, `XStoreShowPurchaseUIAsync`, `XStoreShowPurchaseUIResult`, `XStoreShowRateAndReviewUIAsync`, `XStoreShowRateAndReviewUIResult`, `XStoreShowRedeemTokenUIAsync`, `XStoreShowRedeemTokenUIResult`, `XStoreQueryGameAndDlcPackageUpdatesAsync`, `XStoreQueryGameAndDlcPackageUpdatesResultCount`, `XStoreQueryGameAndDlcPackageUpdatesResult`, `XStoreDownloadPackageUpdatesAsync`, `XStoreDownloadPackageUpdatesResult`, `XStoreDownloadAndInstallPackageUpdatesAsync`, `XStoreDownloadAndInstallPackageUpdatesResult`, `XStoreDownloadAndInstallPackagesAsync`, `XStoreDownloadAndInstallPackagesResultCount`, `XStoreDownloadAndInstallPackagesResult`, `XStoreQueryPackageIdentifier`, `XStoreRegisterGameLicenseChanged`, `XStoreUnregisterGameLicenseChanged`, `XStoreRegisterPackageLicenseLost`, `XStoreUnregisterPackageLicenseLost`, `XStoreIsAvailabilityPurchasable`, `XStoreAcquireLicenseForDurablesAsync`, `XStoreAcquireLicenseForDurablesResult`, `XStoreShowAssociatedProductsUIAsync`, `XStoreShowAssociatedProductsUIResult`, `XStoreShowProductPageUIAsync`, `XStoreShowProductPageUIResult`, `XStoreQueryAssociatedProductsForStoreIdAsync`, `XStoreQueryAssociatedProductsForStoreIdResult`, `XStoreQueryPackageUpdatesAsync`, `XStoreQueryPackageUpdatesResultCount`, `XStoreQueryPackageUpdatesResult`, `XStoreShowGiftingUIAsync`, `XStoreShowGiftingUIResult`
+`XStoreDownloadPackageUpdatesAsync`, `XStoreDownloadPackageUpdatesResult`, `XStoreDownloadAndInstallPackageUpdatesAsync`, `XStoreDownloadAndInstallPackageUpdatesResult`, `XStoreDownloadAndInstallPackagesAsync`, `XStoreDownloadAndInstallPackagesResultCount`, `XStoreDownloadAndInstallPackagesResult`, `XStoreQueryPackageIdentifier`, `XStoreShowAssociatedProductsUIAsync`, `XStoreShowAssociatedProductsUIResult`, `XStoreQueryAssociatedProductsForStoreIdAsync`, `XStoreQueryAssociatedProductsForStoreIdResult`, `XStoreQueryPackageUpdatesAsync`, `XStoreQueryPackageUpdatesResultCount`, `XStoreQueryPackageUpdatesResult`, `XStoreShowGiftingUIAsync`, `XStoreShowGiftingUIResult`
 
 </details>
 
-<details><summary>XAppBroadcast: 15 not implemented</summary>
+<details><summary>XAppBroadcast: 2 not implemented</summary>
 
-`XAppBroadcastShowUI`, `XAppBroadcastGetStatus`, `XAppBroadcastRegisterIsAppBroadcastingChanged`, `XAppBroadcastUnregisterIsAppBroadcastingChanged`, `XAppCaptureMetadataAddStringEvent`, `XAppCaptureMetadataAddInt32Event`, `XAppCaptureMetadataAddDoubleEvent`, `XAppCaptureMetadataStartStringState`, `XAppCaptureMetadataStartInt32State`, `XAppCaptureMetadataStartDoubleState`, `XAppCaptureMetadataStopState`, `XAppCaptureMetadataStopAllStates`, `XAppCaptureMetadataRemainingStorageBytesAvailable`, `XAppCaptureRegisterMetadataPurged`, `XAppCaptureUnRegisterMetadataPurged`
+`XAppBroadcastShowUI`, `XAppBroadcastGetStatus`
 
 </details>
 
@@ -377,9 +377,9 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XAccessibility: 19 not implemented</summary>
+<details><summary>XAccessibility: 1 not implemented</summary>
 
-`XClosedCaptionGetProperties`, `XClosedCaptionSetEnabled`, `XHighContrastGetMode`, `XSpeechToTextSetPositionHint`, `XSpeechToTextSendString`, `XSpeechSynthesizerEnumerateInstalledVoices`, `XSpeechSynthesizerCreate`, `XSpeechSynthesizerCloseHandle`, `XSpeechSynthesizerSetDefaultVoice`, `XSpeechSynthesizerSetCustomVoice`, `XSpeechSynthesizerCreateStreamFromText`, `XSpeechSynthesizerCloseStreamHandle`, `XSpeechSynthesizerGetStreamDataSize`, `XSpeechSynthesizerGetStreamData`, `XSpeechToTextBeginHypothesisString`, `XSpeechToTextUpdateHypothesisString`, `XSpeechToTextFinalizeHypothesisString`, `XSpeechToTextCancelHypothesisString`, `XSpeechSynthesizerCreateStreamFromSsml`
+`XClosedCaptionGetProperties`
 
 </details>
 
@@ -389,9 +389,9 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XUserDevice: 3 not implemented</summary>
+<details><summary>XUserDevice: 2 not implemented</summary>
 
-`XUserGetDefaultAudioEndpointUtf16`, `XUserFindControllerForUserWithUiAsync`, `XUserFindControllerForUserWithUiResult`
+`XUserFindControllerForUserWithUiAsync`, `XUserFindControllerForUserWithUiResult`
 
 </details>
 
@@ -401,39 +401,27 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XGame: 1 not implemented</summary>
+<details><summary>XAppCapture: 13 not implemented</summary>
 
-`XLaunchRestartOnCrash`
-
-</details>
-
-<details><summary>XAppCapture: 15 not implemented</summary>
-
-`XAppCaptureTakeDiagnosticScreenshot`, `XAppCaptureRecordDiagnosticClip`, `XAppCaptureTakeScreenshot`, `XAppCaptureOpenScreenshotStream`, `XAppCaptureReadScreenshotStream`, `XAppCaptureCloseScreenshotStream`, `XAppCaptureEnableRecord`, `XAppCaptureDisableRecord`, `XAppCaptureGetVideoCaptureSettings`, `XAppCaptureRecordTimespan`, `XAppCaptureReadLocalStream`, `XAppCaptureCloseLocalStream`, `XAppCaptureStartUserRecord`, `XAppCaptureStopUserRecord`, `XAppCaptureCancelUserRecord`
+`XAppCaptureTakeDiagnosticScreenshot`, `XAppCaptureRecordDiagnosticClip`, `XAppCaptureTakeScreenshot`, `XAppCaptureOpenScreenshotStream`, `XAppCaptureReadScreenshotStream`, `XAppCaptureCloseScreenshotStream`, `XAppCaptureGetVideoCaptureSettings`, `XAppCaptureRecordTimespan`, `XAppCaptureReadLocalStream`, `XAppCaptureCloseLocalStream`, `XAppCaptureStartUserRecord`, `XAppCaptureStopUserRecord`, `XAppCaptureCancelUserRecord`
 
 </details>
 
-<details><summary>XPackage: 20 not implemented</summary>
+<details><summary>XPackage: 10 not implemented</summary>
 
-`XPackageCreateInstallationMonitor`, `XPackageCloseInstallationMonitorHandle`, `XPackageGetInstallationProgress`, `XPackageUpdateInstallationMonitor`, `XPackageRegisterInstallationProgressChanged`, `XPackageUnregisterInstallationProgressChanged`, `XPackageEnumerateChunkAvailability`, `XPackageChangeChunkInstallOrder`, `XPackageInstallChunks`, `XPackageInstallChunksAsync`, `XPackageInstallChunksResult`, `XPackageEstimateDownloadSize`, `XPackageUninstallChunks`, `XPackageGetIdentifier`, `XPackageGetWriteStats`, `XPackageUninstallUWPInstance`, `XPackageUninstallPackage`, `XPackageMountWithUiAsync`, `XPackageMountWithUiResult`, `XPackageGetPackageKind`
-
-</details>
-
-<details><summary>XGameUi: 42 not implemented</summary>
-
-`XGameUiShowMessageDialogAsync`, `XGameUiShowMessageDialogResult`, `XGameUiShowSendGameInviteAsync`, `XGameUiShowSendGameInviteResult`, `XGameUiShowPlayerProfileCardAsync`, `XGameUiShowPlayerProfileCardResult`, `XGameUiShowAchievementsAsync`, `XGameUiShowAchievementsResult`, `XGameUiShowPlayerPickerAsync`, `XGameUiShowPlayerPickerResultCount`, `XGameUiShowPlayerPickerResult`, `XGameUiShowErrorDialogAsync`, `XGameUiShowErrorDialogResult`, `XGameUiSetNotificationPositionHint`, `XGameUiShowTextEntryAsync`, `XGameUiShowTextEntryResultSize`, `XGameUiShowTextEntryResult`, `XGameUiShowWebAuthenticationAsync`, `XGameUiShowWebAuthenticationResultSize`, `XGameUiShowWebAuthenticationResult`, `XGameUiShowWebAuthenticationWithOptionsAsync`, `XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`, `XGameUiShowMultiplayerActivityGameInviteAsync`, `XGameUiShowMultiplayerActivityGameInviteResult`, `XGameUiTextEntryOpen`, `XGameUiTextEntryClose`, `XGameUiTextEntryGetState`, `XGameUiTextEntryGetExtents`, `XGameUiTextEntryUpdatePositionHint`, `XGameUiTextEntryUpdateVisibility`, `XGameUiShowStateShareAsync`, `XGameUiShowStateShareResult`, `XGameUiSetUiCallbacks`, `XGameUiSetMessageDialogUiResponse`, `XGameUiSetPlayerPickerUiResponse`, `XGameUiSetTextEntryUiResponse`, `XGameUiSetPlayerProfileCardUiResponse`, `XGameUiSetSendGameInviteUiResponse`, `XGameUiSetAchievementsUiResponse`, `XGameUiSetMultiplayerActivityGameInviteUiResponse`, `XGameUiSetErrorDialogUiResponse`
+`XPackageInstallChunksAsync`, `XPackageInstallChunksResult`, `XPackageUninstallChunks`, `XPackageGetIdentifier`, `XPackageGetWriteStats`, `XPackageUninstallUWPInstance`, `XPackageUninstallPackage`, `XPackageMountWithUiAsync`, `XPackageMountWithUiResult`, `XPackageGetPackageKind`
 
 </details>
 
-<details><summary>XSystem: 3 not implemented</summary>
+<details><summary>XGameUi: 23 not implemented</summary>
 
-`XSystemHandleTrack`, `XSystemIsHandleValid`, `XSystemAllowFullDownloadBandwidth`
+`XGameUiShowWebAuthenticationAsync`, `XGameUiShowWebAuthenticationResultSize`, `XGameUiShowWebAuthenticationResult`, `XGameUiShowWebAuthenticationWithOptionsAsync`, `XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`, `XGameUiTextEntryOpen`, `XGameUiTextEntryClose`, `XGameUiTextEntryGetState`, `XGameUiTextEntryGetExtents`, `XGameUiTextEntryUpdatePositionHint`, `XGameUiTextEntryUpdateVisibility`, `XGameUiShowStateShareAsync`, `XGameUiShowStateShareResult`, `XGameUiSetUiCallbacks`, `XGameUiSetMessageDialogUiResponse`, `XGameUiSetPlayerPickerUiResponse`, `XGameUiSetTextEntryUiResponse`, `XGameUiSetPlayerProfileCardUiResponse`, `XGameUiSetSendGameInviteUiResponse`, `XGameUiSetAchievementsUiResponse`, `XGameUiSetMultiplayerActivityGameInviteUiResponse`, `XGameUiSetErrorDialogUiResponse`
 
 </details>
 
-<details><summary>XPersistentLocalStorage: 3 not implemented</summary>
+<details><summary>XPersistentLocalStorage: 1 not implemented</summary>
 
-`XPersistentLocalStoragePromptUserForSpaceAsync`, `XPersistentLocalStoragePromptUserForSpaceResult`, `XPersistentLocalStorageMountForPackage`
+`XPersistentLocalStorageMountForPackage`
 
 </details>
 
@@ -445,52 +433,40 @@ translated when all of its instructions do, and its resources are followed.
 
 | Format | Handled | Known |
 |---|---|---|
-| scalar, two operands | 46 | 51 |
-| scalar, immediate | 20 | 27 |
-| scalar, one operand | 38 | 65 |
-| scalar compare | 16 | 18 |
-| program control | 14 | 37 |
+| scalar, two operands | 51 | 51 |
+| scalar, immediate | 25 | 27 |
+| scalar, one operand | 60 | 65 |
+| scalar compare | 18 | 18 |
+| program control | 31 | 37 |
 | scalar memory | 10 | 78 |
-| vector, two operands | 44 | 48 |
-| vector, one operand | 39 | 81 |
-| vector compare | 100 | 190 |
-| vector, three operands | 219 | 428 |
-| packed vector | 8 | 22 |
+| vector, two operands | 47 | 48 |
+| vector, one operand | 56 | 81 |
+| vector compare | 124 | 190 |
+| vector, three operands | 300 | 428 |
+| packed vector | 22 | 22 |
 | interpolation | 3 | 3 |
-| shared memory | 0 | 147 |
+| shared memory | 36 | 147 |
 | global memory | 0 | 54 |
 | untyped buffer | 38 | 64 |
 | typed buffer | 0 | 16 |
-| image | 65 | 110 |
+| image | 73 | 110 |
 | export | 1 | 1 |
 
-<details><summary>scalar, two operands: 5 not handled</summary>
+<details><summary>scalar, immediate: 2 not handled</summary>
 
-`s_subb_u32`, `s_bfe_u64`, `s_bfe_i64`, `s_absdiff_i32`, `s_pack_lh_b32_b16`
-
-</details>
-
-<details><summary>scalar, immediate: 7 not handled</summary>
-
-`s_cmovk_i32`, `s_waitcnt_vscnt`, `s_waitcnt_vmcnt`, `s_waitcnt_expcnt`, `s_waitcnt_lgkmcnt`, `s_subvector_loop_begin`, `s_subvector_loop_end`
+`s_subvector_loop_begin`, `s_subvector_loop_end`
 
 </details>
 
-<details><summary>scalar, one operand: 27 not handled</summary>
+<details><summary>scalar, one operand: 5 not handled</summary>
 
-`s_cmov_b64`, `s_wqm_b32`, `s_brev_b64`, `s_bcnt0_i32_b32`, `s_bcnt0_i32_b64`, `s_ff0_i32_b32`, `s_ff0_i32_b64`, `s_ff1_i32_b64`, `s_flbit_i32_b64`, `s_flbit_i32`, `s_flbit_i32_i64`, `s_xnor_saveexec_b64`, `s_quadmask_b32`, `s_quadmask_b64`, `s_movrels_b32`, `s_movrels_b64`, `s_movreld_b32`, `s_movreld_b64`, `s_orn1_saveexec_b64`, `s_andn1_wrexec_b64`, `s_andn2_wrexec_b64`, `s_bitreplicate_b64_b32`, `s_xnor_saveexec_b32`, `s_orn1_saveexec_b32`, `s_andn1_wrexec_b32`, `s_andn2_wrexec_b32`, `s_movrelsd_2_b32`
-
-</details>
-
-<details><summary>scalar compare: 2 not handled</summary>
-
-`s_bitcmp0_b64`, `s_bitcmp1_b64`
+`s_movrels_b32`, `s_movrels_b64`, `s_movreld_b32`, `s_movreld_b64`, `s_movrelsd_2_b32`
 
 </details>
 
-<details><summary>program control: 23 not handled</summary>
+<details><summary>program control: 6 not handled</summary>
 
-`s_wakeup`, `s_setkill`, `s_sethalt`, `s_sleep`, `s_setprio`, `s_sendmsghalt`, `s_trap`, `s_icache_inv`, `s_incperflevel`, `s_decperflevel`, `s_ttracedata`, `s_cbranch_cdbgsys`, `s_cbranch_cdbguser`, `s_cbranch_cdbgsys_or_user`, `s_cbranch_cdbgsys_and_user`, `s_endpgm_saved`, `s_endpgm_ordered_ps_done`, `s_clause`, `s_wait_idle`, `s_waitcnt_depctr`, `s_round_mode`, `s_denorm_mode`, `s_ttracedata_imm`
+`s_setkill`, `s_sethalt`, `s_sendmsghalt`, `s_trap`, `s_endpgm_saved`, `s_endpgm_ordered_ps_done`
 
 </details>
 
@@ -500,39 +476,33 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>vector, two operands: 4 not handled</summary>
+<details><summary>vector, two operands: 1 not handled</summary>
 
-`v_subrev_co_ci_u32`, `v_fmamk_f16`, `v_ldexp_f16`, `v_pk_fmac_f16`
-
-</details>
-
-<details><summary>vector, one operand: 42 not handled</summary>
-
-`v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_pipeflush`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_ffbh_i32`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_frexp_exp_i32_f32`, `v_frexp_mant_f32`, `v_clrexcp`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_cvt_f16_u16`, `v_cvt_f16_i16`, `v_cvt_u16_f16`, `v_cvt_i16_f16`, `v_log_f16`, `v_exp_f16`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_trunc_f16`, `v_rndne_f16`, `v_fract_f16`, `v_sin_f16`, `v_cos_f16`, `v_sat_pk_u8_i16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
+`v_pk_fmac_f16`
 
 </details>
 
-<details><summary>vector compare: 90 not handled</summary>
+<details><summary>vector, one operand: 25 not handled</summary>
 
-`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_lt_i16`, `v_cmp_eq_i16`, `v_cmp_le_i16`, `v_cmp_gt_i16`, `v_cmp_ne_i16`, `v_cmp_ge_i16`, `v_cmpx_lt_i16`, `v_cmpx_eq_i16`, `v_cmpx_le_i16`, `v_cmpx_gt_i16`, `v_cmpx_ne_i16`, `v_cmpx_ge_i16`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmp_lt_u16`, `v_cmp_eq_u16`, `v_cmp_le_u16`, `v_cmp_gt_u16`, `v_cmp_ne_u16`, `v_cmp_ge_u16`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmpx_lt_u16`, `v_cmpx_eq_u16`, `v_cmpx_le_u16`, `v_cmpx_gt_u16`, `v_cmpx_ne_u16`, `v_cmpx_ge_u16`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`
-
-</details>
-
-<details><summary>vector, three operands: 209 not handled</summary>
-
-`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_lt_i16`, `v_cmp_eq_i16`, `v_cmp_le_i16`, `v_cmp_gt_i16`, `v_cmp_ne_i16`, `v_cmp_ge_i16`, `v_cmpx_lt_i16`, `v_cmpx_eq_i16`, `v_cmpx_le_i16`, `v_cmpx_gt_i16`, `v_cmpx_ne_i16`, `v_cmpx_ge_i16`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmp_lt_u16`, `v_cmp_eq_u16`, `v_cmp_le_u16`, `v_cmp_gt_u16`, `v_cmp_ne_u16`, `v_cmp_ge_u16`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmpx_lt_u16`, `v_cmpx_eq_u16`, `v_cmpx_le_u16`, `v_cmpx_gt_u16`, `v_cmpx_ne_u16`, `v_cmpx_ge_u16`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`, `v_ldexp_f16`, `v_fma_f64`, `v_lerp_u8`, `v_alignbit_b32`, `v_alignbyte_b32`, `v_mullit_f32`, `v_sad_u8`, `v_sad_hi_u8`, `v_sad_u16`, `v_sad_u32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_add_f64`, `v_mul_f64`, `v_min_f64`, `v_max_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_msad_u8`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_pipeflush`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_ffbh_i32`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_frexp_exp_i32_f32`, `v_frexp_mant_f32`, `v_clrexcp`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_cvt_f16_u16`, `v_cvt_f16_i16`, `v_cvt_u16_f16`, `v_cvt_i16_f16`, `v_log_f16`, `v_exp_f16`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_trunc_f16`, `v_rndne_f16`, `v_fract_f16`, `v_sin_f16`, `v_cos_f16`, `v_sat_pk_u8_i16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_add_nc_u16`, `v_sub_nc_u16`, `v_mul_lo_u16`, `v_lshrrev_b16`, `v_ashrrev_i16`, `v_max_u16`, `v_max_i16`, `v_min_u16`, `v_min_i16`, `v_add_nc_i16`, `v_sub_nc_i16`, `v_pack_b32_f16`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_lshlrev_b16`, `v_mad_u16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_perm_b32`, `v_min3_i16`, `v_min3_u16`, `v_max3_i16`, `v_max3_u16`, `v_med3_i16`, `v_med3_u16`, `v_interp_p2_f16`, `v_mad_i16`, `v_div_fixup_f16`, `v_writelane_b32`, `v_bfm_b32`, `v_bcnt_u32_b32`, `v_mbcnt_lo_u32_b32`, `v_mbcnt_hi_u32_b32`, `v_cvt_pknorm_i16_f32`, `v_cvt_pknorm_u16_f32`, `v_cvt_pk_u16_u32`, `v_cvt_pk_i16_i32`, `v_mad_u32_u16`, `v_mad_i32_i16`, `v_sub_nc_i32`, `v_permlane16_b32`, `v_permlanex16_b32`, `v_add_nc_i32`
+`v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
 
 </details>
 
-<details><summary>packed vector: 14 not handled</summary>
+<details><summary>vector compare: 66 not handled</summary>
 
-`v_pk_mad_i16`, `v_pk_mul_lo_u16`, `v_pk_add_i16`, `v_pk_sub_i16`, `v_pk_lshlrev_b16`, `v_pk_lshrrev_b16`, `v_pk_ashrrev_i16`, `v_pk_max_i16`, `v_pk_min_i16`, `v_pk_mad_u16`, `v_pk_add_u16`, `v_pk_sub_u16`, `v_pk_max_u16`, `v_pk_min_u16`
+`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`
 
 </details>
 
-<details><summary>shared memory: 147 not handled</summary>
+<details><summary>vector, three operands: 128 not handled</summary>
 
-`ds_add_u32`, `ds_sub_u32`, `ds_rsub_u32`, `ds_inc_u32`, `ds_dec_u32`, `ds_min_i32`, `ds_max_i32`, `ds_min_u32`, `ds_max_u32`, `ds_and_b32`, `ds_or_b32`, `ds_xor_b32`, `ds_mskor_b32`, `ds_write_b32`, `ds_write2_b32`, `ds_write2st64_b32`, `ds_cmpst_b32`, `ds_cmpst_f32`, `ds_min_f32`, `ds_max_f32`, `ds_nop`, `ds_add_f32`, `ds_write_b8`, `ds_write_b16`, `ds_add_rtn_u32`, `ds_sub_rtn_u32`, `ds_rsub_rtn_u32`, `ds_inc_rtn_u32`, `ds_dec_rtn_u32`, `ds_min_rtn_i32`, `ds_max_rtn_i32`, `ds_min_rtn_u32`, `ds_max_rtn_u32`, `ds_and_rtn_b32`, `ds_or_rtn_b32`, `ds_xor_rtn_b32`, `ds_mskor_rtn_b32`, `ds_wrxchg_rtn_b32`, `ds_wrxchg2_rtn_b32`, `ds_wrxchg2st64_rtn_b32`, `ds_cmpst_rtn_b32`, `ds_cmpst_rtn_f32`, `ds_min_rtn_f32`, `ds_max_rtn_f32`, `ds_wrap_rtn_b32`, `ds_swizzle_b32`, `ds_read_b32`, `ds_read2_b32`, `ds_read2st64_b32`, `ds_read_i8`, `ds_read_u8`, `ds_read_i16`, `ds_read_u16`, `ds_consume`, `ds_append`, `ds_add_u64`, `ds_sub_u64`, `ds_rsub_u64`, `ds_inc_u64`, `ds_dec_u64`, `ds_min_i64`, `ds_max_i64`, `ds_min_u64`, `ds_max_u64`, `ds_and_b64`, `ds_or_b64`, `ds_xor_b64`, `ds_mskor_b64`, `ds_write_b64`, `ds_write2_b64`, `ds_write2st64_b64`, `ds_cmpst_b64`, `ds_cmpst_f64`, `ds_min_f64`, `ds_max_f64`, `ds_add_rtn_f32`, `ds_add_rtn_u64`, `ds_sub_rtn_u64`, `ds_rsub_rtn_u64`, `ds_inc_rtn_u64`, `ds_dec_rtn_u64`, `ds_min_rtn_i64`, `ds_max_rtn_i64`, `ds_min_rtn_u64`, `ds_max_rtn_u64`, `ds_and_rtn_b64`, `ds_or_rtn_b64`, `ds_xor_rtn_b64`, `ds_mskor_rtn_b64`, `ds_wrxchg_rtn_b64`, `ds_wrxchg2_rtn_b64`, `ds_wrxchg2st64_rtn_b64`, `ds_cmpst_rtn_b64`, `ds_cmpst_rtn_f64`, `ds_min_rtn_f64`, `ds_max_rtn_f64`, `ds_read_b64`, `ds_read2_b64`, `ds_read2st64_b64`, `ds_condxchg32_rtn_b64`, `ds_add_src2_u32`, `ds_sub_src2_u32`, `ds_rsub_src2_u32`, `ds_inc_src2_u32`, `ds_dec_src2_u32`, `ds_min_src2_i32`, `ds_max_src2_i32`, `ds_min_src2_u32`, `ds_max_src2_u32`, `ds_and_src2_b32`, `ds_or_src2_b32`, `ds_xor_src2_b32`, `ds_write_src2_b32`, `ds_min_src2_f32`, `ds_max_src2_f32`, `ds_add_src2_f32`, `ds_write_b8_d16_hi`, `ds_write_b16_d16_hi`, `ds_read_u8_d16`, `ds_read_u8_d16_hi`, `ds_read_i8_d16`, `ds_read_i8_d16_hi`, `ds_read_u16_d16`, `ds_read_u16_d16_hi`, `ds_write_addtid_b32`, `ds_read_addtid_b32`, `ds_permute_b32`, `ds_bpermute_b32`, `ds_add_src2_u64`, `ds_sub_src2_u64`, `ds_rsub_src2_u64`, `ds_inc_src2_u64`, `ds_dec_src2_u64`, `ds_min_src2_i64`, `ds_max_src2_i64`, `ds_min_src2_u64`, `ds_max_src2_u64`, `ds_and_src2_b64`, `ds_or_src2_b64`, `ds_xor_src2_b64`, `ds_write_src2_b64`, `ds_min_src2_f64`, `ds_max_src2_f64`, `ds_write_b96`, `ds_write_b128`, `ds_read_b96`, `ds_read_b128`
+`v_cmp_f_f64`, `v_cmp_lt_f64`, `v_cmp_eq_f64`, `v_cmp_le_f64`, `v_cmp_gt_f64`, `v_cmp_lg_f64`, `v_cmp_ge_f64`, `v_cmp_o_f64`, `v_cmp_u_f64`, `v_cmp_nge_f64`, `v_cmp_nlg_f64`, `v_cmp_ngt_f64`, `v_cmp_nle_f64`, `v_cmp_neq_f64`, `v_cmp_nlt_f64`, `v_cmp_tru_f64`, `v_cmpx_f_f64`, `v_cmpx_lt_f64`, `v_cmpx_eq_f64`, `v_cmpx_le_f64`, `v_cmpx_gt_f64`, `v_cmpx_lg_f64`, `v_cmpx_ge_f64`, `v_cmpx_o_f64`, `v_cmpx_u_f64`, `v_cmpx_nge_f64`, `v_cmpx_nlg_f64`, `v_cmpx_ngt_f64`, `v_cmpx_nle_f64`, `v_cmpx_neq_f64`, `v_cmpx_nlt_f64`, `v_cmpx_tru_f64`, `v_cmp_f_i64`, `v_cmp_lt_i64`, `v_cmp_eq_i64`, `v_cmp_le_i64`, `v_cmp_gt_i64`, `v_cmp_ne_i64`, `v_cmp_ge_i64`, `v_cmp_t_i64`, `v_cmp_class_f64`, `v_cmpx_f_i64`, `v_cmpx_lt_i64`, `v_cmpx_eq_i64`, `v_cmpx_le_i64`, `v_cmpx_gt_i64`, `v_cmpx_ne_i64`, `v_cmpx_ge_i64`, `v_cmpx_t_i64`, `v_cmpx_class_f64`, `v_cmp_f_u64`, `v_cmp_lt_u64`, `v_cmp_eq_u64`, `v_cmp_le_u64`, `v_cmp_gt_u64`, `v_cmp_ne_u64`, `v_cmp_ge_u64`, `v_cmp_t_u64`, `v_cmpx_f_u64`, `v_cmpx_lt_u64`, `v_cmpx_eq_u64`, `v_cmpx_le_u64`, `v_cmpx_gt_u64`, `v_cmpx_ne_u64`, `v_cmpx_ge_u64`, `v_cmpx_t_u64`, `v_fma_f64`, `v_mullit_f32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_add_f64`, `v_mul_f64`, `v_min_f64`, `v_max_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_cvt_i32_f64`, `v_cvt_f64_i32`, `v_cvt_f32_f64`, `v_cvt_f64_f32`, `v_cvt_u32_f64`, `v_cvt_f64_u32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rcp_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_perm_b32`, `v_interp_p2_f16`, `v_div_fixup_f16`, `v_writelane_b32`, `v_mbcnt_lo_u32_b32`, `v_mbcnt_hi_u32_b32`, `v_permlane16_b32`, `v_permlanex16_b32`
+
+</details>
+
+<details><summary>shared memory: 111 not handled</summary>
+
+`ds_rsub_u32`, `ds_inc_u32`, `ds_dec_u32`, `ds_min_i32`, `ds_max_i32`, `ds_mskor_b32`, `ds_cmpst_f32`, `ds_min_f32`, `ds_max_f32`, `ds_add_f32`, `ds_rsub_rtn_u32`, `ds_inc_rtn_u32`, `ds_dec_rtn_u32`, `ds_min_rtn_i32`, `ds_max_rtn_i32`, `ds_mskor_rtn_b32`, `ds_wrxchg2_rtn_b32`, `ds_wrxchg2st64_rtn_b32`, `ds_cmpst_rtn_f32`, `ds_min_rtn_f32`, `ds_max_rtn_f32`, `ds_wrap_rtn_b32`, `ds_swizzle_b32`, `ds_consume`, `ds_append`, `ds_add_u64`, `ds_sub_u64`, `ds_rsub_u64`, `ds_inc_u64`, `ds_dec_u64`, `ds_min_i64`, `ds_max_i64`, `ds_min_u64`, `ds_max_u64`, `ds_and_b64`, `ds_or_b64`, `ds_xor_b64`, `ds_mskor_b64`, `ds_cmpst_b64`, `ds_cmpst_f64`, `ds_min_f64`, `ds_max_f64`, `ds_add_rtn_f32`, `ds_add_rtn_u64`, `ds_sub_rtn_u64`, `ds_rsub_rtn_u64`, `ds_inc_rtn_u64`, `ds_dec_rtn_u64`, `ds_min_rtn_i64`, `ds_max_rtn_i64`, `ds_min_rtn_u64`, `ds_max_rtn_u64`, `ds_and_rtn_b64`, `ds_or_rtn_b64`, `ds_xor_rtn_b64`, `ds_mskor_rtn_b64`, `ds_wrxchg_rtn_b64`, `ds_wrxchg2_rtn_b64`, `ds_wrxchg2st64_rtn_b64`, `ds_cmpst_rtn_b64`, `ds_cmpst_rtn_f64`, `ds_min_rtn_f64`, `ds_max_rtn_f64`, `ds_condxchg32_rtn_b64`, `ds_add_src2_u32`, `ds_sub_src2_u32`, `ds_rsub_src2_u32`, `ds_inc_src2_u32`, `ds_dec_src2_u32`, `ds_min_src2_i32`, `ds_max_src2_i32`, `ds_min_src2_u32`, `ds_max_src2_u32`, `ds_and_src2_b32`, `ds_or_src2_b32`, `ds_xor_src2_b32`, `ds_write_src2_b32`, `ds_min_src2_f32`, `ds_max_src2_f32`, `ds_add_src2_f32`, `ds_write_b8_d16_hi`, `ds_write_b16_d16_hi`, `ds_read_u8_d16`, `ds_read_u8_d16_hi`, `ds_read_i8_d16`, `ds_read_i8_d16_hi`, `ds_read_u16_d16`, `ds_read_u16_d16_hi`, `ds_write_addtid_b32`, `ds_read_addtid_b32`, `ds_permute_b32`, `ds_bpermute_b32`, `ds_add_src2_u64`, `ds_sub_src2_u64`, `ds_rsub_src2_u64`, `ds_inc_src2_u64`, `ds_dec_src2_u64`, `ds_min_src2_i64`, `ds_max_src2_i64`, `ds_min_src2_u64`, `ds_max_src2_u64`, `ds_and_src2_b64`, `ds_or_src2_b64`, `ds_xor_src2_b64`, `ds_write_src2_b64`, `ds_min_src2_f64`, `ds_max_src2_f64`, `ds_write_b96`, `ds_write_b128`, `ds_read_b96`, `ds_read_b128`
 
 </details>
 
@@ -554,8 +524,8 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>image: 45 not handled</summary>
+<details><summary>image: 37 not handled</summary>
 
-`image_sample_cl`, `image_sample_d_cl`, `image_sample_b_cl`, `image_sample_c`, `image_sample_c_cl`, `image_sample_c_d`, `image_sample_c_d_cl`, `image_sample_c_b`, `image_sample_c_b_cl`, `image_sample_cl_o`, `image_sample_d_cl_o`, `image_sample_b_cl_o`, `image_sample_c_o`, `image_sample_c_cl_o`, `image_sample_c_d_o`, `image_sample_c_d_cl_o`, `image_sample_c_b_o`, `image_sample_c_b_cl_o`, `image_gather4_cl`, `image_gather4_b_cl`, `image_gather4_c_cl`, `image_gather4_c_b_cl`, `image_gather4_cl_o`, `image_gather4_b_cl_o`, `image_gather4_c_cl_o`, `image_gather4_c_b_cl_o`, `image_get_lod`, `image_sample_cd_cl`, `image_sample_c_cd`, `image_sample_c_cd_cl`, `image_sample_cd_cl_o`, `image_sample_c_cd_o`, `image_sample_c_cd_cl_o`, `image_sample_d_cl_g16`, `image_sample_c_d_g16`, `image_sample_c_d_cl_g16`, `image_sample_d_cl_o_g16`, `image_sample_c_d_o_g16`, `image_sample_c_d_cl_o_g16`, `image_sample_cd_cl_g16`, `image_sample_c_cd_g16`, `image_sample_c_cd_cl_g16`, `image_sample_cd_cl_o_g16`, `image_sample_c_cd_o_g16`, `image_sample_c_cd_cl_o_g16`
+`image_sample_c_d`, `image_sample_c_d_cl`, `image_sample_c_b`, `image_sample_c_b_cl`, `image_sample_c_d_o`, `image_sample_c_d_cl_o`, `image_sample_c_b_o`, `image_sample_c_b_cl_o`, `image_gather4_cl`, `image_gather4_b_cl`, `image_gather4_c_cl`, `image_gather4_c_b_cl`, `image_gather4_cl_o`, `image_gather4_b_cl_o`, `image_gather4_c_cl_o`, `image_gather4_c_b_cl_o`, `image_get_lod`, `image_sample_c_cd`, `image_sample_c_cd_cl`, `image_sample_c_cd_o`, `image_sample_c_cd_cl_o`, `image_sample_d_g16`, `image_sample_d_cl_g16`, `image_sample_c_d_g16`, `image_sample_c_d_cl_g16`, `image_sample_d_o_g16`, `image_sample_d_cl_o_g16`, `image_sample_c_d_o_g16`, `image_sample_c_d_cl_o_g16`, `image_sample_cd_g16`, `image_sample_cd_cl_g16`, `image_sample_c_cd_g16`, `image_sample_c_cd_cl_g16`, `image_sample_cd_o_g16`, `image_sample_cd_cl_o_g16`, `image_sample_c_cd_o_g16`, `image_sample_c_cd_cl_o_g16`
 
 </details>

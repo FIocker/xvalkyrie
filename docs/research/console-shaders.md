@@ -127,9 +127,32 @@ disassembly of the shaders of two titles, so it has the instructions those use a
 
 State on the first title it was run on (82 shaders up to its title screen):
 46 are translated and all of those compile; the title screen is drawn right. Not done:
-cube maps sampled by face, the `ds_*` instructions (memory shared by a thread group),
-buffer stores and atomics, `s_getpc_b64` tables, geometry shaders. A shader with any of
-these gets the stand-in that draws nothing, and `console_shader_source` says which.
+64-bit floats and integers in vector registers, the instructions that pick a register by
+an index (`*_movrel*`), global memory (`global_*`), typed buffers (`tbuffer_*`), compares
+with a bias or gradients, geometry and mesh shaders. A shader with any of these gets the
+stand-in that draws nothing, and `console_shader_source` says which.
+
+### Memory a thread group shares
+
+The `ds_*` instructions of a compute shader read and write the memory its thread group
+shares (LDS). It is a `groupshared` array of words, as large as `LDS_SIZE` of
+`COMPUTE_PGM_RSRC2` says (bits 23:15 of the first header word, in units of 128 words) and
+32 KiB at most, which is the host's limit.
+
+A wave runs each instruction for all of its lanes before the next, so compiled code leaves
+out `s_barrier` wherever a group fits in one wave: what a lane writes is there for every
+lane that reads later. The host's threads run on their own. The translation therefore
+makes them wait for each other (`GroupMemoryBarrierWithGroupSync`) wherever the code turns
+from writing the memory to reading it or back, and at each `s_barrier`. The host only
+allows that where every thread is sure to come by, so inside a block a branch may skip, or
+inside a loop, nothing is emitted and the threads race there. Not checked on a title.
+
+### Checking a change
+
+`xvboot shader-probe --compile` translates one compute shader per line of hexadecimal
+words and gives the translation to the host's compiler: what it says against it is the
+answer. `tools/status.py` uses the same command without the flag to count the instructions
+that are handled.
 
 What had to be right on the host for translated shaders to draw:
 

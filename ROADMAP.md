@@ -151,10 +151,16 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
 - [x] `GameInput.dll` with the emulated gamepad, `xmem.dll`, `xaudio2_9.dll` by ordinal
 - [x] The Series sample draws its picture and reads the gamepad
 - [x] 36 of the 40 public samples that build for Series present frames
-- [ ] Quad and rectangle topologies, sampler feedback readback
+- [x] Rectangle lists: the fourth corner of each comes from a geometry shader made for the
+  pipeline's vertex shader
+- [ ] Indexed quad lists, sampler feedback readback
 - [ ] Shaders that only carry the console's GPU code (the retail GDK title looked at)
 - [ ] `xg_xs.dll` texture layouts, `dstorage_xs.dll`
-- [ ] XStore, XGameUi, keyboards and mice through GameInput
+- [x] XStore without a store (the title is owned, nothing is for sale), XGameUi's dialogs and
+  keyboard on the host, XAccessibility with the host's voice, installation monitors
+- [ ] Keyboards and mice through GameInput
+- [ ] Shaders that share memory in a thread group are translated, but their threads only
+  wait for each other outside branches and loops
 - [ ] Check the XVD layout against a real Series package
 
 ## Other

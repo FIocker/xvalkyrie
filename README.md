@@ -126,6 +126,7 @@ The commands that look at a title without running it print JSON:
 | `xvboot inspect-manifest FILE` | An `AppxManifest.xml` |
 | `xvboot inspect-package FILE` | The header of an XVD/XVC package |
 | `xvboot modules durango\|scarlett` | The console modules and functions implemented |
+| `xvboot shader-probe [--compile]` | For each line of machine code words on the input, what stops its translation |
 
 In the window, Options > Input binds the gamepad to keys or to the host's gamepad,
 Options > Graphics picks the backend and what F11 does, Options > Console sets the signed-in
