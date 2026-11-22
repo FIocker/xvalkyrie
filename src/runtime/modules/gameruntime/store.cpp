@@ -69,6 +69,10 @@ HRESULT WINAPI query_for_package(void *, Context *, std::uint32_t, const char *,
                                  XAsyncBlock *block) {
     return finish(block, products_identity, S_OK, bytes_of(&products_query));
 }
+HRESULT WINAPI query_for_store_id(void *, Context *, const char *, std::uint32_t, std::uint32_t,
+                                  XAsyncBlock *block) {
+    return finish(block, products_identity, S_OK, bytes_of(&products_query));
+}
 HRESULT WINAPI query_next_page(void *, ProductsQuery *, XAsyncBlock *block) {
     return finish(block, products_identity, S_OK, bytes_of(&products_query));
 }
@@ -115,6 +119,27 @@ HRESULT WINAPI query_none_count(void *, XAsyncBlock *block, std::uint32_t *count
 HRESULT WINAPI query_none_result(void *, XAsyncBlock *block, std::uint32_t, void *) {
     return result(block, count_identity, 0, nullptr, nullptr);
 }
+// the packages named have no updates either, so downloading them is done at once
+HRESULT WINAPI query_none_of(void *, Context *, const char **, std::size_t, XAsyncBlock *block) {
+    return finish(block, count_identity, S_OK);
+}
+HRESULT WINAPI none_result(void *, XAsyncBlock *block) {
+    return result(block, count_identity, 0, nullptr, nullptr);
+}
+// the package a product of the store installs as: no product is installed
+HRESULT WINAPI package_identifier(void *, const char *, std::size_t size, char *identifier) {
+    if (identifier && size)
+        *identifier = '\0';
+    return static_cast<HRESULT>(0x80070490); // ERROR_NOT_FOUND
+}
+HRESULT WINAPI service_count(void *, XAsyncBlock *block, std::uint32_t *count) {
+    if (count)
+        *count = 0;
+    return result(block, service_identity, 0, nullptr, nullptr);
+}
+HRESULT WINAPI service_list(void *, XAsyncBlock *block, std::uint32_t, void *) {
+    return result(block, service_identity, 0, nullptr, nullptr);
+}
 HRESULT WINAPI consumable_balance(void *, Context *, const char *, XAsyncBlock *block) {
     return finish(block, balance_identity, S_OK, bytes_of(std::uint32_t{0}));
 }
@@ -145,6 +170,10 @@ HRESULT WINAPI show_ui_1(void *, Context *, XAsyncBlock *block) {
     return finish(block, ui_identity, e_cancelled);
 }
 HRESULT WINAPI show_ui_2(void *, Context *, const void *, XAsyncBlock *block) {
+    return finish(block, ui_identity, e_cancelled);
+}
+HRESULT WINAPI show_associated_ui(void *, Context *, const char *, std::uint32_t,
+                                  XAsyncBlock *block) {
     return finish(block, ui_identity, e_cancelled);
 }
 HRESULT WINAPI show_redeem_ui(void *, Context *, const char *, const char **, std::size_t, bool,
@@ -206,6 +235,23 @@ void install_store() {
     implement("XStoreQueryGameAndDlcPackageUpdatesAsync", &query_none);
     implement("XStoreQueryGameAndDlcPackageUpdatesResultCount", &query_none_count);
     implement("XStoreQueryGameAndDlcPackageUpdatesResult", &query_none_result);
+    implement("XStoreQueryPackageUpdatesAsync", &query_none_of);
+    implement("XStoreQueryPackageUpdatesResultCount", &query_none_count);
+    implement("XStoreQueryPackageUpdatesResult", &query_none_result);
+    implement("XStoreDownloadPackageUpdatesAsync", &query_none_of);
+    implement("XStoreDownloadPackageUpdatesResult", &none_result);
+    implement("XStoreDownloadAndInstallPackageUpdatesAsync", &query_none_of);
+    implement("XStoreDownloadAndInstallPackageUpdatesResult", &none_result);
+    implement("XStoreDownloadAndInstallPackagesAsync", &service_3);
+    implement("XStoreDownloadAndInstallPackagesResultCount", &service_count);
+    implement("XStoreDownloadAndInstallPackagesResult", &service_list);
+    implement("XStoreQueryPackageIdentifier", &package_identifier);
+    implement("XStoreQueryAssociatedProductsForStoreIdAsync", &query_for_store_id);
+    implement("XStoreQueryAssociatedProductsForStoreIdResult", &query_products_result);
+    implement("XStoreShowAssociatedProductsUIAsync", &show_associated_ui);
+    implement("XStoreShowAssociatedProductsUIResult", &show_ui_result);
+    implement("XStoreShowGiftingUIAsync", &show_purchase_ui);
+    implement("XStoreShowGiftingUIResult", &show_ui_result);
     implement("XStoreQueryConsumableBalanceRemainingAsync", &consumable_balance);
     implement("XStoreQueryConsumableBalanceRemainingResult", &consumable_balance_result);
     implement("XStoreGetUserCollectionsIdAsync", &service_3);

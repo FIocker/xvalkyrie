@@ -19,6 +19,9 @@ const char privilege_identity[] = "XUserResolvePrivilegeWithUiAsync";
 const char token_identity[] = "XUserGetTokenAndSignatureAsync";
 const char picture_identity[] = "XUserGetGamerPictureAsync";
 const char issue_identity[] = "XUserResolveIssueWithUiAsync";
+const char sign_out_identity[] = "XUserSignOutAsync";
+const char controller_identity[] = "XUserFindControllerForUserWithUiAsync";
+constexpr HRESULT e_user_not_found = static_cast<HRESULT>(0x89245104);
 std::atomic<std::uint64_t> tokens{0};
 
 std::uint64_t xbox_user_id() {
@@ -59,6 +62,30 @@ HRESULT WINAPI add_async(void *, std::uint32_t, XAsyncBlock *block) {
 }
 HRESULT WINAPI add_result(void *, XAsyncBlock *block, User **handle) {
     return result(block, add_identity, sizeof *handle, handle, nullptr);
+}
+// the one user is the only one there is to add by id
+HRESULT WINAPI add_by_id_async(void *, std::uint64_t id, XAsyncBlock *block) {
+    return id == xbox_user_id() ? add_async(nullptr, 0, block)
+                                : finish(block, add_identity, e_user_not_found);
+}
+// XUserIsSignOutPresent says there is no signing out
+HRESULT WINAPI sign_out_async(void *, User *, XAsyncBlock *block) {
+    return finish(block, sign_out_identity, E_NOTIMPL);
+}
+HRESULT WINAPI sign_out_result(void *, XAsyncBlock *block) {
+    return result(block, sign_out_identity, 0, nullptr, nullptr);
+}
+// Signing in on another device (remote connect) and on this one while signed in elsewhere
+// (SPOP) are prompts the title may draw. The user is signed in from the start, so neither is
+// ever raised and no operation exists to cancel or complete.
+HRESULT WINAPI prompt_handlers(void *, Queue *, void *, void *) { return S_OK; }
+HRESULT WINAPI prompt_operation(void *, void *, std::uint32_t) { return E_INVALIDARG; }
+// the gamepad is the user's: APP_LOCAL_DEVICE_ID, 32 bytes, as GameInput reports it
+HRESULT WINAPI find_controller_async(void *, User *, XAsyncBlock *block) {
+    return finish(block, controller_identity, S_OK, std::vector<std::uint8_t>(32));
+}
+HRESULT WINAPI find_controller_result(void *, XAsyncBlock *block, void *device) {
+    return result(block, controller_identity, 32, device, nullptr);
 }
 HRESULT WINAPI get_local_id(void *, User *, std::uint64_t *id) {
     if (!id)
@@ -217,6 +244,16 @@ void install_user() {
     implement("XUserGetMaxUsers", &get_max_users);
     implement("XUserAddAsync", &add_async);
     implement("XUserAddResult", &add_result);
+    implement("XUserAddByIdWithUiAsync", &add_by_id_async);
+    implement("XUserAddByIdWithUiResult", &add_result);
+    implement("XUserSignOutAsync", &sign_out_async);
+    implement("XUserSignOutResult", &sign_out_result);
+    implement("XUserPlatformRemoteConnectSetEventHandlers", &prompt_handlers);
+    implement("XUserPlatformSpopPromptSetEventHandlers", &prompt_handlers);
+    implement("XUserPlatformRemoteConnectCancelPrompt", &prompt_operation);
+    implement("XUserPlatformSpopPromptComplete", &prompt_operation);
+    implement("XUserFindControllerForUserWithUiAsync", &find_controller_async);
+    implement("XUserFindControllerForUserWithUiResult", &find_controller_result);
     implement("XUserGetLocalId", &get_local_id);
     implement("XUserFindUserByLocalId", &find_by_local_id);
     implement("XUserGetId", &get_id);

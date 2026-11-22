@@ -131,6 +131,95 @@ TEST_CASE("a message dialog answers with its default button") {
     CHECK(button == 1);
 }
 
+namespace {
+void CALLBACK draw_message_dialog(void *handle, void *, const char *title, const char *,
+                                  const char *, const char *, const char *third, std::uint32_t,
+                                  std::uint32_t, void *context) {
+    *static_cast<std::string *>(context) = std::string(title) + "/" + third;
+    call<HRESULT, void *, std::uint32_t>("XGameUi", "XGameUiSetMessageDialogUiResponse", handle,
+                                         2);
+}
+} // namespace
+
+TEST_CASE("a title that draws its own dialogs answers them itself") {
+    struct Callbacks {
+        void *context;
+        void *screens[8];
+    } callbacks{};
+    std::string seen;
+    callbacks.context = &seen;
+    callbacks.screens[5] = reinterpret_cast<void *>(&draw_message_dialog);
+    REQUIRE(call<HRESULT, const Callbacks *, bool>("XGameUi", "XGameUiSetUiCallbacks", &callbacks,
+                                                   true) == S_OK);
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, XAsyncBlock *, const char *, const char *, const char *, const char *,
+                 const char *, std::uint32_t, std::uint32_t>(
+                "XGameUi", "XGameUiShowMessageDialogAsync", &block, "Quit", "Sure?", "Yes", "No",
+                "Later", 0, 1) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    std::uint32_t button = 9;
+    REQUIRE(call<HRESULT, XAsyncBlock *, std::uint32_t *>(
+                "XGameUi", "XGameUiShowMessageDialogResult", &block, &button) == S_OK);
+    CHECK(button == 2);
+    CHECK(seen == "Quit/Later");
+    CHECK(call<HRESULT, void *, std::uint32_t>("XGameUi", "XGameUiSetMessageDialogUiResponse",
+                                               &block, 0) == E_INVALIDARG);
+    REQUIRE(call<HRESULT, const Callbacks *, bool>("XGameUi", "XGameUiSetUiCallbacks", nullptr,
+                                                   true) == S_OK);
+}
+
+TEST_CASE("the keyboard a title keeps open is dismissed with its first text") {
+    const std::uint32_t options[3] = {0, 0, 0};
+    void *entry = nullptr;
+    REQUIRE(call<HRESULT, const std::uint32_t *, std::uint32_t, const char *, std::uint32_t,
+                 void **>("XGameUi", "XGameUiTextEntryOpen", options, 32, "Valkyrie", 8, &entry) ==
+            S_OK);
+    REQUIRE(entry);
+    std::uint32_t change = 0, cursor = 0;
+    char text[16] = {};
+    CHECK(call<HRESULT, void *, std::uint32_t *, std::uint32_t *, std::uint32_t *, std::uint32_t *,
+               std::uint32_t, char *>("XGameUi", "XGameUiTextEntryGetState", entry, &change,
+                                      &cursor, nullptr, nullptr, 4,
+                                      text) == modules::gameruntime::e_not_sufficient_buffer);
+    REQUIRE(call<HRESULT, void *, std::uint32_t *, std::uint32_t *, std::uint32_t *,
+                 std::uint32_t *, std::uint32_t, char *>("XGameUi", "XGameUiTextEntryGetState",
+                                                         entry, &change, &cursor, nullptr, nullptr,
+                                                         sizeof text, text) == S_OK);
+    CHECK(change == 2);
+    CHECK(cursor == 8);
+    CHECK(std::string_view(text) == "Valkyrie");
+    call<void, void *>("XGameUi", "XGameUiTextEntryClose", entry);
+}
+
+TEST_CASE("only the one user can be added by id") {
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, std::uint64_t, XAsyncBlock *>("XUser", "XUserAddByIdWithUiAsync", 1,
+                                                        &block) == S_OK);
+    CHECK(wait(&block) == static_cast<HRESULT>(0x89245104));
+}
+
+TEST_CASE("a PlayFab save configuration keeps the place the title names") {
+    struct Request {
+        void *user;
+        const char *title_id, *api_url;
+        std::uint32_t flags;
+        const char *entity_id, *entity_token, *file_location;
+    } request{nullptr, "ABCD", nullptr, 8, nullptr, nullptr, "T:\\saves"};
+    void *config = nullptr;
+    REQUIRE(call<HRESULT, Request *, void **>("XGameSave", "PFXGameSaveInitializeConfig", &request,
+                                              &config) == S_OK);
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, void *, XAsyncBlock *>(
+                "XGameSave", "PFXGameSaveFilesGetFolderWithUiAsync", config, &block) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    char folder[32] = {};
+    REQUIRE(call<HRESULT, XAsyncBlock *, std::size_t, char *>(
+                "XGameSave", "PFXGameSaveFilesGetFolderWithUiResult", &block, sizeof folder,
+                folder) == S_OK);
+    CHECK(std::string_view(folder) == "T:\\saves");
+    call<void, void *>("XGameSave", "PFXGameSaveFreeConfig", config);
+}
+
 TEST_CASE("speech is a WAV file") {
     void *synthesizer = nullptr, *stream = nullptr;
     REQUIRE(call<HRESULT, void **>("XAccessibility", "XSpeechSynthesizerCreate", &synthesizer) ==
@@ -214,4 +303,18 @@ TEST_CASE("every chunk of the package is installed") {
                                    &progress);
     CHECK(progress.completed);
     CHECK(progress.installed_bytes == progress.total_bytes);
+
+    XAsyncBlock block{};
+    REQUIRE(call<HRESULT, const char *, std::uint32_t, const void *, std::uint32_t, bool,
+                 XAsyncBlock *>("XPackage", "XPackageInstallChunksAsync", "package", 0, nullptr,
+                                1000, true, &block) == S_OK);
+    REQUIRE(wait(&block) == S_OK);
+    void *installing = nullptr;
+    REQUIRE(call<HRESULT, XAsyncBlock *, void **>("XPackage", "XPackageInstallChunksResult",
+                                                  &block, &installing) == S_OK);
+    CHECK(installing == monitor);
+    std::uint32_t kind = 9;
+    REQUIRE(call<HRESULT, const char *, std::uint32_t *>("XPackage", "XPackageGetPackageKind",
+                                                         "package", &kind) == S_OK);
+    CHECK(kind == 0);
 }

@@ -18,6 +18,10 @@ const char port_identity[] = "XNetworkingQueryPreferredLocalUdpMultiplayerPortAs
 const char space_identity[] = "XPersistentLocalStoragePromptUserForSpaceAsync";
 const char security_identity[] = "XNetworkingQuerySecurityInformationForUrlAsync";
 const char folder_identity[] = "XGameSaveFilesGetFolderWithUiAsync";
+const char sync_identity[] = "PFXGameSaveFilesUploadWithUiAsync";
+const char chunks_identity[] = "XPackageInstallChunksAsync";
+const char mount_identity[] = "XPackageMountWithUiAsync";
+constexpr HRESULT e_not_found = static_cast<HRESULT>(0x80070490); // ERROR_NOT_FOUND
 
 std::filesystem::path package_root() {
     std::error_code error;
@@ -134,6 +138,58 @@ HRESULT WINAPI save_files_quota(void *, void *, const char *, std::int64_t *rema
     *remaining = std::int64_t{1} << 30;
     return S_OK;
 }
+// PFXGameSave: the same files with a service to synchronize them with, which is never
+// reached. A configuration only says where its files are: the place the title names
+// (PFXGameSaveConfigRequest with InitFlagUseFileLocation), or a folder of its own.
+struct SaveConfig {
+    std::string folder;
+};
+struct SaveConfigRequest {
+    void *user;
+    const char *title_id, *api_url;
+    std::uint32_t flags;
+    const char *entity_id, *entity_token, *file_location;
+};
+HRESULT WINAPI save_config(void *, const SaveConfigRequest *request, SaveConfig **config) {
+    if (!request || !config)
+        return E_POINTER;
+    const bool placed = (request->flags & 8) && request->file_location;
+    *config = new SaveConfig{placed ? request->file_location : folder_of_title("PlayFab")};
+    return S_OK;
+}
+void WINAPI free_save_config(void *, SaveConfig *config) { delete config; }
+HRESULT WINAPI save_config_folder(void *, SaveConfig *config, XAsyncBlock *block) {
+    if (!config)
+        return E_INVALIDARG;
+    const auto &folder = config->folder;
+    return finish(block, folder_identity, S_OK,
+                  std::vector<std::uint8_t>(folder.c_str(), folder.c_str() + folder.size() + 1));
+}
+HRESULT WINAPI save_config_quota(void *, SaveConfig *, std::int64_t *remaining) {
+    return save_files_quota(nullptr, nullptr, nullptr, remaining);
+}
+HRESULT WINAPI save_synchronized(void *, SaveConfig *, std::uint64_t, XAsyncBlock *block) {
+    return finish(block, sync_identity, S_OK);
+}
+HRESULT WINAPI save_synchronized_result(void *, XAsyncBlock *block) {
+    return result(block, sync_identity, 0, nullptr, nullptr);
+}
+// PFXGameSaveSyncState: SyncComplete, with nothing transferred
+HRESULT WINAPI save_progress(void *, void *, std::uint32_t *state, std::uint64_t *current,
+                             std::uint64_t *total) {
+    if (state)
+        *state = 5;
+    if (current)
+        *current = 0;
+    if (total)
+        *total = 0;
+    return S_OK;
+}
+HRESULT WINAPI save_callbacks(void *, const void *) { return S_OK; }
+HRESULT WINAPI save_device_callback(void *, void *, void *) { return S_OK; }
+// an answer to a screen about synchronizing, none of which is ever asked for
+HRESULT WINAPI save_ui_response(void *, void *, std::uint32_t) { return E_UNEXPECTED; }
+
 HRESULT WINAPI storage_path_size(void *, std::size_t *size) {
     if (!size)
         return E_POINTER;
@@ -220,22 +276,74 @@ HRESULT WINAPI estimate_download(void *, const char *, std::uint32_t, const void
         *confirm = false;
     return S_OK;
 }
+HRESULT WINAPI install_chunks_async(void *, const char *, std::uint32_t, const void *,
+                                    std::uint32_t, bool, XAsyncBlock *block) {
+    Monitor *const handle = &monitor;
+    std::vector<std::uint8_t> payload(sizeof handle);
+    std::memcpy(payload.data(), &handle, sizeof handle);
+    return finish(block, chunks_identity, S_OK, std::move(payload));
+}
+HRESULT WINAPI install_chunks_result(void *, XAsyncBlock *block, Monitor **handle) {
+    return result(block, chunks_identity, sizeof *handle, handle, nullptr);
+}
+// the title's files are the user's: nothing is removed, and what is asked about stays ready
+HRESULT WINAPI uninstall_chunks(void *, const char *, std::uint32_t, const void *) { return S_OK; }
+HRESULT WINAPI uninstall_instance(void *, const char *) { return e_not_found; }
+bool WINAPI uninstall_package(void *, const char *) { return false; }
+// XPackageKind: a game
+HRESULT WINAPI package_kind(void *, const char *, std::uint32_t *kind) {
+    if (!kind)
+        return E_POINTER;
+    *kind = 0;
+    return S_OK;
+}
+// XPackageWriteStats: the budget a console gives a title for writing to its package's drive,
+// a gibibyte in ten minutes, none of it used
+struct WriteStats {
+    std::uint64_t interval, budget, elapsed, bytes_written;
+};
+HRESULT WINAPI write_stats(void *, WriteStats *stats) {
+    if (!stats)
+        return E_POINTER;
+    *stats = {600000, 1ull << 30, 0, 0};
+    return S_OK;
+}
+// a mount of the package's files, and one of the storage a package keeps
+// (XPersistentLocalStorageMountForPackage)
 struct Mount {
-} mount;
+} mount, storage_mount;
 HRESULT WINAPI mount_package(void *, const char *, Mount **handle) {
     if (!handle)
         return E_POINTER;
     *handle = &mount;
     return S_OK;
 }
-HRESULT WINAPI mount_path_size(void *, Mount *, std::size_t *size) {
-    if (!size)
+HRESULT WINAPI mount_storage(void *, const char *, Mount **handle) {
+    if (!handle)
         return E_POINTER;
-    *size = utf8(package_root()).size() + 1;
+    *handle = &storage_mount;
     return S_OK;
 }
-HRESULT WINAPI mount_path(void *, Mount *, std::size_t size, char *buffer) {
-    return copy_text(utf8(package_root()), size, buffer, nullptr);
+HRESULT WINAPI mount_async(void *, const char *, XAsyncBlock *block) {
+    Mount *const handle = &mount;
+    std::vector<std::uint8_t> payload(sizeof handle);
+    std::memcpy(payload.data(), &handle, sizeof handle);
+    return finish(block, mount_identity, S_OK, std::move(payload));
+}
+HRESULT WINAPI mount_result(void *, XAsyncBlock *block, Mount **handle) {
+    return result(block, mount_identity, sizeof *handle, handle, nullptr);
+}
+std::string path_of(const Mount *handle) {
+    return handle == &storage_mount ? local_storage() : utf8(package_root());
+}
+HRESULT WINAPI mount_path_size(void *, Mount *handle, std::size_t *size) {
+    if (!size)
+        return E_POINTER;
+    *size = path_of(handle).size() + 1;
+    return S_OK;
+}
+HRESULT WINAPI mount_path(void *, Mount *handle, std::size_t size, char *buffer) {
+    return copy_text(path_of(handle), size, buffer, nullptr);
 }
 // no downloadable content is installed, and no features are split off
 HRESULT WINAPI enumerate_nothing(void *, std::uint64_t, std::uint64_t, std::uint64_t,
@@ -313,6 +421,8 @@ HRESULT WINAPI register_3(void *, void *, void *, void *, std::uint64_t *token) 
     return S_OK;
 }
 bool WINAPI unregister(void *, std::uint64_t, bool) { return true; }
+// an invitation to accept: none ever arrives, so the address names none
+HRESULT WINAPI accept_invite(void *, const char *) { return e_not_found; }
 HRESULT WINAPI succeeded(void *) { return S_OK; }
 bool WINAPI no(void *) { return false; }
 bool WINAPI yes(void *) { return true; }
@@ -395,6 +505,35 @@ void install_system() {
     implement("XGameSaveFilesGetFolderWithUiAsync", &save_files_folder);
     implement("XGameSaveFilesGetFolderWithUiResult", &save_files_folder_result);
     implement("XGameSaveFilesGetRemainingQuota", &save_files_quota);
+    implement("PFXGameSaveInitializeConfig", &save_config);
+    implement("PFXGameSaveFreeConfig", &free_save_config);
+    implement("PFXGameSaveFilesGetFolderWithUiAsync", &save_config_folder);
+    implement("PFXGameSaveFilesGetFolderWithUiResult", &save_files_folder_result);
+    implement("PFXGameSaveFilesGetRemainingQuota", &save_config_quota);
+    implement("PFXGameSaveSetUiCallbacks", &save_callbacks);
+    implement("PFXGameSaveSetActiveDeviceChangedCallback", &save_device_callback);
+    implement("PFXGameSaveProgressUiGetProgress", &save_progress);
+    implement("PFXGameSaveSetProgressUiResponse", &save_ui_response);
+    implement("PFXGameSaveSetSyncFailedUiResponse", &save_ui_response);
+    implement("PFXGameSaveSetActiveDeviceContentionUiResponse", &save_ui_response);
+    implement("PFXGameSaveSetConflictUiResponse", &save_ui_response);
+    implement("PFXGameSaveSetOutOfStorageUiResponse", &save_ui_response);
+    implement("PFXGameSaveFilesUploadWithUiAsync", &save_synchronized);
+    implement("PFXGameSaveFilesUploadWithUiResult", &save_synchronized_result);
+    implement("PFXGameSaveFilesSetSaveDescriptionAsync", &save_synchronized);
+    implement("PFXGameSaveFilesSetSaveDescriptionResult", &save_synchronized_result);
+    implement("XPackageInstallChunksAsync", &install_chunks_async);
+    implement("XPackageInstallChunksResult", &install_chunks_result);
+    implement("XPackageUninstallChunks", &uninstall_chunks);
+    implement("XPackageUninstallUWPInstance", &uninstall_instance);
+    implement("XPackageUninstallPackage", &uninstall_package);
+    implement("XPackageGetPackageKind", &package_kind);
+    implement("XPackageGetWriteStats", &write_stats);
+    implement("XPackageMountWithUiAsync", &mount_async);
+    implement("XPackageMountWithUiResult", &mount_result);
+    implement("XPersistentLocalStorageMountForPackage", &mount_storage);
+    implement("XGameInviteAcceptPendingInvite", &accept_invite);
+    implement("XGameActivationAcceptPendingInvite", &accept_invite);
     implement("XNetworkingRegisterConnectivityHintChanged", &register_3);
     implement("XNetworkingUnregisterConnectivityHintChanged", &unregister);
     implement("XNetworkingQueryPreferredLocalUdpMultiplayerPort", &udp_port);

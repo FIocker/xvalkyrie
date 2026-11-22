@@ -308,54 +308,36 @@ implementation says so in the log when a title calls it, and fails.
 
 | API | Implemented | Known |
 |---|---|---|
-| XUser | 36 | 44 |
+| XUser | 44 | 44 |
 | XUserGamertag | 1 | 1 |
 | XDisplay | 1 | 1 |
-| XGameInvite | 4 | 5 |
+| XGameInvite | 5 | 5 |
 | XAsync | 28 | 28 |
 | XGameStreaming | 32 | 32 |
 | XGameStreamingExperimental | 0 | 4 |
-| XStore | 61 | 78 |
+| XStore | 78 | 78 |
 | XAppBroadcast | 16 | 16 |
 | XLauncher | 3 | 3 |
 | XNetworking | 16 | 18 |
 | XAccessibility | 19 | 19 |
-| XGameSave | 30 | 47 |
-| XUserDevice | 6 | 8 |
-| XGameActivation | 2 | 3 |
+| XGameSave | 47 | 47 |
+| XUserDevice | 8 | 8 |
+| XGameActivation | 3 | 3 |
 | XGameRuntimeFeature | 1 | 1 |
 | XError | 3 | 3 |
 | XGameProtocol | 2 | 2 |
 | XGame | 3 | 3 |
 | XAppCapture | 15 | 15 |
-| XPackage | 25 | 35 |
+| XPackage | 34 | 35 |
 | XSystemAnalytics | 1 | 1 |
 | XGameEvent | 1 | 1 |
-| XGameUi | 25 | 42 |
+| XGameUi | 40 | 42 |
 | XSystem | 6 | 6 |
-| XPersistentLocalStorage | 5 | 6 |
-
-<details><summary>XUser: 8 not implemented</summary>
-
-`XUserAddByIdWithUiAsync`, `XUserAddByIdWithUiResult`, `XUserPlatformRemoteConnectSetEventHandlers`, `XUserPlatformRemoteConnectCancelPrompt`, `XUserPlatformSpopPromptSetEventHandlers`, `XUserPlatformSpopPromptComplete`, `XUserSignOutAsync`, `XUserSignOutResult`
-
-</details>
-
-<details><summary>XGameInvite: 1 not implemented</summary>
-
-`XGameInviteAcceptPendingInvite`
-
-</details>
+| XPersistentLocalStorage | 6 | 6 |
 
 <details><summary>XGameStreamingExperimental: 4 not implemented</summary>
 
 `EXPERIMENTAL_XGameStreamingGetClientOrientation`, `EXPERIMENTAL_XGameStreamingGetMotionState`, `EXPERIMENTAL_XGameStreamingGetMotionInfo`, `XGameStreamingSendDebugMessageToClient`
-
-</details>
-
-<details><summary>XStore: 17 not implemented</summary>
-
-`XStoreDownloadPackageUpdatesAsync`, `XStoreDownloadPackageUpdatesResult`, `XStoreDownloadAndInstallPackageUpdatesAsync`, `XStoreDownloadAndInstallPackageUpdatesResult`, `XStoreDownloadAndInstallPackagesAsync`, `XStoreDownloadAndInstallPackagesResultCount`, `XStoreDownloadAndInstallPackagesResult`, `XStoreQueryPackageIdentifier`, `XStoreShowAssociatedProductsUIAsync`, `XStoreShowAssociatedProductsUIResult`, `XStoreQueryAssociatedProductsForStoreIdAsync`, `XStoreQueryAssociatedProductsForStoreIdResult`, `XStoreQueryPackageUpdatesAsync`, `XStoreQueryPackageUpdatesResultCount`, `XStoreQueryPackageUpdatesResult`, `XStoreShowGiftingUIAsync`, `XStoreShowGiftingUIResult`
 
 </details>
 
@@ -365,39 +347,15 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XGameSave: 17 not implemented</summary>
+<details><summary>XPackage: 1 not implemented</summary>
 
-`PFXGameSaveInitializeConfig`, `PFXGameSaveFreeConfig`, `PFXGameSaveFilesGetFolderWithUiAsync`, `PFXGameSaveFilesGetFolderWithUiResult`, `PFXGameSaveFilesGetRemainingQuota`, `PFXGameSaveSetUiCallbacks`, `PFXGameSaveProgressUiGetProgress`, `PFXGameSaveSetProgressUiResponse`, `PFXGameSaveSetSyncFailedUiResponse`, `PFXGameSaveSetActiveDeviceContentionUiResponse`, `PFXGameSaveSetConflictUiResponse`, `PFXGameSaveSetOutOfStorageUiResponse`, `PFXGameSaveFilesUploadWithUiAsync`, `PFXGameSaveFilesUploadWithUiResult`, `PFXGameSaveFilesSetSaveDescriptionAsync`, `PFXGameSaveFilesSetSaveDescriptionResult`, `PFXGameSaveSetActiveDeviceChangedCallback`
-
-</details>
-
-<details><summary>XUserDevice: 2 not implemented</summary>
-
-`XUserFindControllerForUserWithUiAsync`, `XUserFindControllerForUserWithUiResult`
+`XPackageGetIdentifier`
 
 </details>
 
-<details><summary>XGameActivation: 1 not implemented</summary>
+<details><summary>XGameUi: 2 not implemented</summary>
 
-`XGameActivationAcceptPendingInvite`
-
-</details>
-
-<details><summary>XPackage: 10 not implemented</summary>
-
-`XPackageInstallChunksAsync`, `XPackageInstallChunksResult`, `XPackageUninstallChunks`, `XPackageGetIdentifier`, `XPackageGetWriteStats`, `XPackageUninstallUWPInstance`, `XPackageUninstallPackage`, `XPackageMountWithUiAsync`, `XPackageMountWithUiResult`, `XPackageGetPackageKind`
-
-</details>
-
-<details><summary>XGameUi: 17 not implemented</summary>
-
-`XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`, `XGameUiTextEntryOpen`, `XGameUiTextEntryClose`, `XGameUiTextEntryGetState`, `XGameUiTextEntryGetExtents`, `XGameUiTextEntryUpdatePositionHint`, `XGameUiTextEntryUpdateVisibility`, `XGameUiSetUiCallbacks`, `XGameUiSetMessageDialogUiResponse`, `XGameUiSetPlayerPickerUiResponse`, `XGameUiSetTextEntryUiResponse`, `XGameUiSetPlayerProfileCardUiResponse`, `XGameUiSetSendGameInviteUiResponse`, `XGameUiSetAchievementsUiResponse`, `XGameUiSetMultiplayerActivityGameInviteUiResponse`, `XGameUiSetErrorDialogUiResponse`
-
-</details>
-
-<details><summary>XPersistentLocalStorage: 1 not implemented</summary>
-
-`XPersistentLocalStorageMountForPackage`
+`XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`
 
 </details>
 
