@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Built by the release workflow: wix build installer.wxs -arch x64 -d Version=1.2.3 -d Source=<folder with the files> -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="XValkyrie" Manufacturer="Sammwy" Version="$(Version)" Scope="perMachine"
+           UpgradeCode="6f0c1a52-3c1e-4f6b-9a57-58d6c2a1e7b4">
+    <SummaryInformation Description="Runs Xbox One and Xbox Series X|S software on Windows" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of XValkyrie is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="XValkyrie" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="Program" Directory="INSTALLFOLDER">
+      <Component>
+        <File Id="Launcher" Source="$(Source)\xvalkyrie.exe" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Source="$(Source)\xvboot.exe" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Source="$(Source)\LICENSE" Name="LICENSE.txt" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Source="$(Source)\THIRD-PARTY.md" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="MenuShortcut">
+        <Shortcut Name="XValkyrie" Target="[INSTALLFOLDER]xvalkyrie.exe" WorkingDirectory="INSTALLFOLDER"
+                  Description="Xbox One and Xbox Series X|S software on Windows" />
+        <RegistryValue Root="HKCU" Key="Software\XValkyrie" Name="MenuShortcut" Type="integer" Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="XValkyrie">
+      <ComponentGroupRef Id="Program" />
+      <ComponentRef Id="MenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
