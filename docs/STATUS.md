@@ -318,8 +318,8 @@ implementation says so in the log when a title calls it, and fails.
 | XStore | 61 | 78 |
 | XAppBroadcast | 14 | 16 |
 | XLauncher | 3 | 3 |
-| XNetworking | 8 | 18 |
-| XAccessibility | 18 | 19 |
+| XNetworking | 16 | 18 |
+| XAccessibility | 19 | 19 |
 | XGameSave | 30 | 47 |
 | XUserDevice | 6 | 8 |
 | XGameActivation | 2 | 3 |
@@ -331,7 +331,7 @@ implementation says so in the log when a title calls it, and fails.
 | XPackage | 25 | 35 |
 | XSystemAnalytics | 1 | 1 |
 | XGameEvent | 1 | 1 |
-| XGameUi | 19 | 42 |
+| XGameUi | 25 | 42 |
 | XSystem | 6 | 6 |
 | XPersistentLocalStorage | 5 | 6 |
 
@@ -371,15 +371,9 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XNetworking: 10 not implemented</summary>
+<details><summary>XNetworking: 2 not implemented</summary>
 
-`XNetworkingQuerySecurityInformationForUrlAsync`, `XNetworkingQuerySecurityInformationForUrlAsyncResultSize`, `XNetworkingQuerySecurityInformationForUrlAsyncResult`, `XNetworkingQuerySecurityInformationForUrlUtf16Async`, `XNetworkingQuerySecurityInformationForUrlUtf16AsyncResultSize`, `XNetworkingQuerySecurityInformationForUrlUtf16AsyncResult`, `XNetworkingVerifyServerCertificate`, `XNetworkingQueryConfigurationSetting`, `XNetworkingSetConfigurationSetting`, `XNetworkingQueryStatistics`
-
-</details>
-
-<details><summary>XAccessibility: 1 not implemented</summary>
-
-`XClosedCaptionGetProperties`
+`XNetworkingQueryConfigurationSetting`, `XNetworkingSetConfigurationSetting`
 
 </details>
 
@@ -413,9 +407,9 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XGameUi: 23 not implemented</summary>
+<details><summary>XGameUi: 17 not implemented</summary>
 
-`XGameUiShowWebAuthenticationAsync`, `XGameUiShowWebAuthenticationResultSize`, `XGameUiShowWebAuthenticationResult`, `XGameUiShowWebAuthenticationWithOptionsAsync`, `XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`, `XGameUiTextEntryOpen`, `XGameUiTextEntryClose`, `XGameUiTextEntryGetState`, `XGameUiTextEntryGetExtents`, `XGameUiTextEntryUpdatePositionHint`, `XGameUiTextEntryUpdateVisibility`, `XGameUiShowStateShareAsync`, `XGameUiShowStateShareResult`, `XGameUiSetUiCallbacks`, `XGameUiSetMessageDialogUiResponse`, `XGameUiSetPlayerPickerUiResponse`, `XGameUiSetTextEntryUiResponse`, `XGameUiSetPlayerProfileCardUiResponse`, `XGameUiSetSendGameInviteUiResponse`, `XGameUiSetAchievementsUiResponse`, `XGameUiSetMultiplayerActivityGameInviteUiResponse`, `XGameUiSetErrorDialogUiResponse`
+`XGameUiShowManageSpaceAsync`, `XGameUiShowManageSpaceResult`, `XGameUiTextEntryOpen`, `XGameUiTextEntryClose`, `XGameUiTextEntryGetState`, `XGameUiTextEntryGetExtents`, `XGameUiTextEntryUpdatePositionHint`, `XGameUiTextEntryUpdateVisibility`, `XGameUiSetUiCallbacks`, `XGameUiSetMessageDialogUiResponse`, `XGameUiSetPlayerPickerUiResponse`, `XGameUiSetTextEntryUiResponse`, `XGameUiSetPlayerProfileCardUiResponse`, `XGameUiSetSendGameInviteUiResponse`, `XGameUiSetAchievementsUiResponse`, `XGameUiSetMultiplayerActivityGameInviteUiResponse`, `XGameUiSetErrorDialogUiResponse`
 
 </details>
 
