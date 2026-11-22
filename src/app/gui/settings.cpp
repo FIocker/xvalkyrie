@@ -408,7 +408,7 @@ void Settings::about(const Fonts &fonts, const Host &host) {
     ImGui::TextDisabled("%s", version);
     ImGui::Dummy({0, 6});
     ImGui::TextWrapped("Experimental Xbox One and Xbox Series X|S compatibility layer.");
-    note(fonts, "Not affiliated with or endorsed by Microsoft. MIT license.");
+    note(fonts, "Not affiliated with or endorsed by Microsoft. GPL-3.0 license.");
     section(fonts, "Updates");
     const auto updates = host.updates();
     ImGui::BeginDisabled(updates.checking || updates.installing);

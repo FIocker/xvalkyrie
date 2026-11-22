@@ -7,7 +7,7 @@
 **Xbox One and Xbox Series X|S software on Windows, by translation.**
 
 [![build](https://github.com/sammwyy/xvalkyrie/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xvalkyrie/actions/workflows/build.yml)
-[![license](https://img.shields.io/badge/license-MIT-ec3630.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-GPL--3.0-ec3630.svg)](LICENSE)
 [![language](https://img.shields.io/badge/C%2B%2B-20-ec3630.svg)](CMakeLists.txt)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-ec3630.svg)](#building)
 
@@ -174,4 +174,9 @@ public source code and the observed behaviour of software its authors own.
 
 ## License
 
-[MIT](LICENSE). Third-party components are listed in [THIRD-PARTY.md](THIRD-PARTY.md).
+Copyright (C) 2026 Sammwy.
+
+XValkyrie is free software under the [GNU General Public License, version 3](LICENSE): you may
+use, change and share it, and what you build from it has to stay under the same license and
+keep its notices. It comes with no warranty. Third-party components keep their own licenses,
+listed in [THIRD-PARTY.md](THIRD-PARTY.md).
