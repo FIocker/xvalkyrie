@@ -418,16 +418,49 @@ LSTATUS WINAPI reg_close_key(HKEY key) {
     return key == console_key ? ERROR_SUCCESS : RegCloseKey(key);
 }
 // COM classes of the host's: which one a title asked for and did not get
+// The console's device enumerator has an interface the host's lacks
+// ({8B557ADC-555E-47A0-B223-43477E481DAD}). A title calls its method 8 with two counters
+// and takes the larger for the channels of its output: stereo here. The other methods are
+// not known.
+struct ConsoleAudioInfo {
+    void **vtable;
+    static HRESULT STDMETHODCALLTYPE query(ConsoleAudioInfo *self, const GUID *, void **object) {
+        *object = self;
+        return S_OK;
+    }
+    static ULONG STDMETHODCALLTYPE reference(ConsoleAudioInfo *) { return 1; }
+    static HRESULT STDMETHODCALLTYPE unknown(ConsoleAudioInfo *) { return E_NOTIMPL; }
+    static HRESULT STDMETHODCALLTYPE channels(ConsoleAudioInfo *, UINT *first, UINT *second) {
+        *first = *second = 2;
+        return S_OK;
+    }
+};
+constexpr GUID console_audio_info{
+    0x8b557adc, 0x555e, 0x47a0, {0xb2, 0x23, 0x43, 0x47, 0x7e, 0x48, 0x1d, 0xad}};
 HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD context,
                                   const GUID *iid, void **object) {
+    if (*iid == console_audio_info && object) {
+        static void *vtable[16];
+        static ConsoleAudioInfo info{[] {
+            for (auto &slot : vtable)
+                slot = reinterpret_cast<void *>(&ConsoleAudioInfo::unknown);
+            vtable[0] = reinterpret_cast<void *>(&ConsoleAudioInfo::query);
+            vtable[1] = vtable[2] = reinterpret_cast<void *>(&ConsoleAudioInfo::reference);
+            vtable[8] = reinterpret_cast<void *>(&ConsoleAudioInfo::channels);
+            return vtable;
+        }()};
+        *object = &info;
+        return S_OK;
+    }
     auto result = CoCreateInstance(*class_id, outer, context, *iid, object);
     // a console title's threads have COM without asking for it
     if (result == CO_E_NOTINITIALIZED && SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
         result = CoCreateInstance(*class_id, outer, context, *iid, object);
     if (FAILED(result) || std::getenv("XV_COM_TRACE")) {
-        wchar_t text[64] = L"";
+        wchar_t text[64] = L"", wanted[64] = L"";
         StringFromGUID2(*class_id, text, 64);
-        std::fprintf(stderr, "[Runtime] CoCreateInstance(%ls): 0x%08lx\n", text,
+        StringFromGUID2(*iid, wanted, 64);
+        std::fprintf(stderr, "[Runtime] CoCreateInstance(%ls) as %ls: 0x%08lx\n", text, wanted,
                      static_cast<unsigned long>(result));
         std::fflush(stderr);
     }
