@@ -535,7 +535,7 @@ void report_unwound_stack(const CONTEXT *fault) {
     }
     std::fprintf(stderr, "\n");
 }
-int report_fault(EXCEPTION_POINTERS *info) {
+int report_fault(EXCEPTION_POINTERS *info, bool last = true) {
     const auto *record = info->ExceptionRecord;
     const auto address = reinterpret_cast<std::uint64_t>(record->ExceptionAddress);
     if (is_guest(record->ExceptionAddress))
@@ -577,6 +577,8 @@ int report_fault(EXCEPTION_POINTERS *info) {
     report_unwound_stack(info->ContextRecord);
     report_recent_calls();
     std::fflush(nullptr);
+    if (!last) // one the title may yet handle
+        return EXCEPTION_CONTINUE_SEARCH;
     // Unwinding a guest in an unknown state can block or fault again.
     TerminateProcess(GetCurrentProcess(), exit_guest_fault);
     return EXCEPTION_EXECUTE_HANDLER;
@@ -611,7 +613,7 @@ LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
         static std::atomic<int> reported{0};
         if (reported++ < 8) {
             std::fprintf(stderr, "[Runtime] first chance, thread %lu:\n", GetCurrentThreadId());
-            report_fault(info);
+            report_fault(info, false);
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
