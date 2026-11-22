@@ -248,6 +248,27 @@ HRESULT STDMETHODCALLTYPE create_buffer(void *self, const D3D11_BUFFER_DESC *des
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
     return result;
 }
+// CreateTexture3D (6), likewise
+HRESULT STDMETHODCALLTYPE create_texture3d(void *self, const D3D11_TEXTURE3D_DESC *desc,
+                                           const D3D11_SUBRESOURCE_DATA *data,
+                                           ID3D11Texture3D **texture) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    host.MiscFlags &= 0xffff;
+    ID3D11Texture3D *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateTexture3D(&host, data, texture ? &created : nullptr);
+    if (FAILED(result))
+        std::fprintf(stderr,
+                     "[Runtime] CreateTexture3D %ux%ux%u mips %u format %u bind 0x%x: %lx\n",
+                     desc->Width, desc->Height, desc->Depth, desc->MipLevels,
+                     static_cast<unsigned>(desc->Format), desc->BindFlags,
+                     static_cast<unsigned long>(result));
+    else if (texture)
+        *texture = static_cast<ID3D11Texture3D *>(wrap(created, Kind::texture3d));
+    return result;
+}
 // CreateDeferredContext (27) and CreateDeferredContextX (68): the console's flags say how the
 // title means to use the context's command lists (long lived, as bundles, with objects it
 // keeps alive itself). The host takes no flags at all and needs none of that told.
@@ -285,6 +306,14 @@ HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource
             desc ? desc->Buffer.FirstElement : 0u, desc ? desc->Buffer.NumElements : 0u,
             desc ? desc->Texture2DArray.FirstArraySlice : 0u,
             desc ? desc->Texture2DArray.ArraySize : 0u, static_cast<unsigned long>(result));
+        if (ID3D11Texture2D *texture = nullptr; host && SUCCEEDED(host->QueryInterface(&texture))) {
+            D3D11_TEXTURE2D_DESC of;
+            texture->GetDesc(&of);
+            texture->Release();
+            std::fprintf(stderr, "[Runtime] the texture: %ux%u format %u samples %u bind 0x%x\n",
+                         of.Width, of.Height, static_cast<unsigned>(of.Format), of.SampleDesc.Count,
+                         of.BindFlags);
+        }
         std::fflush(stderr);
     } else if (view) {
         *view = static_cast<ID3D11ShaderResourceView *>(wrap(created, Kind::view));
@@ -658,7 +687,7 @@ Layout device() {
     result.vtable[3] = custom(&create_buffer);
     set(4, {created(3, Kind::texture1d)});
     result.vtable[5] = custom(&create_texture2d);
-    set(6, {created(3, Kind::texture3d)});
+    result.vtable[6] = custom(&create_texture3d);
     for (std::size_t slot = 7; slot <= 10; ++slot) // views of a resource
         set(slot, {in(1), created(3, Kind::view)});
     result.vtable[7] = custom(&create_shader_resource_view);
