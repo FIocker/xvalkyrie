@@ -105,12 +105,23 @@ class Desktop {
                     std::filesystem::path(std::u8string(text.begin(), text.end()));
             }
         });
-        check_for_updates(false);
+        check_for_updates();
         settings_host_.add_folder = [this] { pick_folder(Dialog::add_library); };
         settings_host_.change_folder = [this](std::size_t index) {
             pick_folder(Dialog::replace_library, index);
         };
         settings_host_.rescan = [this] { refresh_library(); };
+        settings_host_.check_updates = [this] { check_for_updates(); };
+        settings_host_.install_update = [this] {
+            if (update_ && !busy())
+                updating_ = std::async(std::launch::async,
+                                       [update = *update_] { install_update(update); });
+        };
+        settings_host_.updates = [this] {
+            return ui::Settings::Updates{update_check_.valid(), updating_.valid(), busy(),
+                                         update_ ? update_->version : std::string{},
+                                         update_message_};
+        };
         settings_host_.libraries_saved = [this](bool rescan) { save_libraries(rescan); };
         settings_host_.input_saved = hooks.input_changed;
         settings_host_.graphics_saved = hooks.graphics_changed;
@@ -211,8 +222,7 @@ class Desktop {
 
   private:
     bool busy() const { return guest_ || dialog_.valid() || loading_.valid(); }
-    void check_for_updates(bool asked) {
-        update_asked_ = asked;
+    void check_for_updates() {
         update_check_ = std::async(std::launch::async, [] { return find_update(release); });
     }
     enum class Dialog { file, folder, add_library, replace_library };
@@ -302,9 +312,7 @@ class Desktop {
             update_check_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             auto check = update_check_.get();
             update_ = std::move(check.update);
-            // a check nobody asked for only speaks up when there is an update
-            if (update_asked_)
-                notice_ = update_ ? update_->version + " is available" : check.message;
+            update_message_ = update_ ? update_->version + " is available" : check.message;
         }
         if (updating_.valid() &&
             updating_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -313,7 +321,7 @@ class Desktop {
                 restart();
                 glfwSetWindowShouldClose(window_, true);
             } catch (const std::exception &e) {
-                notice_ = std::string("Not updated: ") + e.what();
+                update_message_ = std::string("Not updated: ") + e.what();
             }
         }
         if (discovery_.valid() &&
@@ -402,9 +410,6 @@ class Desktop {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem(update_check_.valid() ? "Checking for Updates..." : "Check for Updates",
-                                nullptr, false, !update_check_.valid() && !updating_.valid()))
-                check_for_updates(true);
             if (ImGui::MenuItem("About XValkyrie"))
                 settings_.show(ui::Settings::Page::about);
             ImGui::EndMenu();
@@ -440,29 +445,9 @@ class Desktop {
             ImGui::Text("%s  -  %s", name_.c_str(), state());
         else
             ImGui::TextUnformatted(state());
-        // on the right, the version, and before it the update if there is one
-        const auto right = ImGui::GetWindowWidth() - ImGui::GetStyle().FramePadding.x -
-                           ImGui::CalcTextSize(version).x;
-        if (updating_.valid()) {
-            const auto text = "Updating to " + update_->version + "...";
-            ImGui::SameLine(right - ImGui::CalcTextSize(text.c_str()).x - 16);
-            ImGui::TextUnformatted(text.c_str());
-        } else if (update_) {
-            const auto text = "Update to " + update_->version;
-            ImGui::SameLine(right - ImGui::CalcTextSize(text.c_str()).x - 16 -
-                            2 * ImGui::GetStyle().FramePadding.x);
-            ImGui::PushStyleColor(ImGuiCol_Button, ui::color::scarlet);
-            ImGui::BeginDisabled(busy());
-            if (ImGui::SmallButton(text.c_str()))
-                updating_ = std::async(std::launch::async,
-                                       [update = *update_] { install_update(update); });
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", busy() ? "Close the running title first"
-                                               : "Download the release and replace this copy");
-            ImGui::PopStyleColor();
-        }
-        ImGui::SameLine(right);
+        // on the right, the version
+        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().FramePadding.x -
+                        ImGui::CalcTextSize(version).x);
         ImGui::TextDisabled("%s", version);
         ImGui::End();
         ImGui::PopStyleColor();
@@ -1032,7 +1017,7 @@ class Desktop {
     bool ran_ = false; // the title opened ran and has ended: its log is what is on screen
     std::future<LaunchResult> loading_;
     std::future<UpdateCheck> update_check_;
-    bool update_asked_ = false; // through the menu, rather than when the window opened
+    std::string update_message_; // for the about page
     std::optional<Update> update_;
     std::future<void> updating_;
     std::filesystem::path path_; // what loading_ is reading

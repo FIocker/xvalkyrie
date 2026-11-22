@@ -98,7 +98,7 @@ void Settings::draw(const Fonts &fonts, const Host &host, Library library,
             libraries(fonts, host, library);
             break;
         case Page::about:
-            about(fonts);
+            about(fonts, host);
             break;
         }
         ImGui::EndChild();
@@ -400,7 +400,7 @@ void Settings::libraries(const Fonts &fonts, const Host &host, Library library) 
     }
 }
 
-void Settings::about(const Fonts &fonts) {
+void Settings::about(const Fonts &fonts, const Host &host) {
     ImGui::Dummy({0, 6});
     const auto extent = wordmark_size(fonts, 52);
     wordmark(ImGui::GetWindowDrawList(), fonts, ImGui::GetCursorScreenPos(), 52);
@@ -409,6 +409,24 @@ void Settings::about(const Fonts &fonts) {
     ImGui::Dummy({0, 6});
     ImGui::TextWrapped("Experimental Xbox One and Xbox Series X|S compatibility layer.");
     note(fonts, "Not affiliated with or endorsed by Microsoft. MIT license.");
+    section(fonts, "Updates");
+    const auto updates = host.updates();
+    ImGui::BeginDisabled(updates.checking || updates.installing);
+    if (ImGui::Button(updates.checking ? "Checking..." : "Check for Updates"))
+        host.check_updates();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(updates.available.empty() || updates.installing || updates.blocked);
+    const auto label = updates.installing          ? "Updating..."
+                       : updates.available.empty() ? std::string("Update")
+                                                   : "Update to " + updates.available;
+    if (primary_button(label.c_str()))
+        host.install_update();
+    ImGui::EndDisabled();
+    if (!updates.available.empty() && updates.blocked)
+        note(fonts, "Close the running title to update.");
+    else if (!updates.message.empty())
+        note(fonts, updates.message.c_str());
     section(fonts, "Files");
     note(fonts, "Configuration");
     path_field("##configuration", config_file());

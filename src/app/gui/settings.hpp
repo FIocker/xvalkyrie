@@ -14,6 +14,12 @@ class Settings {
     enum class Page { input, graphics, console, libraries, about };
     // What the settings need done by whoever owns the window. All of them are called
     // from draw().
+    // what the about page shows of updates
+    struct Updates {
+        bool checking = false, installing = false, blocked = false; // blocked: a title runs
+        std::string available;                                      // the later release, if any
+        std::string message;                                        // what the last check or update said
+    };
     struct Host {
         std::function<void()> add_folder;                 // ask for a folder to add
         std::function<void(std::size_t)> change_folder;   // ask for one to put in its place
@@ -22,6 +28,8 @@ class Settings {
         std::function<void()> input_saved;                // input::settings() was; may throw
         std::function<void()> graphics_saved;
         std::function<void()> console_saved;
+        std::function<void()> check_updates, install_update;
+        std::function<Updates()> updates;
     };
     // what the library page shows about the library itself
     struct Library {
@@ -50,7 +58,7 @@ class Settings {
     void graphics(const Fonts &fonts, const Host &host);
     void console(const Fonts &fonts, const Host &host, ConsoleSettings &settings);
     void libraries(const Fonts &fonts, const Host &host, Library library);
-    void about(const Fonts &fonts);
+    void about(const Fonts &fonts, const Host &host);
 
     bool open_ = false, raise_ = false;
     Page page_ = Page::input;
