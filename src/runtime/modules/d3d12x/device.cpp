@@ -1927,8 +1927,20 @@ std::array<Slot, 48> queue_vtable_of(std::index_sequence<Index...>) {
     return vtable;
 }
 std::array<Slot, 48> queue_vtable = queue_vtable_of(std::make_index_sequence<48>{});
+// Later kits (a title that asks for version 0x20004 was seen) have two more methods before
+// Signal: it is at 16 there and PresentX at 32. Which two is not known; they lie among the
+// event markers, which do nothing here, so the slots from 11 to 15 are all taken for those.
+std::array<Slot, 48> later_queue_vtable = [] {
+    auto vtable = queue_vtable;
+    for (std::size_t slot = 47; slot >= 16; --slot)
+        vtable[slot] = queue_vtable[slot - 2];
+    for (std::size_t slot = 11; slot <= 15; ++slot)
+        vtable[slot] = reinterpret_cast<Slot>(&ignored_queue_method);
+    return vtable;
+}();
+std::atomic<bool> later_queue{false};
 void *make_queue_proxy(ID3D12CommandQueue *host) {
-    return new QueueProxy{queue_vtable.data(), host, 1};
+    return new QueueProxy{later_queue ? later_queue_vtable.data() : queue_vtable.data(), host, 1};
 }
 // slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
 HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
@@ -1954,6 +1966,8 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
 // buffer is kept from shaders.
 void host_rules(const D3D12_HEAP_PROPERTIES *heap, D3D12_RESOURCE_FLAGS &flags,
                 D3D12_RESOURCE_STATES &state) {
+    // 0x100000, which later kits give a display target and the host has no state for
+    state &= ~static_cast<D3D12_RESOURCE_STATES>(0x100000);
     if (heap && heap->Type == D3D12_HEAP_TYPE_UPLOAD)
         state = D3D12_RESOURCE_STATE_GENERIC_READ;
     else if (heap && heap->Type == D3D12_HEAP_TYPE_READBACK)
@@ -2221,6 +2235,7 @@ D3D12_RESOURCE_STATES host_state(D3D12_RESOURCE_STATES state) {
     if (state == static_cast<D3D12_RESOURCE_STATES>(0x8c3))
         return D3D12_RESOURCE_STATE_GENERIC_READ;
     constexpr auto structure = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+    state &= ~static_cast<D3D12_RESOURCE_STATES>(0x100000);
     return state & structure && state != structure ? state & ~structure : state;
 }
 // The state the title left each render target in, by its last transition: the console shows
@@ -3762,10 +3777,16 @@ std::array<Slot, sizeof...(Index)> later_device_methods(std::index_sequence<Inde
 }
 
 // D3D12XBOX_CREATE_DEVICE_PARAMETERS sizes the console's rings, which mean nothing here
-HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **device) {
+HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, void **device) {
     if (!device)
         return E_POINTER;
     *device = nullptr;
+    // the first of the parameters is the version of the kit the title was built with
+    if (parameters && console == Target::scarlett) {
+        later_queue = *parameters >= 0x20004;
+        std::fprintf(stderr, "[Runtime] the title asks for Direct3D 12 of kit version 0x%x\n",
+                     *parameters);
+    }
     configure_lists();
     using Create = HRESULT(WINAPI *)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
     static const auto create = host_d3d12<Create>("D3D12CreateDevice");
