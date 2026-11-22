@@ -558,6 +558,12 @@ int report_fault(EXCEPTION_POINTERS *info) {
             std::filesystem::path(name).filename().c_str(),
             static_cast<unsigned long long>(address - reinterpret_cast<std::uint64_t>(host)));
     }
+    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2)
+        std::fprintf(stderr, "[Runtime] %s address 0x%llx\n",
+                     record->ExceptionInformation[0] == 1   ? "writing"
+                     : record->ExceptionInformation[0] == 8 ? "running"
+                                                            : "reading",
+                     static_cast<unsigned long long>(record->ExceptionInformation[1]));
     report_cxx_type(record);
     report_guest_stack(info->ContextRecord);
     report_unwound_stack(info->ContextRecord);
