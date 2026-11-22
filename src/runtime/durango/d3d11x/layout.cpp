@@ -239,6 +239,17 @@ HRESULT STDMETHODCALLTYPE create_buffer(void *self, const D3D11_BUFFER_DESC *des
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
     return result;
 }
+// CreateDeferredContext (27) and CreateDeferredContextX (68): the console's flags say how the
+// title means to use the context's command lists (long lived, as bundles, with objects it
+// keeps alive itself). The host takes no flags at all and needs none of that told.
+HRESULT STDMETHODCALLTYPE create_deferred_context(void *self, UINT, void **context) {
+    ID3D11DeviceContext *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateDeferredContext(0, context ? &created : nullptr);
+    if (SUCCEEDED(result) && context)
+        *context = wrap(created, Kind::context);
+    return result;
+}
 HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource,
                                                       const D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
                                                       ID3D11ShaderResourceView **view) {
@@ -651,7 +662,7 @@ Layout device() {
     set(19, {created(1, Kind::state)});             // class linkage
     for (std::size_t slot = 20; slot <= 26; ++slot) // states, queries, counters
         set(slot, {created(2, Kind::state)});
-    set(27, {created(2, Kind::context)});
+    result.vtable[27] = custom(&create_deferred_context);
     set(40, {out(1, Kind::context)});
     set(43, {out(1, Kind::context)});
     set(44, {created(2, Kind::context)});
@@ -680,9 +691,9 @@ Layout device() {
     result.vtable[65] = custom(&create_placement_texture3d);
     result.vtable[66] = custom(&get_timestamps);
     result.vtable[67] = custom(&create_sampler_state_x);
-    result.vtable[68] = forward(27, {created(2, Kind::context)}); // CreateDeferredContextX
-    result.vtable[70] = forward(21, {created(2, Kind::state)});   // CreateDepthStencilStateX
-    result.vtable[71] = custom(&create_renderable_texture2d);     // ...RenderableTexture2D
+    result.vtable[68] = custom(&create_deferred_context);
+    result.vtable[70] = forward(21, {created(2, Kind::state)}); // CreateDepthStencilStateX
+    result.vtable[71] = custom(&create_renderable_texture2d);   // ...RenderableTexture2D
     result.vtable[72] = custom(&get_driver_statistics);
     result.vtable[73] = custom(&create_compute_context);
     return result;
