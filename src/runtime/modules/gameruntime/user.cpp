@@ -1,8 +1,11 @@
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/gameinput.hpp"
 #include "runtime/modules/gameruntime/gameruntime.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <memory>
 #include <mmdeviceapi.h>
 #include <objbase.h>
 #include <thread>
@@ -79,7 +82,9 @@ HRESULT WINAPI prompt_handlers(void *, Queue *, void *, void *) { return S_OK; }
 HRESULT WINAPI prompt_operation(void *, void *, std::uint32_t) { return E_INVALIDARG; }
 // APP_LOCAL_DEVICE_ID (32 bytes) of the GameInput gamepad
 HRESULT WINAPI find_controller_async(void *, User *, XAsyncBlock *block) {
-    return finish(block, controller_identity, S_OK, std::vector<std::uint8_t>(32));
+    return finish(
+        block, controller_identity, S_OK,
+        std::vector<std::uint8_t>(std::begin(gamepad_device_id), std::end(gamepad_device_id)));
 }
 HRESULT WINAPI find_controller_result(void *, XAsyncBlock *block, void *device) {
     return result(block, controller_identity, 32, device, nullptr);
@@ -183,6 +188,38 @@ HRESULT WINAPI register_event(void *, Queue *, void *, void *, std::uint64_t *to
     return S_OK;
 }
 bool WINAPI unregister_event(void *, std::uint64_t, bool) { return true; }
+// XUserDeviceAssociationChange
+struct Association {
+    std::uint8_t device_id[32];
+    std::uint64_t old_user, new_user;
+};
+struct AssociationEvent {
+    void *context;
+    void(CALLBACK *callback)(void *context, const Association *change);
+};
+void CALLBACK association_replayed(void *context, bool canceled) {
+    const std::unique_ptr<AssociationEvent> event{static_cast<AssociationEvent *>(context)};
+    if (!canceled) {
+        Association change{{}, 0, local_id};
+        std::memcpy(change.device_id, gamepad_device_id, sizeof gamepad_device_id);
+        event->callback(event->context, &change);
+    }
+    gamepad_associated();
+}
+// the one association there is, the gamepad with the user, is replayed on registration
+HRESULT WINAPI register_association(void *, Queue *queue, void *context,
+                                    void(CALLBACK *callback)(void *, const Association *),
+                                    std::uint64_t *token) {
+    if (!token)
+        return E_POINTER;
+    *token = ++tokens;
+    if (callback) {
+        auto *const event = new AssociationEvent{context, callback};
+        if (FAILED(submit(queue, Port::completion, 0, event, &association_replayed)))
+            delete event;
+    }
+    return S_OK;
+}
 HRESULT WINAPI sign_out_deferral(void *, void **deferral) {
     if (!deferral)
         return E_POINTER;
@@ -278,7 +315,7 @@ void install_user() {
     implement("XUserResolveIssueWithUiUtf16Result", &resolve_issue_result);
     implement("XUserRegisterForChangeEvent", &register_event);
     implement("XUserUnregisterForChangeEvent", &unregister_event);
-    implement("XUserRegisterForDeviceAssociationChanged", &register_event);
+    implement("XUserRegisterForDeviceAssociationChanged", &register_association);
     implement("XUserGetDefaultAudioEndpointUtf16", &default_audio_endpoint);
     // the default audio endpoint never changes here
     implement("XUserRegisterForDefaultAudioEndpointUtf16Changed", &register_event);

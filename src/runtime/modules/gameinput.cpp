@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include <thread>
 #include <windows.h>
 
 // GameInput.dll: how a GDK title reads its input. There is one device, a gamepad that is
@@ -17,7 +18,8 @@ namespace {
 using Slot = void *;
 constexpr std::uint32_t kind_gamepad = 0x00040000, kind_controller = 0x0000000e,
                         kind_ui_navigation = 0x01000000;
-constexpr HRESULT reading_not_found = static_cast<HRESULT>(0x838A0003);
+constexpr HRESULT reading_not_found = static_cast<HRESULT>(0x838A0003),
+                  device_not_found = static_cast<HRESULT>(0x838A0002);
 // connected, input and output enabled, synchronized
 constexpr std::uint32_t device_connected = 1 | 2 | 4 | 0x40;
 
@@ -76,8 +78,8 @@ DeviceInfo device_info{sizeof(DeviceInfo),
                        5,
                        {1},
                        {1},
-                       {0x58, 0x53, 1},
-                       {0x58, 0x53, 1},
+                       {},
+                       {},
                        1,
                        8,
                        kind_gamepad | kind_controller | kind_ui_navigation | 2 | 4 | 8,
@@ -152,14 +154,27 @@ std::atomic<std::uint64_t> tokens{0};
 using DeviceCallback = void CALLBACK(std::uint64_t token, void *context, Object *device,
                                      std::uint64_t timestamp, std::uint32_t status,
                                      std::uint32_t previous);
-// the one device is reported at once, and never again: it does not come or go
+HANDLE associated() {
+    static const HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    return event;
+}
+// The one device is reported once, and never again: it does not come or go. An asynchronous
+// enumeration reports it after its association with the user, as a title that registers for
+// both expects, or a second later if nobody asks for the association.
 HRESULT WINAPI register_device_callback(Object *, Object *, std::uint32_t kind, std::uint32_t,
-                                        std::uint32_t, void *context, DeviceCallback *callback,
-                                        std::uint64_t *token) {
+                                        std::uint32_t enumeration, void *context,
+                                        DeviceCallback *callback, std::uint64_t *token) {
     const auto id = ++tokens;
     if (token)
         *token = id;
-    if (callback && (kind & (kind_gamepad | kind_controller | kind_ui_navigation)))
+    if (!callback || !(kind & (kind_gamepad | kind_controller | kind_ui_navigation)))
+        return S_OK;
+    if (enumeration == 1)
+        std::thread([=] {
+            WaitForSingleObject(associated(), 1000);
+            callback(id, context, &device, now(), device_connected, 0);
+        }).detach();
+    else
         callback(id, context, &device, now(), device_connected, 0);
     return S_OK;
 }
@@ -171,9 +186,18 @@ HRESULT WINAPI register_other_callback(Object *, Object *, void *, void *, std::
 void WINAPI stop_callback(Object *, std::uint64_t) {}
 bool WINAPI unregister_callback(Object *, std::uint64_t, std::uint64_t) { return true; }
 void WINAPI set_focus_policy(Object *, std::uint32_t) {}
+HRESULT WINAPI find_device_from_id(Object *, const std::uint8_t *id, Object **out) {
+    if (!id || !out)
+        return E_POINTER;
+    const bool found = !std::memcmp(id, gamepad_device_id, sizeof gamepad_device_id);
+    *out = found ? &device : nullptr;
+    return found ? S_OK : device_not_found;
+}
 
 template <class F> Slot slot(F *function) { return reinterpret_cast<Slot>(function); }
 void build() {
+    std::memcpy(device_info.device_id, gamepad_device_id, sizeof gamepad_device_id);
+    std::memcpy(device_info.root_id, gamepad_device_id, sizeof gamepad_device_id);
     fill<device_name>(device_vtable, std::make_index_sequence<24>{});
     fill<reading_name>(reading_vtable, std::make_index_sequence<32>{});
     fill<input_name>(input_vtable, std::make_index_sequence<32>{});
@@ -204,6 +228,7 @@ void build() {
     input_vtable[10] = input_vtable[11] = slot(&register_other_callback);
     input_vtable[12] = slot(&stop_callback);
     input_vtable[13] = slot(&unregister_callback);
+    input_vtable[16] = slot(&find_device_from_id);
     input_vtable[21] = slot(&set_focus_policy);
 }
 HRESULT WINAPI game_input_create(Object **out) {
@@ -216,6 +241,7 @@ HRESULT WINAPI game_input_create(Object **out) {
 }
 } // namespace
 
+void gamepad_associated() { SetEvent(associated()); }
 void install_gameinput(Registry &registry) {
     registry.add("gameinput.dll", "GameInputCreate", reinterpret_cast<void *>(&game_input_create));
     registry.add("gameinput.dll", "#1", reinterpret_cast<void *>(&game_input_create));
