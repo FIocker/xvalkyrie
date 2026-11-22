@@ -41,7 +41,7 @@ through.
 - **Xbox One.** ERA titles (Direct3D 11.X, WinRT) reach their menus and scenes with a
   gamepad driven from the keyboard or XInput. Saved games, audio decoding and Xbox Live are
   stubs or absent.
-- **Xbox Series X|S.** 37 of the 40 public GDK samples that build for Series draw their
+- **Xbox Series X|S.** The 40 public GDK samples that build for Series all draw their
   picture. Retail titles start, create their device and present frames. Their shaders are
   translated from the GPU's machine code: of the 2004 shaders one retail title creates in its
   first four minutes, 1966 translate and compile. The picture of those titles is not right
