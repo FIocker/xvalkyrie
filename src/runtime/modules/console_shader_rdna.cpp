@@ -250,6 +250,8 @@ class Translator {
     Translator(Stage stage, const Shader &shader, Facts &facts)
         : stage_(stage), shader_(shader), facts_(facts) {}
 
+    bool needs_sm6() const { return needs_sm6_; }
+
     std::string run() {
         if (!read_root_signature(shader_.root_signature, parameters_))
             give_up("root signature");
@@ -481,6 +483,10 @@ class Translator {
             }
             if (starts(ins.name, "v_cmpx"))
                 exec_changes_ = true;
+            if (ins.format == F::sopk && ((ins.w0 >> 16) & 0x7f) >= 126 &&
+                (ins.name == "s_movk_i32" || ins.name == "s_cmovk_i32" ||
+                 ins.name == "s_addk_i32" || ins.name == "s_mulk_i32"))
+                sopk_writes_exec_ = true;
             if (ends(ins.name, "_b64") || ends(ins.name, "saveexec_b64"))
                 wave64_ = true;
             if (ins.format == F::ds && ins.name != "ds_swizzle_b32" && ins.name != "ds_nop")
@@ -1966,6 +1972,38 @@ class Translator {
         set_v(destination, input_channel(reg, channel));
     }
 
+    void emit_dpp8_move(const Ins &ins) {
+        if (stage_ != Stage::pixel || ins.name != "v_mov_b32" || (ins.w0 & 0x1ff) != 233)
+            give_up("an instruction that reads another lane");
+        if (exec_changes_ || sopk_writes_exec_ || blocks_.size() != 1 || blocks_[0].opens)
+            give_up("a DPP8 move with control flow or changes to EXEC");
+
+        std::array<std::uint32_t, 4> lanes{};
+        for (std::uint32_t lane = 0; lane < lanes.size(); ++lane) {
+            lanes[lane] = (ins.modifier >> (8 + 3 * lane)) & 7;
+            const auto next_quad = (ins.modifier >> (20 + 3 * lane)) & 7;
+            if (lanes[lane] >= 4 || next_quad != lanes[lane] + 4)
+                give_up("a DPP8 move without a repeated quad-local permutation");
+        }
+
+        needs_sm6_ = true;
+        const auto source = v(ins.modifier & 0xff);
+        const auto id = "x" + std::to_string(temporaries_++);
+        const auto local = id + "lane";
+        const auto input = id + "src";
+        line("uint " + local + " = WaveGetLaneIndex() & 3u;");
+        // Quad reads can see helper lanes. A normal DPP8 read of an inactive source yields zero.
+        line("uint " + input + " = IsHelperLane() ? 0u : " + source + ";");
+        for (std::uint32_t lane = 0; lane < lanes.size(); ++lane) {
+            const auto read = id + "q" + std::to_string(lane);
+            line("uint " + read + " = QuadReadLaneAt(" + input + ", " +
+                 std::to_string(lanes[lane]) + "u);");
+        }
+        set_v((ins.w0 >> 17) & 0xff, "(" + local + " < 2u ? (" + local + " == 0u ? " + id +
+                                         "q0 : " + id + "q1) : (" + local + " == 2u ? " + id +
+                                         "q2 : " + id + "q3))");
+    }
+
     // The instructions with one or two sources in one word. A second word may say which
     // byte or half of each source is meant, and which of the destination is written.
     // An instruction whose first source is another lane's register. A compute shader's
@@ -2011,7 +2049,11 @@ class Translator {
     }
     void emit_short(const Ins &ins) {
         if (ins.form == Ins::Form::lanes) {
-            emit_lanes(ins);
+            // a pixel shader's are moves within a quad; a compute shader's sum over its wave
+            if (stage_ == Stage::pixel)
+                emit_dpp8_move(ins);
+            else
+                emit_lanes(ins);
             return;
         }
         const auto destination = (ins.w0 >> 17) & 0xff, modifier = ins.modifier;
@@ -3942,12 +3984,15 @@ class Translator {
     bool exec_changes_ = false, wave64_ = false;
     bool sums_lanes_ = false; // a compute shader with instructions that read other lanes
     bool unlearned_ = false; // an instruction was left out for a descriptor of a kind not known yet
+    bool needs_sm6_ = false, sopk_writes_exec_ = false;
     bool fetched_ = false, exported_ = false, vertex_id_ = false, instance_id_ = false;
 };
 } // namespace
 
 std::optional<std::string> translate(Stage stage, const Shader &shader, std::string *why,
-                                     std::uint32_t *at) {
+                                     std::uint32_t *at, bool *needs_sm6) {
+    if (needs_sm6)
+        *needs_sm6 = false;
     if (stage != Stage::vertex && stage != Stage::pixel && stage != Stage::compute) {
         if (why)
             *why = "stage";
@@ -3959,7 +4004,11 @@ std::optional<std::string> translate(Stage stage, const Shader &shader, std::str
         Facts facts;
         for (int pass = 0; pass < 64; ++pass) {
             try {
-                return std::make_unique<Translator>(stage, shader, facts)->run();
+                const auto translator = std::make_unique<Translator>(stage, shader, facts);
+                auto source = translator->run();
+                if (needs_sm6)
+                    *needs_sm6 = translator->needs_sm6();
+                return source;
             } catch (const Retry &) {
             }
         }

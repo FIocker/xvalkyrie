@@ -1667,16 +1667,56 @@ void describe_shader(const char *stage, const D3D12_SHADER_BYTECODE &code) {
 }
 // A shader of the title's with only console GPU code is given to the host as the shader
 // made for it (see console_shader.hpp)
-bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code) {
-    const std::span<const std::uint8_t> container(
-        static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength);
+std::span<const std::uint8_t> shader_bytes(const D3D12_SHADER_BYTECODE &code) {
+    if (!code.pShaderBytecode)
+        return {};
+    return {static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength};
+}
+bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code,
+                   modules::HostShaderModel model = modules::HostShaderModel::sm5) {
+    const auto container = shader_bytes(code);
     if (!code.pShaderBytecode || !modules::console_only_shader(container))
         return false;
-    const auto made = modules::host_shader(stage, container);
+    const auto made = modules::host_shader(stage, container, model);
     if (made.empty())
         return false;
     code = {made.data(), made.size()};
     return true;
+}
+
+bool host_graphics_pair(ID3D12Device *device, D3D12_SHADER_BYTECODE &vs, D3D12_SHADER_BYTECODE &ps,
+                        bool allow_sm6) {
+    using modules::HostShaderModel;
+    using modules::ShaderStage;
+    if (allow_sm6 && vs.pShaderBytecode && ps.pShaderBytecode) {
+        auto pixel = ps;
+        if (host_bytecode(ShaderStage::pixel, pixel, HostShaderModel::automatic)) {
+            if (!modules::shader_has_dxil(shader_bytes(pixel))) {
+                ps = pixel;
+                host_bytecode(ShaderStage::vertex, vs);
+                return true;
+            }
+            // A graphics pipeline cannot mix DXBC and DXIL on all supported drivers.
+            D3D12_FEATURE_DATA_D3D12_OPTIONS1 options{};
+            D3D12_FEATURE_DATA_SHADER_MODEL model{D3D_SHADER_MODEL_6_6};
+            auto vertex = vs;
+            if (SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options,
+                                                      sizeof options)) &&
+                options.WaveOps &&
+                SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &model,
+                                                      sizeof model)) &&
+                model.HighestShaderModel >= D3D_SHADER_MODEL_6_6 &&
+                (modules::shader_has_dxil(shader_bytes(vertex)) ||
+                 host_bytecode(ShaderStage::vertex, vertex, HostShaderModel::sm6))) {
+                vs = vertex;
+                ps = pixel;
+                return true;
+            }
+        }
+    }
+    const bool vertex = host_bytecode(ShaderStage::vertex, vs);
+    const bool pixel = host_bytecode(ShaderStage::pixel, ps);
+    return vertex || pixel;
 }
 // A pipeline without a root signature has it in its shaders, and the shader made for the
 // host does not carry it. On the host a pipeline is bound to the root signature it was made
@@ -1842,9 +1882,11 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                               : host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
                                   ? modules::ShaderStage::geometry_lines
                                   : modules::ShaderStage::geometry_triangles;
-        const bool made = host_bytecode(modules::ShaderStage::vertex, host.VS) |
-                          host_bytecode(modules::ShaderStage::pixel, host.PS) |
-                          host_bytecode(geometry, host.GS);
+        const bool simple = desc->PrimitiveTopologyType != rectangle_type &&
+                            !host.GS.pShaderBytecode && !host.HS.pShaderBytecode &&
+                            !host.DS.pShaderBytecode;
+        const bool pair = host_graphics_pair(self, host.VS, host.PS, simple);
+        const bool made = host_bytecode(geometry, host.GS) || pair;
         if (made && !host.pRootSignature)
             host.pRootSignature = from_shader =
                 shader_root_signature(self, true, {desc->VS, desc->PS, desc->GS});
@@ -4000,6 +4042,8 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
     // the title's vertex, pixel and compute shaders, and whether any had to be made for the
     // host: such a pipeline needs a root signature of its own, as in create_graphics_pipeline
     D3D12_SHADER_BYTECODE shaders[3] = {};
+    std::size_t shader_at[3] = {};
+    bool simple_graphics = true;
     bool made = false;
     std::size_t signature_at = 0; // where in the stream the root signature's pointer is
     ID3D12RootSignature *from_shader = nullptr;
@@ -4021,6 +4065,7 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
             if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY && size >= 8) {
                 D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
                 std::memcpy(&topology, stream.data() + stream.size() - size + 4, 4);
+                simple_graphics &= topology != rectangle_type;
                 topology = host_topology_type(topology);
                 std::memcpy(stream.data() + stream.size() - size + 4, &topology, 4);
             }
@@ -4028,20 +4073,24 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                 ++type;
                 std::memcpy(stream.data() + stream.size() - size, &type, 4);
             }
-            auto *const value = stream.data() + stream.size() - size + 8;
+            const auto value_at = stream.size() - size + 8;
             const int shader = type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS   ? 0
                                : type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS ? 1
                                : type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS ? 2
                                                                                 : -1;
             if (shader >= 0 && size >= 8 + sizeof(D3D12_SHADER_BYTECODE)) {
-                static constexpr modules::ShaderStage stages[] = {modules::ShaderStage::vertex,
-                                                                  modules::ShaderStage::pixel,
-                                                                  modules::ShaderStage::compute};
-                D3D12_SHADER_BYTECODE code;
-                std::memcpy(&code, value, sizeof code);
-                shaders[shader] = code;
-                made |= host_bytecode(stages[shader], code);
-                std::memcpy(value, &code, sizeof code);
+                shader_at[shader] = value_at;
+                std::memcpy(&shaders[shader], stream.data() + value_at, sizeof shaders[shader]);
+            }
+            if ((type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS ||
+                 type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS ||
+                 type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS ||
+                 type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS ||
+                 type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS) &&
+                size >= 8 + sizeof(D3D12_SHADER_BYTECODE)) {
+                D3D12_SHADER_BYTECODE other{};
+                std::memcpy(&other, stream.data() + value_at, sizeof other);
+                simple_graphics &= !other.pShaderBytecode;
             }
             if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE && size >= 16)
                 signature_at = stream.size() - size + 8;
@@ -4050,6 +4099,13 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                 std::memset(stream.data() + stream.size() - size + 4, 0, 4);
             at += size;
         }
+        D3D12_SHADER_BYTECODE vertex = shaders[0], pixel = shaders[1], compute = shaders[2];
+        made = host_graphics_pair(self, vertex, pixel, simple_graphics && !compute.pShaderBytecode);
+        made |= host_bytecode(modules::ShaderStage::compute, compute);
+        const D3D12_SHADER_BYTECODE translated[] = {vertex, pixel, compute};
+        for (std::size_t index = 0; index < std::size(shader_at); ++index)
+            if (shader_at[index])
+                std::memcpy(stream.data() + shader_at[index], &translated[index], sizeof vertex);
         void *signature = nullptr;
         if (signature_at)
             std::memcpy(&signature, stream.data() + signature_at, sizeof signature);
