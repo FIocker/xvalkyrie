@@ -1696,6 +1696,10 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreateGraphicsPipelineState: 0x%08lx\n",
                      static_cast<unsigned long>(result));
+        // the device went before this: what the host knows of why
+        if (static std::atomic<bool> told{false};
+            result == DXGI_ERROR_DEVICE_REMOVED && !told.exchange(true))
+            report_failure();
         if (static std::atomic<int> shown{0}; desc && shown++ < 2) {
             describe_shader("vertex", desc->VS);
             describe_shader("pixel", desc->PS);
@@ -2241,8 +2245,27 @@ void STDMETHODCALLTYPE resource_barrier(void *self, UINT count,
     std::erase_if(host, [](const D3D12_RESOURCE_BARRIER &barrier) {
         return barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
     });
-    if (!host.empty())
-        host_of(self)->ResourceBarrier(static_cast<UINT>(host.size()), host.data());
+    // The console takes two transitions of one subresource in a call, one after the other;
+    // the host takes a subresource once per call, so the call is split where one comes again.
+    const auto again = [&](std::size_t first, std::size_t at) {
+        if (host[at].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION)
+            return false;
+        const auto &now = host[at].Transition;
+        for (auto i = first; i < at; ++i)
+            if (host[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION &&
+                host[i].Transition.pResource == now.pResource &&
+                (host[i].Transition.Subresource == now.Subresource ||
+                 host[i].Transition.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES ||
+                 now.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES))
+                return true;
+        return false;
+    };
+    for (std::size_t first = 0, at = 0; at <= host.size(); ++at)
+        if (at == host.size() || again(first, at)) {
+            if (at > first)
+                host_of(self)->ResourceBarrier(static_cast<UINT>(at - first), host.data() + first);
+            first = at;
+        }
 }
 // CopyTextureRegion from a buffer at an offset the host does not take: the console reads a
 // texture's data from anywhere in a buffer, the host from multiples of 512 bytes. The data

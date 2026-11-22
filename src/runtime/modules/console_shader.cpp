@@ -33,7 +33,7 @@
 namespace xv::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 15;
+constexpr int translator_version = 16;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -450,9 +450,10 @@ std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &so
     const wchar_t *arguments[] = {L"-E",
                                   L"main",
                                   L"-T",
-                                  stage == ShaderStage::vertex  ? L"vs_6_0"
-                                  : stage == ShaderStage::pixel ? L"ps_6_0"
-                                                                : L"cs_6_0",
+                                  stage == ShaderStage::vertex    ? L"vs_6_0"
+                                  : stage == ShaderStage::pixel   ? L"ps_6_0"
+                                  : stage == ShaderStage::compute ? L"cs_6_0"
+                                                                  : L"gs_6_0",
                                   L"-HV",
                                   L"2018",
                                   source.size() > 200'000 ? L"-Od" : L"-O3"};
@@ -486,12 +487,14 @@ std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &so
     return bytes;
 }
 // `older`: whether the older compiler is asked when the newer one is not there or turns the
-// shader down. A geometry shader is always the older one's: what is made of it is read back.
+// shader down. `newer`: whether the newer one is asked at all. The shaders of one pipeline
+// are all made by the same compiler: the host turns down a pipeline of both kinds.
 std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &source, bool report,
-                                      std::string *message = nullptr, bool older = true) {
+                                      std::string *message = nullptr, bool older = true,
+                                      bool newer = true) {
     if (source.empty())
         return {};
-    if (stage <= ShaderStage::compute && newer_compiler()) {
+    if (newer && newer_compiler()) {
         const auto title_state = _mm_getcsr();
         _mm_setcsr(0x1f80);
         std::string said;
@@ -656,10 +659,15 @@ std::span<const std::uint8_t> rectangle_shader(Bytes vertex) {
     static std::mutex rectangles_mutex;
     static std::map<std::string, std::vector<std::uint8_t>> rectangles; // by source; never erased
     const std::lock_guard lock(rectangles_mutex);
-    const auto found = rectangles.find(source);
+    // by the compiler that made the vertex shader it goes with
+    const bool newer = !part(vertex, "DXIL").empty();
+    const auto key = (newer ? "6" : "5") + source;
+    const auto found = rectangles.find(key);
     if (found != rectangles.end())
         return found->second;
-    return rectangles.emplace(source, compile_now(ShaderStage::geometry_triangles, source, true))
+    return rectangles
+        .emplace(key,
+                 compile_now(ShaderStage::geometry_triangles, source, true, nullptr, true, newer))
         .first->second;
 }
 
