@@ -690,7 +690,8 @@ class Translator {
                 if (reg + n < 128)
                     known[reg + n] = {};
         };
-        const bool wide = ends(name, "_b64") || ends(name, "_i64");
+        const bool wide = ends(name, "_b64") || ends(name, "_i64") || ends(name, "_u64") ||
+                          name == "s_bitreplicate_b64_b32";
         switch (ins.format) {
         case F::sop1: {
             const auto destination = (ins.w0 >> 16) & 0x7f, source = ins.w0 & 0xff;
@@ -932,6 +933,10 @@ class Translator {
             return "(" + s(126) + " | " + s(127) + ") == 0u";
         if (ins.name == "s_cbranch_execnz")
             return "(" + s(126) + " | " + s(127) + ") != 0u";
+        // COND_DBG_SYS and COND_DBG_USER of STATUS are clear outside a debugger
+        if (ins.name == "s_cbranch_cdbgsys" || ins.name == "s_cbranch_cdbguser" ||
+            ins.name == "s_cbranch_cdbgsys_or_user" || ins.name == "s_cbranch_cdbgsys_and_user")
+            return "false";
         give_up(std::string(ins.name));
     }
 
@@ -987,8 +992,17 @@ class Translator {
     }
 
     void emit_sopp(const Ins &ins) {
-        if (ins.name == "s_nop" || ins.name == "s_waitcnt" || ins.name == "s_inst_prefetch" ||
-            ins.name == "s_code_end" || ins.name == "s_barrier" || ins.name == "s_sendmsg")
+        static constexpr std::string_view nothing[] = {
+            "s_nop",          "s_waitcnt",      "s_inst_prefetch",
+            "s_code_end",     "s_barrier",      "s_sendmsg",
+            "s_clause",       "s_wait_idle",    "s_waitcnt_depctr",
+            "s_denorm_mode",  "s_ttracedata",   "s_ttracedata_imm",
+            "s_incperflevel", "s_decperflevel", "s_icache_inv",
+            "s_wakeup",       "s_sleep",        "s_setprio"};
+        if (std::find(std::begin(nothing), std::end(nothing), ins.name) != std::end(nothing))
+            return;
+        // FP_ROUND of MODE: 0 in both fields is round to nearest even, the host's only mode
+        if (ins.name == "s_round_mode" && !(ins.w0 & 0xf))
             return;
         give_up(std::string(ins.name));
     }
@@ -1068,6 +1082,10 @@ class Translator {
                     return "~(" + a + " & " + exec + ")";
                 if (starts(name, "s_nor_saveexec"))
                     return "~(" + a + " | " + exec + ")";
+                if (starts(name, "s_xnor_saveexec"))
+                    return "~(" + a + " ^ " + exec + ")";
+                if (starts(name, "s_orn1_saveexec"))
+                    return "~" + a + " | " + exec;
                 give_up(std::string(name));
             };
             line("{ uint lo = " + combine(operand(ins, source), s(126)) + ", hi = " +
@@ -1079,8 +1097,88 @@ class Translator {
                  " scc = (lo | hi) != 0u; }");
             return;
         }
+        if (starts(name, "s_andn1_wrexec") || starts(name, "s_andn2_wrexec")) {
+            // EXEC combined with the source, and the destination takes what EXEC becomes
+            const bool wide = ends(name, "_b64"), first = starts(name, "s_andn1");
+            const auto combine = [&](const std::string &a, const std::string &exec) {
+                return first ? "~" + a + " & " + exec : a + " & ~" + exec;
+            };
+            line("{ uint lo = " + combine(operand(ins, source), s(126)) + ", hi = " +
+                 (wide ? combine(operand_high(ins, source), s(127)) : std::string("0u")) + ";");
+            line(s(126) + " = lo;" + (wide ? " " + s(127) + " = hi;" : ""));
+            set_s(destination, "lo");
+            if (wide)
+                set_s(destination + 1, "hi");
+            line("scc = (lo | hi) != 0u; }");
+            return;
+        }
+        if (name == "s_cmov_b64") {
+            const auto low = operand(ins, source), high = operand_high(ins, source);
+            line("if (scc) { " + s(destination) + " = " + low + "; " + s(destination + 1) + " = " +
+                 high + "; }");
+            forget(destination);
+            forget(destination + 1);
+            return;
+        }
+        if (name == "s_brev_b64" || name == "s_bitreplicate_b64_b32" || name == "s_quadmask_b64") {
+            const auto low = operand(ins, source);
+            const auto high =
+                name == "s_bitreplicate_b64_b32" ? std::string("0u") : operand_high(ins, source);
+            if (name == "s_brev_b64")
+                line("{ uint lo = reversebits(" + high + "), hi = reversebits(" + low + ");");
+            else if (name == "s_quadmask_b64")
+                line("{ uint lo = quad_mask(" + low + ") | (quad_mask(" + high +
+                     ") << 8), hi = 0u; scc = lo != 0u;");
+            else
+                line("{ uint lo = bit_pairs(" + low + " & 0xffffu), hi = bit_pairs(" + low +
+                     " >> 16);");
+            set_s(destination, "lo");
+            set_s(destination + 1, "hi");
+            line("}");
+            return;
+        }
         std::string value;
         const auto a = operand(ins, source);
+        // the first bit that differs from the sign, counted from the top
+        const auto sign_bit = [](const std::string &x) {
+            return "(((int)" + x + " < 0 ? ~" + x + " : " + x +
+                   ") == 0u ? 0xffffffffu : 31u - "
+                   "firstbithigh((int)" +
+                   x + " < 0 ? ~" + x + " : " + x + "))";
+        };
+        if (name == "s_bcnt0_i32_b32")
+            value = "countbits(~" + a + ")";
+        else if (name == "s_bcnt0_i32_b64")
+            value = "(countbits(~" + a + ") + countbits(~" + operand_high(ins, source) + "))";
+        else if (name == "s_ff0_i32_b32")
+            value = "firstbitlow(~" + a + ")";
+        else if (name == "s_ff0_i32_b64" || name == "s_ff1_i32_b64") {
+            const std::string flip = name == "s_ff0_i32_b64" ? "~" : "";
+            const auto low = "(" + flip + a + ")",
+                       high = "(" + flip + operand_high(ins, source) + ")";
+            value = "(" + low + " != 0u ? firstbitlow(" + low + ") : " + high +
+                    " != 0u ? 32u + firstbitlow(" + high + ") : 0xffffffffu)";
+        } else if (name == "s_flbit_i32_b64") {
+            const auto high = operand_high(ins, source);
+            value = "(" + high + " != 0u ? 31u - firstbithigh(" + high + ") : " + a +
+                    " != 0u ? 63u - firstbithigh(" + a + ") : 0xffffffffu)";
+        } else if (name == "s_flbit_i32")
+            value = sign_bit(a);
+        else if (name == "s_flbit_i32_i64") {
+            const auto high = operand_high(ins, source);
+            const auto low = "((int)" + high + " < 0 ? ~" + a + " : " + a + ")";
+            value = "(" + sign_bit(high) + " != 0xffffffffu ? " + sign_bit(high) + " : " + low +
+                    " != 0u ? 63u - firstbithigh(" + low + ") : 0xffffffffu)";
+        } else if (name == "s_wqm_b32")
+            value = a; // a lane's mask is all of it or none: its quad's is the same
+        else if (name == "s_quadmask_b32")
+            value = "quad_mask(" + a + ")";
+        if (!value.empty()) {
+            set_s(destination, value);
+            if (starts(name, "s_bcnt0") || name == "s_wqm_b32" || name == "s_quadmask_b32")
+                line("scc = " + s(destination) + " != 0u;");
+            return;
+        }
         if (name == "s_not_b32")
             value = "~" + a;
         else if (name == "s_brev_b32")
@@ -1158,6 +1256,20 @@ class Translator {
             line(name == "s_bfm_b64" ? "}" : "scc = (lo | hi) != 0u; }");
             return;
         }
+        if (name == "s_bfe_u64" || name == "s_bfe_i64") {
+            // a field of `width` bits from bit `first`, which is cut where the source ends
+            const auto field = operand(ins, second);
+            line("{ uint first = " + field + " & 63u, width = min((" + field +
+                 " >> 16) & 127u, 64u - first), lo = 0u, hi = 0u;");
+            line("if (width != 0u) { shift_left(" + operand(ins, first) + ", " +
+                 operand_high(ins, first) + ", 64u - width - first, lo, hi); " +
+                 (name == "s_bfe_u64" ? "shift_right" : "shift_signed") +
+                 "(lo, hi, 64u - width, lo, hi); }");
+            set_s(destination, "lo");
+            set_s(destination + 1, "hi");
+            line("scc = (lo | hi) != 0u; }");
+            return;
+        }
         if (name == "s_cselect_b64") {
             line("{ uint lo = scc ? " + operand(ins, first) + " : " + operand(ins, second) +
                  ", hi = scc ? " + operand_high(ins, first) + " : " + operand_high(ins, second) +
@@ -1178,7 +1290,15 @@ class Translator {
         else if (name == "s_sub_i32")
             value = a + " - " + b, condition = "false";
         else if (name == "s_addc_u32")
-            value = a + " + " + b + " + (scc ? 1u : 0u)", condition = "X < " + a;
+            value = a + " + " + b + " + (scc ? 1u : 0u)",
+            condition = "X < " + a + " || (scc && X == " + a + ")";
+        else if (name == "s_subb_u32")
+            value = a + " - " + b + " - (scc ? 1u : 0u)",
+            condition = b + " > " + a + " || (scc && " + b + " == " + a + ")";
+        else if (name == "s_absdiff_i32")
+            value = "(uint)abs((int)(" + a + " - " + b + "))";
+        else if (name == "s_pack_lh_b32_b16")
+            value = "(" + a + " & 0xffffu) | (" + b + " & 0xffff0000u)", condition.clear();
         else if (name == "s_and_b32")
             value = a + " & " + b;
         else if (name == "s_or_b32")
@@ -1264,7 +1384,11 @@ class Translator {
             const auto a = is_signed ? "(int)" + s(destination) : s(destination);
             const auto b = is_signed ? "(int)" + hex(immediate) : hex(ins.w0 & 0xffff);
             line("scc = " + a + " " + relation(name.substr(7, 2)) + " " + b + ";");
-        } else if (starts(name, "s_setreg") || name == "s_getreg_b32" || name == "s_version") {
+        } else if (name == "s_cmovk_i32") {
+            line("if (scc) " + s(destination) + " = " + hex(immediate) + ";");
+            forget(destination);
+        } else if (starts(name, "s_setreg") || name == "s_getreg_b32" || name == "s_version" ||
+                   starts(name, "s_waitcnt_")) {
             // the GPU's own modes: nothing for the host
         } else {
             give_up(std::string(name));
@@ -1296,6 +1420,10 @@ class Translator {
             line("scc = (" + a + " & (1u << (" + b + " & 31u))) == 0u;");
         } else if (name == "s_bitcmp1_b32") {
             line("scc = (" + a + " & (1u << (" + b + " & 31u))) != 0u;");
+        } else if (name == "s_bitcmp0_b64" || name == "s_bitcmp1_b64") {
+            line("scc = ((((" + b + " & 32u) != 0u ? " + operand_high(ins, ins.w0 & 0xff) + " : " +
+                 a + ") >> (" + b + " & 31u)) & 1u) " + (name == "s_bitcmp0_b64" ? "==" : "!=") +
+                 " 0u;");
         } else {
             give_up(std::string(name));
         }
@@ -2874,6 +3002,11 @@ class Translator {
         "    uint lo = count >= 32u ? 0xffffffffu : (1u << count) - 1u, hi = count > 32u ? (1u << "
         "(count - 32u)) - 1u : 0u;\n"
         "    shift_left(lo, hi, first, rl, rh); }\n"
+        "uint quad_mask(uint x) { uint r = 0u; for (uint i = 0u; i < 8u; ++i) r |= ((x >> (4u * "
+        "i)) & 15u) != 0u ? 1u << i : 0u; return r; }\n"
+        "uint bit_pairs(uint x) { x = (x | (x << 8)) & 0x00ff00ffu; x = (x | (x << 4)) & "
+        "0x0f0f0f0fu; x = (x | (x << 2)) & 0x33333333u; x = (x | (x << 1)) & 0x55555555u; return "
+        "x * 3u; }\n"
         "float3 cube_direction(float3 place) { float2 at = (place.xy - 1.5) * 2.0; int face = "
         "(int)round(place.z);\n"
         "    return face == 0 ? float3(1.0, -at.y, -at.x) : face == 1 ? float3(-1.0, -at.y, at.x) "

@@ -392,7 +392,8 @@ struct Blob : IUnknown {
     virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
     virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
 };
-std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &source, bool report) {
+std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &source, bool report,
+                                      std::string *message = nullptr) {
     static const auto function = [] {
         const auto library =
             LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -420,6 +421,10 @@ std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &sour
         auto *const blob = static_cast<Blob *>(code);
         const auto *const data = static_cast<const std::uint8_t *>(blob->GetBufferPointer());
         bytes.assign(data, data + blob->GetBufferSize());
+    } else if (message) {
+        *message = errors
+                       ? static_cast<const char *>(static_cast<Blob *>(errors)->GetBufferPointer())
+                       : "no message";
     } else if (static std::atomic<int> shown{0}; report && shown++ < 4) {
         std::fprintf(
             stderr, "[Runtime] a host shader for a console one did not compile: %s\n%s\n",
@@ -532,7 +537,7 @@ std::optional<std::string> console_shader_source(ShaderStage stage, Bytes contai
     return translated_source(stage, container, why);
 }
 
-std::string console_shader_probe(std::span<const std::uint32_t> words) {
+std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled) {
     // Before the words, what gives them something to work on: a descriptor of the first
     // table in s[12:19] and a sampler of the second in s[24:27].
     static constexpr std::uint32_t before[] = {
@@ -570,7 +575,10 @@ std::string console_shader_probe(std::span<const std::uint32_t> words) {
     shader.file = file;
     shader.root_signature = {reinterpret_cast<const std::uint8_t *>(signature), sizeof signature};
     std::string why;
-    return rdna::translate(ShaderStage::compute, shader, &why) ? std::string{} : why;
+    const auto source = rdna::translate(ShaderStage::compute, shader, &why);
+    if (source && compiled && compile_now(ShaderStage::compute, *source, false, &why).empty())
+        why = "the host's compiler: " + why;
+    return why;
 }
 
 bool console_only_shader(Bytes container) {

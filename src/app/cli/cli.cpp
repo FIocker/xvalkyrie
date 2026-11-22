@@ -107,7 +107,8 @@ std::optional<int> run(int argc, wchar_t **argv) {
                   << '\n';
         return 0;
     }
-    if (argc == 2 && command == "shader-probe") {
+    if ((argc == 2 || (argc == 3 && std::filesystem::path(argv[2]) == "--compile")) &&
+        command == "shader-probe") {
         // one shader a line, as hexadecimal words of machine code: what stops its
         // translation, or nothing
         auto report = nlohmann::json::array();
@@ -120,7 +121,7 @@ std::optional<int> run(int argc, wchar_t **argv) {
                     break;
                 words.push_back(static_cast<std::uint32_t>(std::stoul(line.substr(at), &used, 16)));
             }
-            report.push_back(runtime::modules::console_shader_probe(words));
+            report.push_back(runtime::modules::console_shader_probe(words, argc == 3));
         }
         std::cout << report.dump() << '\n';
         return 0;
