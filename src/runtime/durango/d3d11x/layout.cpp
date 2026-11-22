@@ -702,6 +702,7 @@ Layout device() {
 // what follows each frame the title presents, whichever way it does
 void presented() {
     modules::frame_watchdog();
+    signal_frame_notifications();
     if (auto *const window = winrt::current_title_window()) {
         window->show();
         static std::atomic<int> frames{0};

@@ -50,4 +50,6 @@ void first_development_kits(bool yes);
 bool first_development_kits();
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
+// sets the events a title gave DXGIXSetFrameNotification; after each frame presented
+void signal_frame_notifications();
 } // namespace xv::runtime::durango::d3d11x

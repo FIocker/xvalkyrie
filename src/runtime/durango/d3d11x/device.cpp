@@ -25,6 +25,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #include <wrl/implements.h>
@@ -348,7 +349,79 @@ HRESULT WINAPI map_esram(UINT, void *address, UINT pages, const UINT *) {
 }
 HRESULT WINAPI ignored() { return S_OK; }
 
+// Events a title asks to have set by the display. Each is a copy of the title's handle, so
+// that one the title closes does no harm.
+std::mutex notification_mutex;
+bool keep_event(HANDLE &kept, HANDLE event) {
+    HANDLE copy = nullptr;
+    if (event && !DuplicateHandle(GetCurrentProcess(), event, GetCurrentProcess(), &copy, 0, FALSE,
+                                  DUPLICATE_SAME_ACCESS))
+        return false;
+    const std::lock_guard lock(notification_mutex);
+    if (kept)
+        CloseHandle(kept);
+    kept = copy;
+    return true;
+}
+// DXGIXSetVLineNotification(counter, line, event): the event is set each time the display's
+// scan gets to that line, which is once per refresh; no event stops the counter. A title
+// that paces its main loop on it waits for good if nothing sets it. The refresh here is the
+// console's 60 a second, whatever the host's display does, and every line is the first.
+HANDLE vline_events[2] = {};
+HRESULT WINAPI set_vline_notification(UINT counter, UINT, HANDLE event) {
+    if (counter >= std::size(vline_events))
+        return E_INVALIDARG;
+    if (!keep_event(vline_events[counter], event))
+        return E_HANDLE;
+    static const bool started = [] {
+        std::thread([] {
+            // a timer of the host's finer than its 15 ms tick, where it has one
+            auto *const timer = CreateWaitableTimerExW(nullptr, nullptr, 0x2, TIMER_ALL_ACCESS);
+            LARGE_INTEGER frequency, now;
+            QueryPerformanceFrequency(&frequency);
+            QueryPerformanceCounter(&now);
+            const auto refresh = frequency.QuadPart / 60;
+            auto next = now.QuadPart;
+            for (;;) {
+                next += refresh;
+                QueryPerformanceCounter(&now);
+                if (now.QuadPart > next + 4 * refresh)
+                    next = now.QuadPart; // far behind: no burst to catch up
+                const auto left = (next - now.QuadPart) * 10'000'000 / frequency.QuadPart;
+                LARGE_INTEGER due;
+                due.QuadPart = -left;
+                if (left > 0 && timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+                    WaitForSingleObject(timer, INFINITE);
+                else if (left > 0)
+                    Sleep(static_cast<DWORD>(left / 10'000));
+                const std::lock_guard lock(notification_mutex);
+                for (auto *const event : vline_events)
+                    if (event)
+                        SetEvent(event);
+            }
+        }).detach();
+        return true;
+    }();
+    static_cast<void>(started);
+    return S_OK;
+}
+// DXGIXSetFrameNotification(kind, event): set when a frame is queued, completed or flipped.
+// A frame is all three here by the time Present returns.
+HANDLE frame_events[3] = {};
+HRESULT WINAPI set_frame_notification(UINT kind, HANDLE event) {
+    if (kind >= std::size(frame_events))
+        return E_INVALIDARG;
+    return keep_event(frame_events[kind], event) ? S_OK : E_HANDLE;
+}
+
 } // namespace
+
+void d3d11x::signal_frame_notifications() {
+    const std::lock_guard lock(notification_mutex);
+    for (auto *const event : frame_events)
+        if (event)
+            SetEvent(event);
+}
 
 // IDXGIDevice of our device: the host's, with GetAdapter leading to our factory
 HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
@@ -371,8 +444,8 @@ void install_d3d11x(Registry &registry) {
         {"DXGIXPresentArray", reinterpret_cast<void *>(&present_array)},
         {"DXGIXGetFrameStatistics", reinterpret_cast<void *>(&frame_statistics)},
         {"D3DMapEsramMemory", reinterpret_cast<void *>(&map_esram)},
-        {"DXGIXSetVLineNotification", reinterpret_cast<void *>(&ignored)},
-        {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&ignored)}};
+        {"DXGIXSetVLineNotification", reinterpret_cast<void *>(&set_vline_notification)},
+        {"DXGIXSetFrameNotification", reinterpret_cast<void *>(&set_frame_notification)}};
     for (const auto &[name, function] : functions)
         registry.add("d3d11_x.dll", name, function);
     // interface IDs the DLL exports as data, for titles built without their own copies
