@@ -256,35 +256,38 @@ std::vector<std::uint8_t> code_container(Bytes container) {
 }
 
 using rdna::Element;
-// an ISG1 or OSG1 signature, in the order of its registers
+// An ISG1 or OSG1 signature, in the order of its registers; or an ISGN or OSGN one, which
+// the host's older compiler writes: the same elements without their first and last words.
 std::vector<Element> signature(Bytes container, const char *name) {
-    const auto data = part(container, name);
+    const auto whole = part(container, name);
+    const bool compact = name[3] == 'N';
+    const std::size_t size = compact ? 24 : 32, lead = compact ? 0 : 4;
     struct Read {
         Element element;
         std::uint32_t reg;
         std::uint8_t mask;
     };
     std::vector<Read> read;
-    const auto count = word(data, 0);
+    const auto count = word(whole, 0);
     for (std::uint32_t i = 0; i < count && i < 64; ++i) {
-        const std::size_t at = 8 + 32 * std::size_t{i};
-        if (at + 32 > data.size())
+        const std::size_t entry = 8 + size * std::size_t{i};
+        if (entry + size > whole.size())
             return {};
-        const auto text = word(data, at + 4);
-        if (text >= data.size())
+        const auto data = whole.subspan(entry + lead);
+        const auto text = word(data, 0);
+        if (text >= whole.size())
             return {};
-        const auto *const start = reinterpret_cast<const char *>(data.data()) + text;
+        const auto *const start = reinterpret_cast<const char *>(whole.data()) + text;
         Element element;
-        element.name.assign(start, strnlen(start, data.size() - text));
-        element.index = word(data, at + 8);
-        element.type = word(data, at + 16);
-        element.width = static_cast<std::uint32_t>(std::max(std::popcount(data[at + 24]), 1));
-        element.system_value =
-            word(data, at + 12) != 0 || !_strnicmp(element.name.c_str(), "SV_", 3);
-        element.reg = word(data, at + 20);
-        element.mask = data[at + 24];
-        element.read = data[at + 25];
-        read.push_back({std::move(element), word(data, at + 20), data[at + 24]});
+        element.name.assign(start, strnlen(start, whole.size() - text));
+        element.index = word(data, 4);
+        element.type = word(data, 12);
+        element.width = static_cast<std::uint32_t>(std::max(std::popcount(data[20]), 1));
+        element.system_value = word(data, 8) != 0 || !_strnicmp(element.name.c_str(), "SV_", 3);
+        element.reg = word(data, 16);
+        element.mask = data[20];
+        element.read = data[21];
+        read.push_back({std::move(element), word(data, 16), data[20]});
     }
     std::stable_sort(read.begin(), read.end(), [](const Read &a, const Read &b) {
         return a.reg != b.reg ? a.reg < b.reg : a.mask < b.mask;
@@ -520,6 +523,35 @@ std::atomic<unsigned> translated{0}, stood_in{0};
 bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) { return Inflate(stream).run(out); }
 
 bool console_only_shader(Bytes container);
+std::span<const std::uint8_t> rectangle_shader(Bytes vertex) {
+    auto outputs = signature(vertex, "OSG1");
+    if (outputs.empty())
+        outputs = signature(vertex, "OSGN");
+    if (outputs.empty())
+        return {};
+    // what varies across a rectangle does so evenly: the fourth corner is as far from the
+    // second as the third is from the first. What does not vary is the first corner's.
+    std::string source = hlsl_struct("Vertex", outputs, false) +
+                         "[maxvertexcount(4)] void main(triangle Vertex input[3], inout "
+                         "TriangleStream<Vertex> stream) {\n    Vertex fourth = input[0];\n";
+    for (std::size_t field = 0; field < outputs.size(); ++field)
+        if (outputs[field].type == 3) {
+            const auto name = ".f" + std::to_string(field);
+            source += "    fourth" + name + " = input[1]" + name + " + input[2]" + name +
+                      " - input[0]" + name + ";\n";
+        }
+    source += "    stream.Append(input[0]);\n    stream.Append(input[1]);\n    "
+              "stream.Append(input[2]);\n    stream.Append(fourth);\n}\n";
+    static std::mutex rectangles_mutex;
+    static std::map<std::string, std::vector<std::uint8_t>> rectangles; // by source; never erased
+    const std::lock_guard lock(rectangles_mutex);
+    const auto found = rectangles.find(source);
+    if (found != rectangles.end())
+        return found->second;
+    return rectangles.emplace(source, compile_now(ShaderStage::geometry_triangles, source, true))
+        .first->second;
+}
+
 std::string shader_signature(Bytes container) {
     std::string text = console_only_shader(container) ? "(console code only) " : "";
     for (const auto *name : {"ISG1", "OSG1"}) {
@@ -537,7 +569,8 @@ std::optional<std::string> console_shader_source(ShaderStage stage, Bytes contai
     return translated_source(stage, container, why);
 }
 
-std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled) {
+std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled,
+                                 std::string *text) {
     // Before the words, what gives them something to work on: a descriptor of the first
     // table in s[12:19] and a sampler of the second in s[24:27].
     static constexpr std::uint32_t before[] = {
@@ -576,6 +609,8 @@ std::string console_shader_probe(std::span<const std::uint32_t> words, bool comp
     shader.root_signature = {reinterpret_cast<const std::uint8_t *>(signature), sizeof signature};
     std::string why;
     const auto source = rdna::translate(ShaderStage::compute, shader, &why);
+    if (source && text)
+        *text = *source;
     if (source && compiled && compile_now(ShaderStage::compute, *source, false, &why).empty())
         why = "the host's compiler: " + why;
     return why;

@@ -1,0 +1,84 @@
+#include "runtime/modules/console_shader.hpp"
+#include <catch2/catch.hpp>
+#include <cstring>
+#include <d3dcompiler.h>
+#include <initializer_list>
+#include <string>
+#include <vector>
+
+namespace {
+using namespace xv::runtime::modules;
+constexpr std::uint32_t v1 = 0x101, v2 = 0x102, v3 = 0x103, end_program = 0xbf810000;
+// the translation of a compute shader of these words, which the host's compiler must take
+std::string translated(std::initializer_list<std::uint32_t> words) {
+    std::vector<std::uint32_t> code(words);
+    code.push_back(end_program);
+    std::string source;
+    const auto why = console_shader_probe(code, true, &source);
+    INFO(source);
+    REQUIRE(why.empty());
+    return source;
+}
+std::uint32_t shared(std::uint32_t operation) { return 0x36u << 26 | operation << 18; }
+constexpr std::uint32_t shared_registers = 1 | 2 << 8 | 3 << 16 | 4 << 24;
+std::size_t count(const std::string &text, const std::string &what) {
+    std::size_t found = 0;
+    for (auto at = text.find(what); at != std::string::npos; at = text.find(what, at + 1))
+        ++found;
+    return found;
+}
+} // namespace
+
+TEST_CASE("a group's threads wait for each other between writing and reading its memory") {
+    // ds_write_b32, ds_read_b32, ds_read_b32, ds_add_rtn_u32
+    const auto source =
+        translated({shared(0xd), shared_registers, shared(0x36), shared_registers, shared(0x36),
+                    shared_registers, shared(0x20), shared_registers});
+    CHECK(source.find("groupshared uint lds[8192];") != std::string::npos);
+    CHECK(count(source, "GroupMemoryBarrierWithGroupSync();") == 2);
+    CHECK(source.find("InterlockedAdd(lds[") != std::string::npos);
+}
+
+TEST_CASE("the shader's own barrier is the host's") {
+    // ds_write_b32, s_barrier, ds_read_b32: one wait, not two
+    const auto source =
+        translated({shared(0xd), shared_registers, 0xbf8a0000, shared(0x36), shared_registers});
+    CHECK(count(source, "GroupMemoryBarrierWithGroupSync();") == 1);
+}
+
+TEST_CASE("instructions on parts of memory and registers compile") {
+    // ds_write_b8, ds_cmpst_rtn_b32, ds_read2_b32
+    translated({shared(0x1e), shared_registers, shared(0x30), shared_registers, shared(0x37),
+                shared_registers});
+    // s_flbit_i32_i64 s1, s[2:3]; s_quadmask_b64 s[4:5], s[2:3]
+    translated({0x17du << 23 | 1 << 16 | 0x18 << 8 | 2, 0x17du << 23 | 4 << 16 | 0x2d << 8 | 2});
+    // v_pk_add_i16 v1, v1, v2; v_sad_u8 v1, v1, v2, v3; v_alignbit_b32 v1, v1, v2, v3
+    translated({0x33u << 26 | 2 << 16 | 1, v1 | v2 << 9, 0x35u << 26 | 0x15a << 16 | 1,
+                v1 | v2 << 9 | v3 << 18, 0x35u << 26 | 0x14e << 16 | 1, v1 | v2 << 9 | v3 << 18});
+}
+
+TEST_CASE("a rectangle list's fourth corner comes from a geometry shader") {
+    const char vertex[] = "struct Out { float4 position : SV_Position; float2 uv : TEXCOORD0; "
+                          "nointerpolation uint layer : LAYER0; };\n"
+                          "Out main(uint id : SV_VertexID) { Out o; o.position = float4(id & 1, "
+                          "id >> 1, 0, 1); o.uv = o.position.xy; o.layer = id; return o; }\n";
+    ID3DBlob *code = nullptr;
+    REQUIRE(D3DCompile(vertex, sizeof vertex - 1, nullptr, nullptr, nullptr, "main", "vs_5_1", 0, 0,
+                       &code, nullptr) == S_OK);
+    const auto made = rectangle_shader(
+        {static_cast<const std::uint8_t *>(code->GetBufferPointer()), code->GetBufferSize()});
+    REQUIRE(made.size() > 4);
+    CHECK(!std::memcmp(made.data(), "DXBC", 4));
+    // its inputs are the vertex shader's outputs
+    ID3D12ShaderReflection *reflection = nullptr;
+    REQUIRE(D3DReflect(made.data(), made.size(), IID_PPV_ARGS(&reflection)) == S_OK);
+    D3D12_SHADER_DESC description{};
+    REQUIRE(reflection->GetDesc(&description) == S_OK);
+    CHECK(description.InputParameters == 3);
+    CHECK(description.OutputParameters == 3);
+    CHECK(description.GSMaxOutputVertexCount == 4);
+    reflection->Release();
+    code->Release();
+    const std::uint8_t nothing[16] = {};
+    CHECK(rectangle_shader(nothing).empty());
+}

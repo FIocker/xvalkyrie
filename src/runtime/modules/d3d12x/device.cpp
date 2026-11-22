@@ -1453,7 +1453,11 @@ HRESULT STDMETHODCALLTYPE create_placed_resource_x(ID3D12Device *self, std::uint
     return result;
 }
 // The console's GPU draws rectangle lists and quad lists (topology types 19 and 32, the
-// topologies 17 and 19). Here both are triangles: see draw_instanced.
+// topologies 17 and 19). Here both are triangles: a quad list through indices of ours (see
+// draw_instanced), a rectangle list through a geometry shader of ours (see
+// rectangle_pipeline).
+constexpr D3D12_PRIMITIVE_TOPOLOGY_TYPE rectangle_type =
+    static_cast<D3D12_PRIMITIVE_TOPOLOGY_TYPE>(19);
 D3D12_PRIMITIVE_TOPOLOGY_TYPE host_topology_type(D3D12_PRIMITIVE_TOPOLOGY_TYPE type) {
     return type == 19 || type == 32 ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE : type;
 }
@@ -1614,6 +1618,28 @@ HRESULT STDMETHODCALLTYPE create_derived_graphics_pipeline(ID3D12Device *self,
     }
     return result;
 }
+// A pipeline that draws rectangle lists gets the geometry shader that makes the fourth
+// corner of each, unless it has one of the title's. A rectangle faces no way: it is not
+// culled. Without the shader the triangle of the three corners is drawn, half the rectangle.
+bool rectangle_pipeline(D3D12_GRAPHICS_PIPELINE_STATE_DESC &host) {
+    if (!host.GS.pShaderBytecode && host.VS.pShaderBytecode) {
+        const auto corner = modules::rectangle_shader(
+            {static_cast<const std::uint8_t *>(host.VS.pShaderBytecode), host.VS.BytecodeLength});
+        if (!corner.empty()) {
+            host.GS = {corner.data(), corner.size()};
+            host.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            return true;
+        }
+    }
+    return false;
+}
+void report_half_rectangles() {
+    if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] a rectangle list is drawn as the triangles of its three "
+                             "corners: half of each rectangle is missing\n");
+        std::fflush(stderr);
+    }
+}
 // CreateGraphicsPipelineState (10): the console's flags, as for compute pipelines
 HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                    const D3D12_GRAPHICS_PIPELINE_STATE_DESC *desc,
@@ -1638,7 +1664,19 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
             host.pRootSignature = from_shader =
                 shader_root_signature(self, true, {desc->VS, desc->PS, desc->GS});
     }
-    const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
+    const bool rectangles = desc && desc->PrimitiveTopologyType == rectangle_type;
+    const auto cull = host.RasterizerState.CullMode;
+    const bool cornered = rectangles && rectangle_pipeline(host);
+    auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
+    // the host's compiler may lay the shader's inputs out another way than the title's
+    // vertex shader its outputs: the pipeline is then made without it
+    if (FAILED(result) && cornered) {
+        host.GS = {};
+        host.RasterizerState.CullMode = cull;
+        result = original<Create>(self, 10)(self, &host, iid, state);
+    }
+    if (rectangles && (!cornered || !host.GS.pShaderBytecode))
+        report_half_rectangles();
     if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
         keep_pipeline(*state, host);
     if (from_shader)
@@ -1895,6 +1933,18 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
     }
     return result;
 }
+// What the host insists on where the console takes anything: a resource of an upload heap
+// starts as one to read from and one of a readback heap as one to copy to, and only a depth
+// buffer is kept from shaders.
+void host_rules(const D3D12_HEAP_PROPERTIES *heap, D3D12_RESOURCE_FLAGS &flags,
+                D3D12_RESOURCE_STATES &state) {
+    if (heap && heap->Type == D3D12_HEAP_TYPE_UPLOAD)
+        state = D3D12_RESOURCE_STATE_GENERIC_READ;
+    else if (heap && heap->Type == D3D12_HEAP_TYPE_READBACK)
+        state = D3D12_RESOURCE_STATE_COPY_DEST;
+    if (!(flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL))
+        flags &= ~D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+}
 // CreateCommittedResource, reported when the host turns it down
 HRESULT STDMETHODCALLTYPE create_committed_resource(
     ID3D12Device *self, const D3D12_HEAP_PROPERTIES *heap, D3D12_HEAP_FLAGS flags,
@@ -1921,6 +1971,7 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
         // host only its own
         if (host_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
             host_desc.Alignment = 0;
+        host_rules(heap, host_desc.Flags, state);
     }
     // All of the console's memory is the CPU's as well: a title maps a buffer of the default
     // heap and writes to it. The host only maps what is in a heap the CPU can reach, so such
@@ -2143,10 +2194,14 @@ HRESULT STDMETHODCALLTYPE close_list(void *self) {
         report_messages();
     return result;
 }
-// ResourceBarrier: transitions name states the console's way (GENERIC_READ is 0x8c3 there)
+// ResourceBarrier: transitions name states the console's way. GENERIC_READ is 0x8c3 there,
+// and bit 0x400000 goes with the states shaders read in; on the host that bit is a ray
+// tracing acceleration structure, which is no state to be combined with another.
 D3D12_RESOURCE_STATES host_state(D3D12_RESOURCE_STATES state) {
-    return state == static_cast<D3D12_RESOURCE_STATES>(0x8c3) ? D3D12_RESOURCE_STATE_GENERIC_READ
-                                                              : state;
+    if (state == static_cast<D3D12_RESOURCE_STATES>(0x8c3))
+        return D3D12_RESOURCE_STATE_GENERIC_READ;
+    constexpr auto structure = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+    return state & structure && state != structure ? state & ~structure : state;
 }
 // The state the title left each render target in, by its last transition: the console shows
 // a resource whatever its state, the host copies it out of one it has to be told
@@ -2458,8 +2513,8 @@ D3D12_INDEX_BUFFER_VIEW quad_indices(UINT quads) {
             DXGI_FORMAT_R32_UINT};
 }
 // A quad list is drawn with indices of ours over the title's vertices. A rectangle list
-// gives three corners of each rectangle and the GPU makes the fourth: here only the
-// triangle of the three is drawn, half of each rectangle.
+// gives three corners of each rectangle and the GPU makes the fourth: here the pipeline's
+// geometry shader does (see rectangle_pipeline).
 void STDMETHODCALLTYPE draw_instanced(void *self, UINT vertices, UINT instances, UINT first,
                                       UINT first_instance) {
     count_draw(self);
@@ -2473,12 +2528,6 @@ void STDMETHODCALLTYPE draw_instanced(void *self, UINT vertices, UINT instances,
                                          first_instance);
         list->host->IASetIndexBuffer(list->indices.BufferLocation ? &list->indices : nullptr);
         return;
-    }
-    if (static std::atomic<bool> shown{false};
-        list->topology == rectangle_list && !shown.exchange(true)) {
-        std::fprintf(stderr, "[Runtime] a rectangle list is drawn as the triangles of its three "
-                             "corners: half of each rectangle is missing\n");
-        std::fflush(stderr);
     }
     host_of(self)->DrawInstanced(vertices, instances, first, first_instance);
 }
@@ -3241,6 +3290,8 @@ HRESULT STDMETHODCALLTYPE create_committed_resource_2(
     }
     if (state == static_cast<D3D12_RESOURCE_STATES>(0x8c3))
         state = D3D12_RESOURCE_STATE_GENERIC_READ;
+    if (desc)
+        host_rules(heap, host_desc.Flags, state);
     const auto result = original<Create>(self, 69)(self, heap, flags, desc ? &host_desc : nullptr,
                                                    state, clear, session, iid, resource);
     if (SUCCEEDED(result) && resource && *resource)
@@ -3391,6 +3442,12 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                                             8,  8,  40, 8,  16, 8,  24, 8,  64,  32, 24, 24};
     std::vector<std::uint8_t> stream;
     D3D12_PIPELINE_STATE_STREAM_DESC host{};
+    // the title's vertex, pixel and compute shaders, and whether any had to be made for the
+    // host: such a pipeline needs a root signature of its own, as in create_graphics_pipeline
+    D3D12_SHADER_BYTECODE shaders[3] = {};
+    bool made = false;
+    std::size_t signature_at = 0; // where in the stream the root signature's pointer is
+    ID3D12RootSignature *from_shader = nullptr;
     if (desc && desc->pPipelineStateSubobjectStream && console == Target::scarlett) {
         const auto *bytes = static_cast<const std::uint8_t *>(desc->pPipelineStateSubobjectStream);
         for (std::size_t at = 0; at + 8 <= desc->SizeInBytes;) {
@@ -3416,12 +3473,46 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                 ++type;
                 std::memcpy(stream.data() + stream.size() - size, &type, 4);
             }
+            auto *const value = stream.data() + stream.size() - size + 8;
+            const int shader = type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS   ? 0
+                               : type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS ? 1
+                               : type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS ? 2
+                                                                                : -1;
+            if (shader >= 0 && size >= 8 + sizeof(D3D12_SHADER_BYTECODE)) {
+                static constexpr modules::ShaderStage stages[] = {modules::ShaderStage::vertex,
+                                                                  modules::ShaderStage::pixel,
+                                                                  modules::ShaderStage::compute};
+                D3D12_SHADER_BYTECODE code;
+                std::memcpy(&code, value, sizeof code);
+                shaders[shader] = code;
+                made |= host_bytecode(stages[shader], code);
+                std::memcpy(value, &code, sizeof code);
+            }
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE && size >= 16)
+                signature_at = stream.size() - size + 8;
+            // the console's flags
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_FLAGS && size >= 8)
+                std::memset(stream.data() + stream.size() - size + 4, 0, 4);
             at += size;
+        }
+        void *signature = nullptr;
+        if (signature_at)
+            std::memcpy(&signature, stream.data() + signature_at, sizeof signature);
+        if (made && !signature &&
+            (from_shader = shader_root_signature(self, !shaders[2].pShaderBytecode,
+                                                 {shaders[0], shaders[1], shaders[2]}))) {
+            if (!signature_at) {
+                stream.resize(stream.size() + 16);
+                signature_at = stream.size() - 8;
+            }
+            std::memcpy(stream.data() + signature_at, &from_shader, sizeof from_shader);
         }
         host = {stream.size(), stream.data()};
         desc = &host;
     }
     const auto result = original<Create>(self, 47)(self, desc, iid, state);
+    if (from_shader)
+        from_shader->Release();
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreatePipelineState from a stream of %zu bytes: 0x%08lx\n",
                      desc ? desc->SizeInBytes : 0, static_cast<unsigned long>(result));

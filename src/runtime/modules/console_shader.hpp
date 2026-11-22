@@ -32,8 +32,14 @@ std::optional<std::string> console_shader_source(ShaderStage stage,
 // What stops the translation of a compute shader made of these words of machine code and
 // nothing else, or nothing if it is translated. For tools: which instructions are handled.
 // With `compiled`, what is translated is given to the host's compiler too, and what that
-// says against it is the answer.
-std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled = false);
+// says against it is the answer. `source` gets the translation.
+std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled = false,
+                                 std::string *source = nullptr);
+// A geometry shader that makes the rectangles of a rectangle list: it is given the three
+// corners the title draws as a triangle, and adds the fourth, opposite the first, as the
+// console's GPU does. `vertex` is the pipeline's vertex shader as the host has it, whose
+// outputs it passes on. Empty if none could be made.
+std::span<const std::uint8_t> rectangle_shader(std::span<const std::uint8_t> vertex);
 // the inputs and outputs of a shader, by semantic, for a line of a log
 std::string shader_signature(std::span<const std::uint8_t> container);
 // The host's shader for it, from the cache or made now. It stays where it is for as long
