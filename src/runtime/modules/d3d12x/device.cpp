@@ -2825,26 +2825,80 @@ void STDMETHODCALLTYPE dispatch_mesh_x(void *self, UINT groups, UINT64 flags, UI
     host->DispatchMesh(groups, 1, 1);
     host->Release();
 }
-// Write64BitValueBottomOfPipeX: the console's GPU writes a value, or its clock, to memory
-// of the title's when it gets there. Titles time their frames with it. Here the write
-// happens when the list is recorded, with the host's clock for a timestamp (flag 1).
+// The methods of a list that work on memory by its address (the console header's slots 60
+// to 63, 69 to 72 and 88 to 90). On the console a GPU address is the title's own memory and
+// the GPU does the work when it gets there; titles time their frames with the values it
+// writes. Here the CPU does it when the list is recorded, and what waits for a value to be
+// there has nothing left to wait for.
+bool title_memory(std::uint64_t address, std::uint64_t size, bool write);
+template <class Value> void write_value(std::uint64_t destination, Value value) {
+    if (title_memory(destination, sizeof value, true))
+        std::memcpy(reinterpret_cast<void *>(destination), &value, sizeof value);
+}
+std::uint64_t host_clock() {
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return static_cast<std::uint64_t>(counter.QuadPart);
+}
+// D3D12XBOX_WRITE_VALUE_BOP_FLAGS: 1 the GPU's timestamp, 2 the system's
 void STDMETHODCALLTYPE write_64_bottom_of_pipe(void *, std::uint64_t destination,
                                                std::uint64_t value, UINT, UINT flags) {
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(reinterpret_cast<void *>(destination), &info, sizeof info) ||
-        info.State != MEM_COMMIT || !(info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+    write_value(destination, flags & 3 ? host_clock() : value);
+}
+void STDMETHODCALLTYPE write_32_bottom_of_pipe(void *, std::uint64_t destination, UINT value, UINT,
+                                               UINT) {
+    write_value(destination, value);
+}
+// D3D12XBOX_WRITE_VALUE_TOP_FLAGS: 4 the GPU's timestamp, 8 the system's
+void STDMETHODCALLTYPE write_64_top_of_pipe(void *, std::uint64_t destination, std::uint64_t value,
+                                            UINT flags) {
+    write_value(destination, flags & 12 ? host_clock() : value);
+}
+// Write32BitValueTopOfPipeX and Write32BitValueBottomOfShaderX
+void STDMETHODCALLTYPE write_32(void *, std::uint64_t destination, UINT value, UINT) {
+    write_value(destination, value);
+}
+void STDMETHODCALLTYPE copy_memory(void *, std::uint64_t destination, std::uint64_t source,
+                                   std::uint64_t size, UINT) {
+    if (title_memory(destination, size, true) && title_memory(source, size, false))
+        std::memmove(reinterpret_cast<void *>(destination), reinterpret_cast<const void *>(source),
+                     static_cast<std::size_t>(size));
+}
+// FillMemoryWith32BitValueX, 64 and 128: the value over and over, for `size` bytes
+void fill_memory(std::uint64_t destination, std::uint64_t size, const void *value,
+                 std::size_t width) {
+    if (!title_memory(destination, size, true))
         return;
-    if (flags & 1) {
-        LARGE_INTEGER counter;
-        QueryPerformanceCounter(&counter);
-        value = static_cast<std::uint64_t>(counter.QuadPart);
-    }
-    std::memcpy(reinterpret_cast<void *>(destination), &value, sizeof value);
+    auto *const bytes = reinterpret_cast<std::uint8_t *>(destination);
+    for (std::uint64_t at = 0; at + width <= size; at += width)
+        std::memcpy(bytes + at, value, width);
+}
+void STDMETHODCALLTYPE fill_memory_32(void *, std::uint64_t destination, std::uint64_t size,
+                                      UINT value, UINT) {
+    fill_memory(destination, size, &value, sizeof value);
+}
+void STDMETHODCALLTYPE fill_memory_64(void *, std::uint64_t destination, std::uint64_t size,
+                                      std::uint64_t value, UINT) {
+    fill_memory(destination, size, &value, sizeof value);
+}
+void STDMETHODCALLTYPE fill_memory_128(void *, std::uint64_t destination, std::uint64_t size,
+                                       const UINT *value, UINT) {
+    if (value)
+        fill_memory(destination, size, value, 4 * sizeof *value);
 }
 // the slots where the two consoles' lists differ
 void configure_lists() {
     map_list_slots();
+    list_vtable[60] = reinterpret_cast<Slot>(&copy_memory);
+    list_vtable[61] = reinterpret_cast<Slot>(&fill_memory_32);
+    list_vtable[62] = reinterpret_cast<Slot>(&fill_memory_64);
+    list_vtable[63] = reinterpret_cast<Slot>(&fill_memory_128);
+    list_vtable[69] = reinterpret_cast<Slot>(&write_32_bottom_of_pipe);
     list_vtable[70] = reinterpret_cast<Slot>(&write_64_bottom_of_pipe);
+    // Wait32BitValueX and Wait64BitValueX
+    list_vtable[71] = list_vtable[72] = reinterpret_cast<Slot>(&ignored_list_method);
+    list_vtable[88] = list_vtable[90] = reinterpret_cast<Slot>(&write_32);
+    list_vtable[89] = reinterpret_cast<Slot>(&write_64_top_of_pipe);
     const auto ignore = [](std::initializer_list<std::size_t> slots) {
         for (const auto slot : slots)
             list_vtable[slot] = reinterpret_cast<Slot>(&ignored_list_method);
