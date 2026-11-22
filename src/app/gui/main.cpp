@@ -6,6 +6,7 @@
 #include "host/files.hpp"
 #include "launcher/config.hpp"
 #include "launcher/launch.hpp"
+#include "launcher/update.hpp"
 #include <atomic>
 #include <filesystem>
 #include <functional>
@@ -42,6 +43,11 @@ int wmain(int argc, wchar_t **argv) {
             std::cout << "XValkyrie " << xv::version << '\n';
             return 0;
         }
+        if (argc == 3 && command == "--apply-update") {
+            xv::apply_update(argv[2]);
+            return 0;
+        }
+        xv::clear_replaced();
         if (argc > 2 || (argc == 2 && (command.empty() || argv[1][0] == '-'))) {
             std::cerr << usage;
             return 2;

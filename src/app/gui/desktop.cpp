@@ -10,6 +10,7 @@
 #include "host/files.hpp"
 #include "launcher/launch.hpp"
 #include "launcher/library.hpp"
+#include "launcher/update.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <atomic>
@@ -104,6 +105,7 @@ class Desktop {
                     std::filesystem::path(std::u8string(text.begin(), text.end()));
             }
         });
+        update_check_ = std::async(std::launch::async, [] { return find_update(release); });
         settings_host_.add_folder = [this] { pick_folder(Dialog::add_library); };
         settings_host_.change_folder = [this](std::size_t index) {
             pick_folder(Dialog::replace_library, index);
@@ -292,6 +294,19 @@ class Desktop {
                 notice_ = std::string("Folder dialog failed: ") + e.what();
             }
         }
+        if (update_check_.valid() &&
+            update_check_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            update_ = update_check_.get();
+        if (updating_.valid() &&
+            updating_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                updating_.get();
+                restart();
+                glfwSetWindowShouldClose(window_, true);
+            } catch (const std::exception &e) {
+                notice_ = std::string("Not updated: ") + e.what();
+            }
+        }
         if (discovery_.valid() &&
             discovery_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             try {
@@ -413,9 +428,29 @@ class Desktop {
             ImGui::Text("%s  -  %s", name_.c_str(), state());
         else
             ImGui::TextUnformatted(state());
-        // on the right, the version
-        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().FramePadding.x -
-                        ImGui::CalcTextSize(version).x);
+        // on the right, the version, and before it the update if there is one
+        const auto right = ImGui::GetWindowWidth() - ImGui::GetStyle().FramePadding.x -
+                           ImGui::CalcTextSize(version).x;
+        if (updating_.valid()) {
+            const auto text = "Updating to " + update_->version + "...";
+            ImGui::SameLine(right - ImGui::CalcTextSize(text.c_str()).x - 16);
+            ImGui::TextUnformatted(text.c_str());
+        } else if (update_) {
+            const auto text = "Update to " + update_->version;
+            ImGui::SameLine(right - ImGui::CalcTextSize(text.c_str()).x - 16 -
+                            2 * ImGui::GetStyle().FramePadding.x);
+            ImGui::PushStyleColor(ImGuiCol_Button, ui::color::scarlet);
+            ImGui::BeginDisabled(busy());
+            if (ImGui::SmallButton(text.c_str()))
+                updating_ = std::async(std::launch::async,
+                                       [update = *update_] { install_update(update); });
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", busy() ? "Close the running title first"
+                                               : "Download the release and replace this copy");
+            ImGui::PopStyleColor();
+        }
+        ImGui::SameLine(right);
         ImGui::TextDisabled("%s", version);
         ImGui::End();
         ImGui::PopStyleColor();
@@ -984,6 +1019,9 @@ class Desktop {
     std::chrono::steady_clock::time_point started_; // when the title was
     bool ran_ = false; // the title opened ran and has ended: its log is what is on screen
     std::future<LaunchResult> loading_;
+    std::future<std::optional<Update>> update_check_;
+    std::optional<Update> update_;
+    std::future<void> updating_;
     std::filesystem::path path_; // what loading_ is reading
     std::future<std::filesystem::path> dialog_;
     Dialog dialog_kind_ = Dialog::file;
