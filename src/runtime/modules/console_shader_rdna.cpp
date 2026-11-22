@@ -236,8 +236,11 @@ class Translator {
         const auto region = word(file, 0xc0), size = word(file, 0xc8);
         if (region > file.size() || size > file.size() - region || size < 0x2c)
             give_up("no code");
+        // COMPUTE_PGM_RSRC2 and the group size: at the region (file word 0x10 == 5) or two
+        // words before it (6)
+        const auto header = word(file, 0x10) >= 6 && region >= 8 ? region - 8 : region;
         for (int i = 0; i < 4; ++i)
-            header_[i] = word(file, region + 4 * i);
+            header_[i] = word(file, header + 4 * i);
         for (std::uint32_t at = region + 0x28; at + 4 <= region + size; at += 4)
             code_.push_back(word(file, at));
         // the records after the code: where the root parameters are
@@ -1895,8 +1898,7 @@ class Translator {
                                     : ends(name, "_b96")  ? 3
                                     : ends(name, "_b128") ? 4
                                                           : 1;
-        // _d16 and _d16_hi: the datum is the lower or the upper half of its register, and
-        // the other half of a destination is kept
+        // _d16 / _d16_hi: lower / upper half of the register, the other half kept
         const bool upper = ends(name, "_d16_hi"), half = upper || ends(name, "_d16");
         if (half)
             name.remove_suffix(upper ? 7 : 4);
@@ -1973,7 +1975,6 @@ class Translator {
         if (returns)
             name.remove_suffix(4);
         if (returns && (name == "wrxchg2" || name == "wrxchg2st64") && type == "b32") {
-            // two words take a datum each and give what they had, placed like ds_write2's
             const auto unit = name == "wrxchg2st64" ? 4 * 64 : 4;
             touch_shared(true);
             address();
@@ -1986,7 +1987,6 @@ class Translator {
             }
             return;
         }
-        // the operation of the word, and whether it takes a second datum
         struct Operation {
             std::string_view name, type, how;
             bool two;
@@ -2013,9 +2013,7 @@ class Translator {
         address();
         const auto before = "x" + std::to_string(temporaries_++);
         line("uint " + before + " = 0u;");
-        // ds_cmpst: the first datum is what the word is compared with, the second what it
-        // takes. ds_mskor and ds_wrap: the first is the mask or the limit, the second what is
-        // put in or added.
+        // ds_cmpst: data0 compared, data1 stored. ds_mskor, ds_wrap: data0 mask or limit
         line(guard + (how == "cmpswap" || how == "fcmpswap"
                           ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
                           : atomic(how, shared_word(at, offset), v(data[0]),
@@ -2356,9 +2354,6 @@ class Translator {
         set_mask(mask, "carried");
         line("}");
     }
-    // The instructions on 64-bit values that have a translation: the comparisons, and of
-    // doubles what the host's shader model has (sums, products, the lesser and the greater,
-    // reciprocals and conversions).
     static bool is_wide(std::string_view name) {
         if (starts(name, "v_cmp"))
             return ends(name, "_f64") || ends(name, "_i64") || ends(name, "_u64");
@@ -2369,8 +2364,7 @@ class Translator {
                 return true;
         return false;
     }
-    // The lower and upper words of a 64-bit operand: two registers, or a constant. A literal
-    // is the upper word of a double; what it is of an integer is not known here.
+    // {low, high} of a 64-bit operand; a literal is the high word of a double
     std::pair<std::string, std::string> wide_operand(const Ins &ins, std::uint32_t source,
                                                      bool real) {
         if (source >= 256)
@@ -2410,7 +2404,6 @@ class Translator {
             return "asdouble(" + lower + ", " + upper + ")";
         };
         const auto narrow = [&](std::size_t n) { return sign(n, operand(ins, codes[n])); };
-        // a double goes to two registers, after everything it is made of was read
         const auto set = [&](const std::string &value) {
             const auto id = "x" + std::to_string(temporaries_++);
             line("uint " + id + "l, " + id + "h; asuint(" + value + ", " + id + "l, " + id + "h);");
@@ -2453,7 +2446,6 @@ class Translator {
         else
             give_up(std::string(name));
     }
-    // `a_upper` and `b_upper` are the upper words of 64-bit operands
     void emit_compare(std::string_view full, std::uint32_t mask, const std::string &a,
                       const std::string &b, const std::string &a_upper = {},
                       const std::string &b_upper = {}) {
@@ -3202,9 +3194,7 @@ class Translator {
             return call("InterlockedExchange", value);
         if (how == "cmpswap")
             return call("InterlockedCompareExchange", compare + ", " + value);
-        // The rest the host has no function for: the word is read, and takes what follows
-        // from it unless another thread changed it meanwhile, in which case it is read again.
-        // X is what was read.
+        // no host intrinsic: compare-exchange loop, X is the value read
         const std::string fx = "asfloat(X)", fv = "asfloat(" + value + ")";
         std::string next;
         if (how == "rsub")
@@ -3294,8 +3284,6 @@ class Translator {
                 write_word(resource, index, extra, fixed, 4 * n, v(data + n));
             return;
         }
-        // _d16 and _d16_hi: the datum is the lower or the upper half of its register, and
-        // the other half of a destination is kept
         const bool upper = ends(name, "_d16_hi"), half = upper || ends(name, "_d16");
         const auto plain = name.substr(0, name.size() - (upper ? 7 : half ? 4 : 0));
         const auto shift = "((" + extra + " & 3u) * 8u)";

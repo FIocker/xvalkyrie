@@ -9,9 +9,11 @@
 #include "loader/image.hpp"
 #include "runtime/console.hpp"
 #include "runtime/modules/console_shader.hpp"
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -40,7 +42,9 @@ const std::string_view commands =
     "  xvboot properties FILE           all of that in one report, as the window shows it\n"
     "  xvboot modules durango|scarlett  the console modules and functions implemented here\n"
     "  xvboot shader-probe              what stops the translation of the shader code on each\n"
-    "                                   line of the input, as hexadecimal words\n";
+    "                                   line of the input, as hexadecimal words\n"
+    "  xvboot shader-corpus FOLDER      how many of the shaders a run left there with\n"
+    "                                   XV_SHADER_CODE are translated, and what stops the rest\n";
 
 std::optional<int> run(int argc, wchar_t **argv) {
     if (argc < 2)
@@ -124,6 +128,42 @@ std::optional<int> run(int argc, wchar_t **argv) {
             report.push_back(runtime::modules::console_shader_probe(words, argc == 3));
         }
         std::cout << report.dump() << '\n';
+        return 0;
+    }
+    if (argc == 3 && command == "shader-corpus") {
+        // <hash>-<stage>.dxbc files, as XV_SHADER_CODE writes them
+        std::map<std::string, std::vector<std::string>> stopped;
+        std::size_t translated = 0, shaders = 0;
+        for (const auto &entry : std::filesystem::directory_iterator(argv[2])) {
+            const auto name = entry.path().stem().string();
+            if (entry.path().extension() != ".dxbc" || name.size() < 2)
+                continue;
+            const auto stage = name.back() == 'v'   ? runtime::modules::ShaderStage::vertex
+                               : name.back() == 'p' ? runtime::modules::ShaderStage::pixel
+                               : name.back() == 'c' ? runtime::modules::ShaderStage::compute
+                                                    : runtime::modules::ShaderStage(-1);
+            if (stage == runtime::modules::ShaderStage(-1))
+                continue;
+            ++shaders;
+            std::string why;
+            const auto bytes = host::read_snapshot(entry.path(), 64 * 1024 * 1024);
+            if (runtime::modules::console_shader_source(stage, bytes, &why))
+                ++translated;
+            else
+                stopped[why].push_back(name);
+        }
+        auto reasons = nlohmann::json::array();
+        for (const auto &[why, names] : stopped)
+            reasons.push_back({{"reason", why}, {"shaders", names.size()}, {"first", names[0]}});
+        std::sort(reasons.begin(), reasons.end(), [](const auto &a, const auto &b) {
+            return a["shaders"].template get<std::size_t>() >
+                   b["shaders"].template get<std::size_t>();
+        });
+        std::cout << nlohmann::json{{"shaders", shaders},
+                                    {"translated", translated},
+                                    {"stopped", reasons}}
+                         .dump(2)
+                  << '\n';
         return 0;
     }
     if (argc == 3 && command == "modules") {
