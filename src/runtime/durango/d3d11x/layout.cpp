@@ -319,6 +319,93 @@ Layout dma() {
     result.vtable[30] = {Method::ignore}; // InsertWaitOnMemory
     return result;
 }
+// ID3D11ComputeContextX: compute work a title records apart from its drawing, on a deferred
+// context of the host that is run where the title flushes it or puts a fence in. The
+// methods after the device child's are, from 9: GetType, Dispatch, DispatchIndirect, the
+// CSSet... ones, the placement ones, copies, clears, InsertFence (25), InsertWaitOnFence,
+// Flush, ClearState.
+template <class T> std::vector<T *> hosts_of(T *const *objects, UINT count) {
+    std::vector<T *> hosts(count);
+    for (UINT i = 0; objects && i < count; ++i)
+        hosts[i] = static_cast<T *>(unwrap(objects[i]));
+    return hosts;
+}
+void STDMETHODCALLTYPE compute_dispatch(void *self, UINT x, UINT y, UINT z) {
+    dma_host(self)->Dispatch(x, y, z);
+}
+void STDMETHODCALLTYPE compute_dispatch_indirect(void *self, void *arguments, UINT offset) {
+    dma_host(self)->DispatchIndirect(static_cast<ID3D11Buffer *>(unwrap(arguments)), offset);
+}
+void STDMETHODCALLTYPE compute_resources(void *self, UINT first, UINT count,
+                                         ID3D11ShaderResourceView *const *views) {
+    dma_host(self)->CSSetShaderResources(first, count, hosts_of(views, count).data());
+}
+void STDMETHODCALLTYPE compute_unordered(void *self, UINT first, UINT count,
+                                         ID3D11UnorderedAccessView *const *views,
+                                         const UINT *initial) {
+    dma_host(self)->CSSetUnorderedAccessViews(first, count, hosts_of(views, count).data(), initial);
+}
+void STDMETHODCALLTYPE compute_shader(void *self, void *shader) {
+    dma_host(self)->CSSetShader(static_cast<ID3D11ComputeShader *>(unwrap(shader)), nullptr, 0);
+}
+void STDMETHODCALLTYPE compute_samplers(void *self, UINT first, UINT count,
+                                        ID3D11SamplerState *const *samplers) {
+    dma_host(self)->CSSetSamplers(first, count, hosts_of(samplers, count).data());
+}
+void STDMETHODCALLTYPE compute_constants(void *self, UINT first, UINT count,
+                                         ID3D11Buffer *const *buffers) {
+    dma_host(self)->CSSetConstantBuffers(first, count, hosts_of(buffers, count).data());
+}
+void STDMETHODCALLTYPE compute_clear_uint(void *self, void *view, const UINT *values) {
+    dma_host(self)->ClearUnorderedAccessViewUint(
+        static_cast<ID3D11UnorderedAccessView *>(unwrap(view)), values);
+}
+void STDMETHODCALLTYPE compute_clear_float(void *self, void *view, const FLOAT *values) {
+    dma_host(self)->ClearUnorderedAccessViewFloat(
+        static_cast<ID3D11UnorderedAccessView *>(unwrap(view)), values);
+}
+UINT64 STDMETHODCALLTYPE compute_fence(void *self, UINT) {
+    dma_submit(self);
+    return ++dma_fences;
+}
+void STDMETHODCALLTYPE compute_flush(void *self) { dma_submit(self); }
+void STDMETHODCALLTYPE compute_clear_state(void *self) { dma_host(self)->ClearState(); }
+Layout compute() {
+    Layout result{"compute context"};
+    device_child(result);
+    for (std::size_t slot = 9; slot < 60; ++slot)
+        result.vtable[slot] = {Method::ignore}; // events, limits, cache flushes, waits
+    result.vtable[10] = custom(&compute_dispatch);
+    result.vtable[11] = custom(&compute_dispatch_indirect);
+    result.vtable[12] = custom(&compute_resources);
+    result.vtable[13] = custom(&compute_unordered);
+    result.vtable[14] = custom(&compute_shader);
+    result.vtable[15] = custom(&compute_samplers);
+    result.vtable[16] = result.vtable[17] = custom(&compute_constants);
+    for (std::size_t slot : {18, 19, 20}) // the placement ones: not seen yet
+        result.vtable[slot] = {};
+    result.vtable[21] = custom(&dma_copy_resource);
+    result.vtable[22] = custom(&dma_copy_region);
+    result.vtable[23] = custom(&compute_clear_uint);
+    result.vtable[24] = custom(&compute_clear_float);
+    result.vtable[25] = custom(&compute_fence);
+    result.vtable[27] = custom(&compute_flush);
+    result.vtable[28] = custom(&compute_clear_state);
+    result.vtable[29] = custom(&dma_copy_memory);
+    result.vtable[30] = custom(&dma_fill_memory);
+    return result;
+}
+// CreateComputeContextX (73): the description sizes the console's rings
+HRESULT STDMETHODCALLTYPE create_compute_context(void *self, const void *, void **context) {
+    if (!context)
+        return E_INVALIDARG;
+    ID3D11DeviceContext *deferred = nullptr;
+    const auto result =
+        static_cast<ID3D11Device *>(unwrap(self))->CreateDeferredContext(0, &deferred);
+    if (SUCCEEDED(result))
+        *context = wrap(deferred, Kind::compute);
+    return result;
+}
 HRESULT STDMETHODCALLTYPE create_dma_engine_context(void *self, const void *, void **context) {
     if (!context)
         return E_INVALIDARG;
@@ -498,6 +585,7 @@ Layout device() {
     result.vtable[70] = forward(21, {created(2, Kind::state)});   // CreateDepthStencilStateX
     result.vtable[71] = custom(&create_renderable_texture2d);     // ...RenderableTexture2D
     result.vtable[72] = custom(&get_driver_statistics);
+    result.vtable[73] = custom(&create_compute_context);
     return result;
 }
 
@@ -1195,6 +1283,7 @@ const Layout &layout(Kind kind) {
         }(),
         child("device child", 6),
         dma(),
+        compute(),
     };
     static const auto early = [] {
         std::array<Layout, std::size(layouts)> result;
