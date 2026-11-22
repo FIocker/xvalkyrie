@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 
 // From the console GPU's machine code (AMD's RDNA instruction set, as LLVM's gfx1013 has it)
 // to HLSL. The registers become variables of the shader, each instruction a statement on
@@ -28,15 +29,19 @@ struct Op {
     std::uint32_t op;
     const char *name;
 };
-// read off LLVM's disassembly of the shaders of two titles: the instructions those use
+// every instruction LLVM's disassembler names for this GPU (tools/rdna_ops.py)
 constexpr Op ops[] = {
 #include "runtime/modules/console_shader_rdna_ops.inc"
 };
 const char *name_of(F format, std::uint32_t op) {
-    for (const auto &known : ops)
-        if (known.format == format && known.op == op)
-            return known.name;
-    return nullptr;
+    static const auto names = [] {
+        std::unordered_map<std::uint32_t, const char *> table;
+        for (const auto &known : ops)
+            table.emplace(static_cast<std::uint32_t>(known.format) << 16 | known.op, known.name);
+        return table;
+    }();
+    const auto found = names.find(static_cast<std::uint32_t>(format) << 16 | op);
+    return found == names.end() ? nullptr : found->second;
 }
 
 struct Unsupported {
@@ -105,6 +110,10 @@ struct Ins {
     std::uint32_t at = 0, words = 1; // where it is, in words from the first instruction
     std::uint32_t w0 = 0, w1 = 0, literal = 0;
     std::uint32_t extra[3] = {}; // more address registers of an image instruction
+    // The word after an instruction whose first source is not a register but says that
+    // parts of registers are used (sub_dword) or another lane's (lanes).
+    enum class Form { plain, sub_dword, lanes } form = Form::plain;
+    std::uint32_t modifier = 0;
 };
 bool is(const Ins &ins, std::string_view name) { return ins.name == name; }
 bool starts(std::string_view text, std::string_view with) { return text.substr(0, with.size()) == with; }
@@ -114,18 +123,37 @@ bool ends(std::string_view text, std::string_view with) {
 
 // what is known of a scalar register while translating, besides its value at run time
 struct Known {
-    enum Kind { nothing, constant, table, descriptor } kind = nothing;
-    std::uint32_t value = 0; // the constant; the root parameter of a table or descriptor
+    // table: the address of a descriptor table; descriptor: a word of a descriptor loaded
+    // from one; root: half of the address a root descriptor gives; code: an address in the
+    // shader's own code
+    enum Kind { nothing, constant, table, descriptor, root, code } kind = nothing;
+    std::uint32_t value = 0; // the constant; the root parameter of the others
     std::uint32_t offset = 0, part = 0; // a descriptor: its byte offset in the table, and
-                                        // which of its words this is
+                                        // which of its words this is; a root: which half
+    int dynamic = -1;         // a descriptor whose offset is only known at run time: the
+                              // variable that has it
+    std::uint32_t origin = 0; // the instruction that loaded the descriptor
+    std::uint32_t stride = 0; // the upper half of a root address made into a buffer
+                              // descriptor: the stride given to it
 };
 struct Resource {
-    std::uint32_t type, reg, space; // type as a Range's
+    std::uint32_t type = 0, reg = 0, space = 0; // type as a Range's
+    bool root = false;        // a root descriptor: an address, not a view
+    std::uint32_t stride = 0; // of a root buffer, if the shader says
+    int dynamic = -1;         // one of an array: the variable with its place in the table
+    std::uint32_t parameter = 0, origin = 0;
 };
+// What a first pass over a shader found out that changes how it is translated: the
+// descriptors written through, which are unordered access views where the table allows both.
+struct Facts {
+    std::set<std::uint32_t> written;
+};
+struct Retry {};
 
 class Translator {
   public:
-    Translator(Stage stage, const Shader &shader) : stage_(stage), shader_(shader) {}
+    Translator(Stage stage, const Shader &shader, Facts &facts)
+        : stage_(stage), shader_(shader), facts_(facts) {}
 
     std::string run() {
         if (!read_root_signature(shader_.root_signature, parameters_))
@@ -157,22 +185,33 @@ class Translator {
         while (word(file, at) == 0xbf9f0000)
             at += 4;
         bool any = false;
+        const auto root = [&](std::uint32_t reg, std::uint32_t parameter) {
+            known_[reg] = {Known::root, parameter};
+            known_[reg + 1] = {Known::root, parameter, 0, 1};
+        };
         for (; at + 20 <= file.size() && word(file, at + 8) != ~0u; at += 20) {
-            if (word(file, at) != 3)
+            const auto kind = word(file, at);
+            if (kind != 3 && kind != 1)
                 continue;
             const auto where = word(file, at + 16), parameter = where >> 8, reg = where & 0xff;
-            if (parameter < parameters_.size() && reg < 106 && parameters_[parameter].type == 0) {
-                known_[reg] = {Known::table, parameter};
-                any = true;
-            }
+            if (parameter >= parameters_.size() || reg >= 105)
+                continue;
+            if (kind == 3 && parameters_[parameter].type == 0)
+                known_[reg] = {Known::table, parameter}, any = true;
+            else if (kind == 1 && parameters_[parameter].type >= 2)
+                root(reg, parameter), any = true;
         }
         if (!any) { // no records: the parameters in order, from the first user register
             std::uint32_t reg = stage_ == Stage::compute ? 4 : 8;
             for (std::uint32_t p = 0; p < parameters_.size() && reg < 100; ++p) {
-                if (parameters_[p].type == 0)
+                if (parameters_[p].type == 0) {
                     known_[reg++] = {Known::table, p};
-                else
-                    reg += parameters_[p].type == 1 ? parameters_[p].count : 2;
+                } else if (parameters_[p].type == 1) {
+                    reg += parameters_[p].count;
+                } else {
+                    root(reg, p);
+                    reg += 2;
+                }
             }
         }
         // a pixel shader: which register of its input signature each attribute is
@@ -182,75 +221,113 @@ class Translator {
     }
 
     // ---- decoding ----
+    // What is decoded is what the first instruction leads to: constants a shader reads
+    // through its program counter lie between and after its instructions, and are not code.
     void decode() {
-        for (std::uint32_t at = 0; at < code_.size();) {
-            Ins ins;
-            ins.at = at;
-            const auto w = ins.w0 = code_[at];
-            const auto top = w >> 26;
-            const auto second = [&] {
-                if (at + 1 >= code_.size())
-                    give_up("truncated code");
-                ins.w1 = code_[at + 1];
-                ins.words = 2;
-            };
-            if (top == 0x33) ins.format = F::vop3p, ins.op = (w >> 16) & 0x7f, second();
-            else if (top == 0x35) ins.format = F::vop3, ins.op = (w >> 16) & 0x3ff, second();
-            else if (top == 0x32) ins.format = F::vintrp, ins.op = (w >> 16) & 3;
-            else if (top == 0x36) ins.format = F::ds, ins.op = (w >> 18) & 0xff, second();
-            else if (top == 0x37) ins.format = F::flat, ins.op = (w >> 18) & 0x7f, second();
-            else if (top == 0x38) ins.format = F::mubuf, ins.op = (w >> 18) & 0x7f, second();
-            else if (top == 0x3a) ins.format = F::mtbuf, ins.op = (w >> 15) & 0xf, second();
-            else if (top == 0x3c) ins.format = F::mimg, ins.op = (w & 1) << 7 | ((w >> 18) & 0x7f), second();
-            else if (top == 0x3d) ins.format = F::smem, ins.op = (w >> 18) & 0xff, second();
-            else if (top == 0x3e) ins.format = F::exp, ins.op = 0, second();
-            else if ((w >> 23) == 0x17d) ins.format = F::sop1, ins.op = (w >> 8) & 0xff;
-            else if ((w >> 23) == 0x17e) ins.format = F::sopc, ins.op = (w >> 16) & 0x7f;
-            else if ((w >> 23) == 0x17f) ins.format = F::sopp, ins.op = (w >> 16) & 0x7f;
-            else if ((w >> 28) == 0xb) ins.format = F::sopk, ins.op = (w >> 23) & 0x1f;
-            else if ((w >> 30) == 2) ins.format = F::sop2, ins.op = (w >> 23) & 0x7f;
-            else if ((w >> 25) == 0x3f) ins.format = F::vop1, ins.op = (w >> 9) & 0xff;
-            else if ((w >> 25) == 0x3e) ins.format = F::vopc, ins.op = (w >> 17) & 0xff;
-            else if ((w >> 31) == 0) ins.format = F::vop2, ins.op = (w >> 25) & 0x3f;
-            const auto *const name = name_of(ins.format, ins.op);
-            if (!name) {
-                char text[48];
-                std::snprintf(text, sizeof text, "instruction %08x", w);
-                give_up(text);
-            }
-            ins.name = name;
-            // more words: the registers of an image instruction's address, or a literal
-            if (ins.format == F::mimg) {
-                const auto more = (w >> 1) & 3;
-                for (std::uint32_t n = 0; n < more; ++n) {
-                    if (at + ins.words >= code_.size())
-                        give_up("truncated code");
-                    ins.extra[n] = code_[at + ins.words++];
+        std::map<std::uint32_t, Ins> found;
+        std::vector<std::uint32_t> work{0};
+        while (!work.empty()) {
+            auto at = work.back();
+            work.pop_back();
+            while (at < code_.size() && !found.count(at)) {
+                const auto ins = decode_at(at);
+                found.emplace(at, ins);
+                if (ins.name == "s_endpgm" || ins.name == "s_code_end")
+                    break;
+                if (ins.name == "s_setpc_b64" || ins.name == "s_rfe_b64")
+                    give_up("a jump to an address in a register");
+                if (branch(ins)) {
+                    const auto target = target_of(ins);
+                    if (target >= code_.size())
+                        give_up("a branch out of the code");
+                    work.push_back(target);
+                    if (ins.name == "s_branch")
+                        break;
                 }
+                at += ins.words;
             }
-            bool literal = false;
-            const auto uses = [&](std::uint32_t source) { literal |= source == 255; };
-            switch (ins.format) {
-            case F::sop2: uses(w & 0xff), uses((w >> 8) & 0xff); break;
-            case F::sop1: case F::sopc: uses(w & 0xff); if (ins.format == F::sopc) uses((w >> 8) & 0xff); break;
-            case F::vop2: uses(w & 0x1ff); literal |= ins.name == "v_fmaak_f32" || ins.name == "v_fmamk_f32" || ins.name == "v_madak_f32" || ins.name == "v_madmk_f32" || ins.name == "v_fmaak_f16" || ins.name == "v_fmamk_f16"; break;
-            case F::vop1: case F::vopc: uses(w & 0x1ff); break;
-            case F::vop3: case F::vop3p:
-                uses(ins.w1 & 0x1ff), uses((ins.w1 >> 9) & 0x1ff), uses((ins.w1 >> 18) & 0x1ff);
-                break;
-            case F::sopk: literal = ins.name == "s_setreg_imm32_b32"; break;
-            default: break;
-            }
-            if (literal) {
-                if (at + ins.words >= code_.size())
-                    give_up("truncated code");
-                ins.literal = code_[at + ins.words++];
-            }
-            at += ins.words;
-            code_list_.push_back(ins);
-            if (ins.name == "s_code_end")
-                break;
         }
+        for (const auto &[at, ins] : found) {
+            if (!code_list_.empty() && code_list_.back().at + code_list_.back().words > at)
+                give_up("branch into the middle of an instruction");
+            index_of_[at] = code_list_.size();
+            code_list_.push_back(ins);
+        }
+        if (code_list_.empty())
+            give_up("no code");
+        data_first_ = code_list_.back().at + code_list_.back().words;
+        find_modes();
+    }
+    Ins decode_at(std::uint32_t at) {
+        Ins ins;
+        ins.at = at;
+        const auto w = ins.w0 = code_[at];
+        const auto top = w >> 26;
+        const auto second = [&] {
+            if (at + 1 >= code_.size())
+                give_up("truncated code");
+            ins.w1 = code_[at + 1];
+            ins.words = 2;
+        };
+        if (top == 0x33) ins.format = F::vop3p, ins.op = (w >> 16) & 0x7f, second();
+        else if (top == 0x35) ins.format = F::vop3, ins.op = (w >> 16) & 0x3ff, second();
+        else if (top == 0x32) ins.format = F::vintrp, ins.op = (w >> 16) & 3;
+        else if (top == 0x36) ins.format = F::ds, ins.op = (w >> 18) & 0xff, second();
+        else if (top == 0x37) ins.format = F::flat, ins.op = (w >> 18) & 0x7f, second();
+        else if (top == 0x38) ins.format = F::mubuf, ins.op = (w >> 18) & 0x7f, second();
+        else if (top == 0x3a) second(), ins.format = F::mtbuf, ins.op = ((w >> 16) & 7) | ((ins.w1 >> 21) & 1) << 3;
+        else if (top == 0x3c) ins.format = F::mimg, ins.op = (w & 1) << 7 | ((w >> 18) & 0x7f), second();
+        else if (top == 0x3d) ins.format = F::smem, ins.op = (w >> 18) & 0xff, second();
+        else if (top == 0x3e) ins.format = F::exp, ins.op = 0, second();
+        else if ((w >> 23) == 0x17d) ins.format = F::sop1, ins.op = (w >> 8) & 0xff;
+        else if ((w >> 23) == 0x17e) ins.format = F::sopc, ins.op = (w >> 16) & 0x7f;
+        else if ((w >> 23) == 0x17f) ins.format = F::sopp, ins.op = (w >> 16) & 0x7f;
+        else if ((w >> 28) == 0xb) ins.format = F::sopk, ins.op = (w >> 23) & 0x1f;
+        else if ((w >> 30) == 2) ins.format = F::sop2, ins.op = (w >> 23) & 0x7f;
+        else if ((w >> 25) == 0x3f) ins.format = F::vop1, ins.op = (w >> 9) & 0xff;
+        else if ((w >> 25) == 0x3e) ins.format = F::vopc, ins.op = (w >> 17) & 0xff;
+        else if ((w >> 31) == 0) ins.format = F::vop2, ins.op = (w >> 25) & 0x3f;
+        const auto *const name = name_of(ins.format, ins.op);
+        if (!name) {
+            char text[48];
+            std::snprintf(text, sizeof text, "instruction %08x", w);
+            give_up(text);
+        }
+        ins.name = name;
+        const auto more = [&] {
+            if (at + ins.words >= code_.size())
+                give_up("truncated code");
+            return code_[at + ins.words++];
+        };
+        // more words: the registers of an image instruction's address, or a literal
+        if (ins.format == F::mimg)
+            for (std::uint32_t n = 0, count = (w >> 1) & 3; n < count; ++n)
+                ins.extra[n] = more();
+        if (ins.format == F::vop1 || ins.format == F::vop2 || ins.format == F::vopc) {
+            const auto source = w & 0x1ff;
+            if (source == 249)
+                ins.form = Ins::Form::sub_dword, ins.modifier = more();
+            else if (source == 250 || source == 233 || source == 234)
+                ins.form = Ins::Form::lanes, ins.modifier = more();
+        }
+        bool literal = false;
+        const auto uses = [&](std::uint32_t source) { literal |= source == 255; };
+        switch (ins.format) {
+        case F::sop2: uses(w & 0xff), uses((w >> 8) & 0xff); break;
+        case F::sop1: case F::sopc: uses(w & 0xff); if (ins.format == F::sopc) uses((w >> 8) & 0xff); break;
+        case F::vop2: uses(w & 0x1ff); literal |= ins.name == "v_fmaak_f32" || ins.name == "v_fmamk_f32" || ins.name == "v_madak_f32" || ins.name == "v_madmk_f32" || ins.name == "v_fmaak_f16" || ins.name == "v_fmamk_f16"; break;
+        case F::vop1: case F::vopc: uses(w & 0x1ff); break;
+        case F::vop3: case F::vop3p:
+            uses(ins.w1 & 0x1ff), uses((ins.w1 >> 9) & 0x1ff), uses((ins.w1 >> 18) & 0x1ff);
+            break;
+        case F::sopk: literal = ins.name == "s_setreg_imm32_b32"; break;
+        default: break;
+        }
+        if (literal)
+            ins.literal = more();
+        return ins;
+    }
+    void find_modes() {
         for (const auto &ins : code_list_) {
             if (ins.format == F::sopp || ins.format == F::sop1 || ins.format == F::sop2) {
                 const auto destination = (ins.w0 >> 16) & 0x7f;
@@ -273,10 +350,10 @@ class Translator {
         std::vector<std::size_t> closes; // back edges that end loops here are in `back`
     };
     std::size_t index_at(std::uint32_t address) {
-        for (std::size_t i = 0; i < code_list_.size(); ++i)
-            if (code_list_[i].at == address)
-                return i;
-        give_up("branch into the middle of an instruction");
+        const auto found = index_of_.find(address);
+        if (found == index_of_.end())
+            give_up("branch into the middle of an instruction");
+        return found->second;
     }
     bool branch(const Ins &ins) {
         return ins.format == F::sopp && (ins.name == "s_branch" || starts(ins.name, "s_cbranch"));
@@ -376,7 +453,11 @@ class Translator {
             return "0u";
         if (source < 128) {
             if (known_[source].kind == Known::table || known_[source].kind == Known::descriptor)
-                give_up("a descriptor used as a value (s" + std::to_string(source) + " at " + std::to_string(ins.at * 4) + ", " + std::string(ins.name) + ")");
+                give_up("a descriptor used as a value (" + std::string(ins.name) + ")");
+            // an address of the console's has no meaning here, and only goes into the
+            // descriptor a shader makes of it
+            if (known_[source].kind == Known::root)
+                return "0u";
             return s(source);
         }
         give_up("operand " + std::to_string(source));
@@ -396,7 +477,8 @@ class Translator {
     std::string active() { return "(" + s(126) + " != 0u)"; }
     void line(const std::string &text) { body_ += indent_ + text + "\n"; }
     // a write to a vector register, which only the lanes of EXEC do
-    void set_v(std::uint32_t reg, const std::string &value) {
+    void set_v(std::uint32_t reg, const std::string &whole) {
+        const auto value = placed_ ? place(reg, whole) : whole;
         if (exec_changes_)
             line("if " + active() + " " + v(reg) + " = " + value + ";");
         else
@@ -519,12 +601,8 @@ class Translator {
         case F::sopk: emit_sopk(ins); break;
         case F::sopc: emit_sopc(ins); break;
         case F::smem: emit_smem(ins); break;
-        case F::vop1:
-            if (ins.name != "v_nop")
-                emit_vop1(ins.name, (ins.w0 >> 17) & 0xff, operand(ins, ins.w0 & 0x1ff));
-            break;
-        case F::vop2: emit_vop2(ins); break;
-        case F::vopc: emit_compare(ins.name, 106, operand(ins, ins.w0 & 0x1ff), v((ins.w0 >> 9) & 0xff)); break;
+        case F::vop1: case F::vop2: case F::vopc: emit_short(ins); break;
+        case F::ds: emit_shared(ins); break;
         case F::vop3: emit_vop3(ins); break;
         case F::vop3p: emit_vop3p(ins); break;
         case F::vintrp: emit_interpolation(ins); break;
@@ -549,15 +627,40 @@ class Translator {
             return;
         }
         if (name == "s_mov_b32") {
-            if (source < 128 && (known_[source].kind == Known::table || known_[source].kind == Known::descriptor)) {
+            if (source < 128 && (known_[source].kind == Known::table || known_[source].kind == Known::descriptor ||
+                                 known_[source].kind == Known::root)) {
                 const auto copy = known_[source];
                 known_[destination] = copy;
                 return;
             }
             const auto value = constant_of(source, ins.literal);
+            const bool code = source < 128 && known_[source].kind == Known::code;
             set_s(destination, operand(ins, source));
             if (value)
                 known_[destination] = {Known::constant, *value};
+            else if (code)
+                known_[destination] = {Known::code};
+            return;
+        }
+        if (name == "s_getpc_b64") { // where the next instruction is, from the first
+            set_s(destination, hex(4 * (ins.at + 1)));
+            set_s(destination + 1, "0u");
+            known_[destination] = {Known::code};
+            return;
+        }
+        if (name == "s_bitset0_b32" || name == "s_bitset1_b32") {
+            const auto bit = "(1u << (" + operand(ins, source) + " & 31u))";
+            const auto old = s(destination);
+            set_s(destination, name == "s_bitset1_b32" ? old + " | " + bit : old + " & ~" + bit);
+            return;
+        }
+        if (name == "s_bitset0_b64" || name == "s_bitset1_b64") {
+            const bool set = name == "s_bitset1_b64";
+            line("{ uint bit = " + operand(ins, source) + " & 63u, lo = bit < 32u ? 1u << bit : 0u, hi = bit < 32u ? 0u : 1u << (bit - 32u);");
+            const auto low = s(destination), high = s(destination + 1);
+            set_s(destination, set ? low + " | lo" : low + " & ~lo");
+            set_s(destination + 1, set ? high + " | hi" : high + " & ~hi");
+            line("}");
             return;
         }
         if (name == "s_mov_b64" || name == "s_wqm_b64" || name == "s_not_b64") {
@@ -637,6 +740,18 @@ class Translator {
             line("scc = (lo | hi) != 0u; }");
             return;
         }
+        if (name == "s_lshl_b64" || name == "s_lshr_b64" || name == "s_ashr_i64" || name == "s_bfm_b64") {
+            const auto count = operand(ins, second);
+            const char *const how = name == "s_lshl_b64" ? "shift_left" : name == "s_lshr_b64" ? "shift_right" : "shift_signed";
+            if (name == "s_bfm_b64")
+                line("{ uint lo, hi; field_mask(" + operand(ins, first) + ", " + count + ", lo, hi);");
+            else
+                line("{ uint lo, hi; " + std::string(how) + "(" + operand(ins, first) + ", " + operand_high(ins, first) + ", " + count + ", lo, hi);");
+            set_s(destination, "lo");
+            set_s(destination + 1, "hi");
+            line(name == "s_bfm_b64" ? "}" : "scc = (lo | hi) != 0u; }");
+            return;
+        }
         if (name == "s_cselect_b64") {
             line("{ uint lo = scc ? " + operand(ins, first) + " : " + operand(ins, second) + ", hi = scc ? " +
                  operand_high(ins, first) + " : " + operand_high(ins, second) + ";");
@@ -671,6 +786,8 @@ class Translator {
         else if (name == "s_cselect_b32") value = "(scc ? " + a + " : " + b + ")", condition.clear();
         else if (name == "s_bfe_i32") value = "(((" + b + " >> 16) & 127u) == 0u ? 0u : (uint)(((int)(" + a + " << (32u - ((" + b + " >> 16) & 127u) - (" + b + " & 31u)))) >> (32u - ((" + b + " >> 16) & 127u))))";
         else if (name == "s_bfe_u32") value = "((" + a + " >> (" + b + " & 31u)) & ((1u << ((" + b + " >> 16) & 127u)) - 1u))";
+        else if (name == "s_bfm_b32") value = "((1u << (" + a + " & 31u)) - 1u) << (" + b + " & 31u)", condition.clear();
+        else if (name == "s_mul_hi_i32") value = "mul_hi_signed(" + a + ", " + b + ")", condition.clear();
         else if (name == "s_lshl1_add_u32") value = "(" + a + " << 1) + " + b, condition = "false";
         else if (name == "s_lshl2_add_u32") value = "(" + a + " << 2) + " + b, condition = "false";
         else if (name == "s_lshl3_add_u32") value = "(" + a + " << 3) + " + b, condition = "false";
@@ -680,11 +797,29 @@ class Translator {
         else if (name == "s_mul_hi_u32") value = "mul_hi(" + a + ", " + b + ")", condition.clear();
         else
             give_up(std::string(name));
+        // an address in the code stays one with something added to it
+        const bool code = (name == "s_add_u32" || name == "s_add_i32") &&
+                          ((first < 128 && known_[first].kind == Known::code) ||
+                           (second < 128 && known_[second].kind == Known::code));
+        // the upper half of a root descriptor's address with a stride put in: on its way to
+        // being a buffer descriptor
+        Known upper;
+        if (name == "s_or_b32" || name == "s_and_b32")
+            for (const auto &[reg, other] : {std::pair{first, second}, std::pair{second, first}})
+                if (reg < 128 && known_[reg].kind == Known::root && known_[reg].part == 1) {
+                    upper = known_[reg];
+                    if (const auto bits = constant_of(other, ins.literal); bits && name == "s_or_b32")
+                        upper.stride = (*bits >> 16) & 0x3fff;
+                }
         line("{ uint X = " + value + ";");
         if (!condition.empty())
             line("scc = " + condition + ";");
         set_s(destination, "X");
         line("}");
+        if (code)
+            known_[destination] = {Known::code};
+        else if (upper.kind == Known::root)
+            known_[destination] = upper;
     }
     void emit_sopk(const Ins &ins) {
         const auto destination = (ins.w0 >> 16) & 0x7f;
@@ -734,79 +869,239 @@ class Translator {
     }
 
     // ---- what a shader is given ----
-    // The descriptor at `offset` bytes of table `parameter`: every descriptor is 32 bytes
-    // but a sampler, which is 16.
-    Resource resource_at(std::uint32_t parameter, std::uint32_t offset) {
+    // The descriptors of a table are 32 bytes each, but for samplers, which are 16.
+    std::uint32_t descriptor_size(std::uint32_t parameter) const {
         const auto &ranges = parameters_[parameter].ranges;
-        const bool samplers = !ranges.empty() && ranges[0].type == 3;
-        const auto index = offset / (samplers ? 16 : 32);
-        for (const auto &range : ranges)
-            if (index >= range.offset && (range.count == ~0u || index - range.offset < range.count))
-                return {range.type, range.base + (index - range.offset), range.space};
-        give_up("a descriptor outside its table");
+        return !ranges.empty() && ranges[0].type == 3 ? 16 : 32;
     }
+    // what a register that an instruction takes a resource from stands for
     Resource resource_of(std::uint32_t reg) {
-        if (reg >= 128 || known_[reg].kind != Known::descriptor || known_[reg].part != 0)
+        if (reg >= 128)
             give_up("a resource that is not a descriptor of a table");
-        return resource_at(known_[reg].value, known_[reg].offset);
+        const auto &known = known_[reg];
+        if (known.kind == Known::root && known.part == 0) {
+            // a buffer descriptor the shader made from the address of a root descriptor
+            const auto &parameter = parameters_[known.value];
+            Resource resource{parameter.type == 2 ? 2u : parameter.type == 3 ? 0u : 1u, parameter.reg, parameter.space};
+            resource.root = true;
+            if (reg + 1 < 128 && known_[reg + 1].kind == Known::root && known_[reg + 1].value == known.value)
+                resource.stride = known_[reg + 1].stride;
+            return resource;
+        }
+        if (known.kind != Known::descriptor || known.part != 0)
+            give_up("a resource that is not a descriptor of a table");
+        const auto &ranges = parameters_[known.value].ranges;
+        if (known.dynamic < 0) {
+            const auto index = known.offset / descriptor_size(known.value);
+            for (const auto &range : ranges)
+                if (index >= range.offset && (range.count == ~0u || index - range.offset < range.count))
+                    return {range.type, range.base + (index - range.offset), range.space};
+            give_up("a descriptor outside its table");
+        }
+        // One of many, picked while the shader runs. A table that has views of both kinds
+        // at the same place leaves it to the shader which one a descriptor is: one it
+        // writes through is an unordered access view.
+        Resource resource;
+        resource.dynamic = known.dynamic;
+        resource.parameter = known.value;
+        resource.origin = known.origin;
+        bool readable = false, writable = false;
+        for (const auto &range : ranges) {
+            readable |= range.type == 0;
+            writable |= range.type == 1;
+        }
+        if (ranges.empty())
+            give_up("a descriptor outside its table");
+        resource.type = readable && writable ? (facts_.written.count(known.origin) ? 1u : 0u) : ranges[0].type;
+        return resource;
     }
-    // the name of a resource, declared the first time as `type`
-    std::string declare(const Resource &resource, const std::string &type, const std::string &suffix = "") {
-        const auto name = std::string(1, "tubs"[resource.type]) + std::to_string(resource.reg) + "_" +
-                          std::to_string(resource.space);
-        const auto found = declared_.find(name);
-        if (found != declared_.end()) {
-            if (found->second != type)
-                give_up("one register as " + found->second + " and as " + type);
+    // a resource the shader writes through, which for one picked at run time settles what
+    // it is declared as
+    void written(const Resource &resource) {
+        if (resource.type == 1)
+            return;
+        if (resource.dynamic >= 0 && !facts_.written.count(resource.origin)) {
+            for (const auto &range : parameters_[resource.parameter].ranges)
+                if (range.type == 1) {
+                    facts_.written.insert(resource.origin);
+                    throw Retry{};
+                }
+        }
+        give_up("a store to something that is not an unordered access view");
+    }
+    // The name of a resource as the host's shader has it, declared the first time as `type`.
+    // One picked at run time is an element of an array over a range of its table: each type
+    // gets a range of its own, which is what the table has several for.
+    std::string object(const Resource &resource, const std::string &type) {
+        const char letter = "tubs"[resource.type];
+        if (resource.dynamic < 0) {
+            const auto name = std::string(1, letter) + std::to_string(resource.reg) + "_" + std::to_string(resource.space);
+            const auto found = declared_.find(name);
+            if (found != declared_.end()) {
+                if (found->second != type)
+                    give_up("one register as " + found->second + " and as " + type);
+                return name;
+            }
+            declared_[name] = type;
+            declarations_ += type + " " + name + " : register(" + letter + std::to_string(resource.reg) +
+                             ", space" + std::to_string(resource.space) + ");\n";
             return name;
         }
-        declared_[name] = type;
-        declarations_ += type + " " + name + suffix + " : register(" + "tubs"[resource.type] +
-                         std::to_string(resource.reg) + ", space" + std::to_string(resource.space) + ");\n";
-        return name;
+        const auto &ranges = parameters_[resource.parameter].ranges;
+        const auto key = std::to_string(resource.parameter) + letter + type;
+        auto found = arrays_.find(key);
+        if (found == arrays_.end()) {
+            std::size_t chosen = ranges.size();
+            for (std::size_t r = 0; r < ranges.size() && chosen == ranges.size(); ++r)
+                if (ranges[r].type == resource.type && !taken_.count({resource.parameter, r}))
+                    chosen = r;
+            if (chosen == ranges.size())
+                give_up("more kinds of resources picked at run time than their table has ranges for");
+            taken_.insert({resource.parameter, chosen});
+            const auto &range = ranges[chosen];
+            const auto name = std::string(1, letter) + std::to_string(range.base) + "_" + std::to_string(range.space);
+            if (declared_.count(name))
+                give_up("one register as " + declared_[name] + " and as an array of " + type);
+            declared_[name] = type + "[]";
+            declarations_ += type + " " + name + "[" + (range.count == ~0u ? "" : std::to_string(range.count)) +
+                             "] : register(" + letter + std::to_string(range.base) + ", space" +
+                             std::to_string(range.space) + ");\n";
+            found = arrays_.emplace(key, std::pair{name, range.offset}).first;
+        }
+        return found->second.first + "[" + slot(resource, found->second.second) + "]";
+    }
+    std::string slot(const Resource &resource, std::uint32_t first) {
+        return "(d" + std::to_string(resource.dynamic) + " / " + std::to_string(descriptor_size(resource.parameter)) +
+               "u - " + std::to_string(first) + "u)";
     }
     void emit_smem(const Ins &ins) {
         const auto data = (ins.w0 >> 6) & 0x7f, base = (ins.w0 & 0x3f) * 2;
         const auto offset = ins.w1 & 0x1fffff, index = ins.w1 >> 25;
         const bool indexed = index != 0x7d;
         const auto name = ins.name;
+        const auto words_of = [&](std::string_view prefix) -> std::uint32_t {
+            const auto rest = name.substr(prefix.size());
+            return rest.empty() ? 1 : rest == "x2" ? 2 : rest == "x4" ? 4 : rest == "x8" ? 8 : 16;
+        };
+        std::string where = hex(offset);
+        if (indexed)
+            where = "(" + operand(ins, index) + " + " + where + ")";
         if (starts(name, "s_load_dword")) {
-            const std::uint32_t words = name == "s_load_dword" ? 1 : name == "s_load_dwordx2" ? 2 : name == "s_load_dwordx4" ? 4 : name == "s_load_dwordx8" ? 8 : 16;
-            if (known_[base].kind != Known::table || indexed || (words != 4 && words != 8))
+            const auto words = words_of("s_load_dword");
+            const auto from = known_[base];
+            if (from.kind == Known::code) {
+                // constants kept with the code, after its last instruction
+                uses_data_ = true;
+                for (std::uint32_t n = 0; n < words; ++n)
+                    set_s(data + n, "code_word(" + s(base) + " + " + where + " + " + std::to_string(4 * n) + "u)");
+                return;
+            }
+            if (from.kind == Known::root && from.part == 0) {
+                // read through the address of a root descriptor: the buffer's own words
+                auto resource = resource_of(base);
+                for (std::uint32_t n = 0; n < words; ++n)
+                    set_s(data + n, read_word(resource, "0u", where, indexed ? ~0u : offset, 4 * n));
+                return;
+            }
+            if (from.kind != Known::table)
                 give_up("a load from memory that is not a descriptor of a table");
+            Known loaded{Known::descriptor, from.value, offset};
+            loaded.origin = ins.at;
+            if (indexed) {
+                // where in the table is only known when the shader runs
+                loaded.dynamic = dynamics_++;
+                line("d" + std::to_string(loaded.dynamic) + " = " + where + ";");
+            }
             for (std::uint32_t n = 0; n < words; ++n)
-                if (data + n < 128)
-                    known_[data + n] = {Known::descriptor, known_[base].value, offset, n};
+                if (data + n < 128) {
+                    known_[data + n] = loaded;
+                    known_[data + n].part = n;
+                }
             return;
         }
         if (starts(name, "s_buffer_load_dword")) {
-            const std::uint32_t words = name == "s_buffer_load_dword" ? 1 : name == "s_buffer_load_dwordx2" ? 2 : name == "s_buffer_load_dwordx4" ? 4 : name == "s_buffer_load_dwordx8" ? 8 : 16;
+            const auto words = words_of("s_buffer_load_dword");
             const auto resource = resource_of(base);
-            std::string where = hex(offset);
-            if (indexed)
-                where = "(" + operand(ins, index) + " + " + where + ")";
             for (std::uint32_t n = 0; n < words; ++n)
-                set_s(data + n, read_word(resource, "(" + where + " + " + std::to_string(4 * n) + "u)"));
+                set_s(data + n, read_word(resource, "0u", where, indexed ? ~0u : offset, 4 * n));
             return;
         }
+        if (name == "s_gl1_inv" || name == "s_dcache_inv" || name == "s_dcache_wb")
+            return;
         give_up(std::string(name));
     }
-    // a word of a buffer, at a byte offset
-    std::string read_word(const Resource &resource, const std::string &offset) {
+    // A word of a buffer: `offset` bytes into element `index`, plus `more`. `fixed` is the
+    // offset when it is known now, and ~0 otherwise.
+    std::string read_word(const Resource &resource, const std::string &index, const std::string &offset,
+                          std::uint32_t fixed, std::uint32_t more) {
+        const auto at = "(" + offset + " + " + std::to_string(more) + "u)";
+        if (resource.type == 3)
+            give_up("a buffer read through a sampler");
         if (resource.type == 2) {
-            const auto name = "b" + std::to_string(resource.reg) + "_" + std::to_string(resource.space);
-            if (!declared_.count(name)) {
-                declared_[name] = "cbuffer";
-                declarations_ += "cbuffer " + name + "_buffer : register(b" + std::to_string(resource.reg) +
-                                 ", space" + std::to_string(resource.space) + ") { uint4 " + name + "[4096]; };\n";
-            }
-            return name + "[" + offset + " >> 4][(" + offset + " >> 2) & 3u]";
+            if (index != "0u")
+                give_up("a constant buffer read by element");
+            const auto name = constants(resource);
+            // as many vectors as the shader is seen to read: the host's compiler is slow
+            // with large ones
+            auto &size = constants_size_[name];
+            size = std::max(size, fixed == ~0u ? 4096u : (fixed + more) / 16 + 1);
+            return name + "[" + at + " >> 4][(" + at + " >> 2) & 3u]";
         }
-        if (resource.type == 0)
-            return declare(resource, "ByteAddressBuffer") + ".Load(" + offset + ")";
-        if (resource.type == 1)
-            return declare(resource, "RWByteAddressBuffer") + ".Load(" + offset + ")";
-        give_up("a buffer read through a sampler");
+        if (resource.root) {
+            const auto name = object(resource, resource.type == 1 ? "RWByteAddressBuffer" : "ByteAddressBuffer");
+            return name + ".Load(" + bytes_of(resource, index) + at + ")";
+        }
+        return words(resource) + "[" + index + "].w[" + field(at, fixed, more) + "]";
+    }
+    // A buffer of the title's as the host's shader sees it: elements of words. The host's
+    // view has the stride the title's descriptor gives, so an element is found without the
+    // shader knowing its size, and an offset past an element's end reads on into the next,
+    // as it does on the console.
+    std::string words(const Resource &resource) {
+        uses_words_ = true;
+        return object(resource, resource.type == 1 ? "RWStructuredBuffer<Words>" : "StructuredBuffer<Words>");
+    }
+    static constexpr std::uint32_t words_in_element = 512;
+    std::string field(const std::string &at, std::uint32_t fixed, std::uint32_t more) {
+        if (fixed == ~0u)
+            return at + " >> 2";
+        if (fixed + more >= 4 * words_in_element)
+            give_up("an offset beyond what an element of a buffer is declared with");
+        return std::to_string((fixed + more) / 4);
+    }
+    void write_word(const Resource &resource, const std::string &index, const std::string &offset,
+                    std::uint32_t fixed, std::uint32_t more, const std::string &value) {
+        written(resource);
+        const auto at = "(" + offset + " + " + std::to_string(more) + "u)";
+        const std::string guard = exec_changes_ ? "if " + active() + " " : "";
+        if (resource.root)
+            line(guard + object(resource, "RWByteAddressBuffer") + ".Store(" + bytes_of(resource, index) + at + ", " + value + ");");
+        else
+            line(guard + words(resource) + "[" + index + "].w[" + field(at, fixed, more) + "] = " + value + ";");
+    }
+    // the bytes before element `index` of a root buffer, whose stride only the shader has
+    std::string bytes_of(const Resource &resource, const std::string &index) {
+        if (index == "0u")
+            return "";
+        if (!resource.stride)
+            give_up("a buffer whose stride is not known");
+        return index + " * " + std::to_string(resource.stride) + "u + ";
+    }
+    // a constant buffer as an array of vectors, by name
+    std::string constants(const Resource &resource) {
+        if (resource.dynamic >= 0) {
+            uses_constants_ = true;
+            return object(resource, "ConstantBuffer<Constants>") + ".w";
+        }
+        const auto name = "b" + std::to_string(resource.reg) + "_" + std::to_string(resource.space);
+        if (!declared_.count(name)) {
+            declared_[name] = "cbuffer";
+            declarations_ += "cbuffer " + name + "_buffer : register(b" + std::to_string(resource.reg) +
+                             ", space" + std::to_string(resource.space) + ") { uint4 " + name + "[@" + name + "@]; };\n";
+        } else if (declared_[name] != "cbuffer") {
+            give_up("one register as " + declared_[name] + " and as a constant buffer");
+        }
+        return name;
     }
 
     void fetch_inputs() {
@@ -884,6 +1179,110 @@ class Translator {
     }
 
     // ---- vector instructions ----
+    // The instructions with one or two sources in one word. A second word may say which
+    // byte or half of each source is meant, and which of the destination is written.
+    void emit_short(const Ins &ins) {
+        if (ins.form == Ins::Form::lanes)
+            give_up("an instruction that reads another lane");
+        const auto destination = (ins.w0 >> 17) & 0xff, modifier = ins.modifier;
+        const auto name = ins.name;
+        if (name == "v_nop")
+            return;
+        std::string a, b;
+        std::uint32_t mask = 106;
+        if (ins.form == Ins::Form::sub_dword) {
+            const bool half = ends(name, "_f16");
+            const auto part = [&](std::uint32_t code, std::uint32_t bits) {
+                const auto select = bits & 7;
+                auto x = bits >> 7 & 1 ? operand(ins, code) : v(code);
+                if (select < 4)
+                    x = "((" + x + " >> " + std::to_string(8 * select) + ") & 0xffu)";
+                else if (select < 6)
+                    x = "((" + x + " >> " + std::to_string(16 * (select - 4)) + ") & 0xffffu)";
+                if (bits >> 3 & 1 && select < 6) {
+                    const auto shift = std::to_string(select < 4 ? 24 : 16);
+                    x = "(uint)(((int)(" + x + " << " + shift + ")) >> " + shift + ")";
+                }
+                const auto sign = half ? "0x8000u" : "0x80000000u";
+                if (bits >> 5 & 1)
+                    x = "(" + x + " & ~" + sign + ")";
+                if (bits >> 4 & 1)
+                    x = "(" + x + " ^ " + sign + ")";
+                return x;
+            };
+            a = part(modifier & 0xff, modifier >> 16);
+            if (ins.format != F::vop1)
+                b = part((ins.w0 >> 9) & 0xff, modifier >> 24);
+            if (ins.format == F::vopc) {
+                if (modifier >> 15 & 1)
+                    mask = (modifier >> 8) & 0x7f;
+            } else {
+                if (modifier >> 13 & 7)
+                    give_up(std::string(name) + " on part of a register, with a modifier");
+                placed_ = {(modifier >> 8) & 7, (modifier >> 11) & 3};
+            }
+        } else {
+            a = operand(ins, ins.w0 & 0x1ff);
+            b = v((ins.w0 >> 9) & 0xff);
+        }
+        if (ins.format == F::vop1) {
+            if (name != "v_nop")
+                emit_vop1(name, destination, a);
+        } else if (ins.format == F::vop2) {
+            emit_vop2(ins, a, b);
+        } else {
+            emit_compare(name, mask, a, b);
+        }
+        placed_.reset();
+    }
+    // a value as the part of a register that an instruction writes
+    std::string place(std::uint32_t reg, const std::string &value) {
+        const auto [select, unused] = *placed_;
+        if (select >= 6)
+            return value;
+        const std::uint32_t width = select < 4 ? 8 : 16, shift = select < 4 ? 8 * select : 16 * (select - 4);
+        const auto part = "((" + value + ") & " + (width == 8 ? "0xffu" : "0xffffu") + ")";
+        if (unused == 2) // the rest stays
+            return "((" + v(reg) + " & " + hex(~((width == 8 ? 0xffu : 0xffffu) << shift)) + ") | (" + part + " << " + std::to_string(shift) + "))";
+        if (unused == 1) // the sign fills what is above
+            return "(uint)(((int)(" + part + " << " + std::to_string(32 - width) + ")) >> " + std::to_string(32 - width - shift) + ")";
+        return "(" + part + " << " + std::to_string(shift) + ")";
+    }
+    // Memory the lanes share. Of it, only reading a register of another pixel of the same
+    // quad is done: the pixel's own value and how it changes across the quad give it.
+    void emit_shared(const Ins &ins) {
+        const auto name = ins.name;
+        const auto offset = ins.w0 & 0xffff;
+        const auto source = (ins.w1 >> 8) & 0xff, destination = ins.w1 >> 24;
+        if (name != "ds_swizzle_b32")
+            give_up(std::string(name));
+        if (stage_ != Stage::pixel || !(offset >> 15 & 1))
+            give_up("ds_swizzle_b32 that is not between the pixels of a quad");
+        const auto id = "x" + std::to_string(temporaries_++);
+        if (const auto lane = offset & 3; (offset & 0xff) == lane * 0x55) {
+            // Every pixel takes the same one's value, which is how a shader takes
+            // differences across its quad. This pixel's own value stands for the first
+            // pixel's and the others follow from it, so that the differences are right.
+            line("float " + id + " = " + f(v(source)) + ";");
+            set_v(destination, u(id + (lane & 1 ? " + ddx_coarse(" + id + ")" : "") +
+                                 (lane & 2 ? " + ddy_coarse(" + id + ")" : "")));
+            return;
+        }
+        if (!quad_) {
+            std::size_t position = shader_.inputs.size();
+            for (std::size_t i = 0; i < shader_.inputs.size(); ++i)
+                if (!_stricmp(shader_.inputs[i].name.c_str(), "SV_Position"))
+                    position = i;
+            if (position == shader_.inputs.size())
+                give_up("ds_swizzle_b32 in a shader without its position");
+            const auto field = "input.f" + std::to_string(position);
+            prologue_ += "    uint quad = ((uint)" + field + ".x & 1u) | (((uint)" + field + ".y & 1u) << 1);\n";
+            quad_ = true;
+        }
+        line("uint " + id + "q = (" + hex(offset & 0xff) + " >> (quad * 2u)) & 3u; float " + id + " = " + f(v(source)) + ";");
+        set_v(destination, u(id + " + ((float)(" + id + "q & 1u) - (float)(quad & 1u)) * ddx_fine(" + id +
+                             ") + ((float)(" + id + "q >> 1) - (float)(quad >> 1)) * ddy_fine(" + id + ")"));
+    }
     void emit_vop1(std::string_view name, std::uint32_t destination, const std::string &a) {
         std::string value;
         const auto fa = f(a);
@@ -981,9 +1380,8 @@ class Translator {
         if (name == "v_ldexp_f32") return u("ldexp(" + fa + ", (float)(int)" + b + ")");
         give_up(std::string(name));
     }
-    void emit_vop2(const Ins &ins) {
+    void emit_vop2(const Ins &ins, const std::string &a, const std::string &b) {
         const auto destination = (ins.w0 >> 17) & 0xff;
-        const auto a = operand(ins, ins.w0 & 0x1ff), b = v((ins.w0 >> 9) & 0xff);
         const auto name = ins.name;
         if (name == "v_cndmask_b32") {
             set_v(destination, "(" + s(106) + " != 0u ? " + b + " : " + a + ")");
@@ -1214,6 +1612,7 @@ class Translator {
         const bool half_address = ins.w1 >> 30 & 1, half_data = ins.w1 >> 31 & 1;
         const auto data = (ins.w1 >> 8) & 0xff;
         const auto texture = resource_of(((ins.w1 >> 16) & 0x1f) * 4);
+        const std::string guard = exec_changes_ ? "if " + active() + " " : "";
         // the address: registers in a row from the first, or each one named
         std::vector<std::string> address;
         const auto more = (ins.w0 >> 1) & 3;
@@ -1246,6 +1645,29 @@ class Translator {
         const int count = coordinates[dimension];
         const bool load = name == "image_load" || name == "image_load_mip" || name == "image_store" || name == "image_store_mip" || starts(name, "image_atomic") || name == "image_get_resinfo";
         std::string result; // a float4, or for a load whatever the texture has
+        if (name == "image_get_resinfo") {
+            // the size of a level, the layers or the depth, and how many levels there are
+            const bool readable = texture.type != 1, multisampled = dimension >= 6;
+            const auto object_name = object(texture, std::string(readable ? "" : "RW") + types[dimension] + "<float4>");
+            static constexpr const char *sizes[] = {"x", "x, y", "x, y, z", "x, y", "x, z", "x, y, z", "x, y", "x, y, z"};
+            const auto id = std::to_string(temporaries_++);
+            line("uint x" + id + "x = 1u, x" + id + "y = 1u, x" + id + "z = 1u, x" + id + "w = 1u;");
+            std::string arguments;
+            for (const char *size = sizes[dimension]; *size; ++size)
+                arguments += *size == ',' || *size == ' ' ? std::string(1, *size) : "x" + id + *size;
+            if (multisampled)
+                arguments += ", x" + id + "w";
+            else if (readable)
+                arguments = "(uint)" + take() + ", " + arguments + ", x" + id + "w";
+            line(object_name + ".GetDimensions(" + arguments + ");");
+            if (dimension == 3)
+                line("x" + id + "z = 6u;");
+            std::uint32_t reg = data;
+            for (int c = 0; c < 4; ++c)
+                if (mask >> c & 1)
+                    set_v(reg++, "x" + id + "xyzw"[c]);
+            return;
+        }
         if (load) {
             if (dimension == 3)
                 give_up("a cube read by texel");
@@ -1260,37 +1682,39 @@ class Translator {
             for (int n = 0; n < places; ++n)
                 where += (n ? ", " : "") + xs[n];
             where += ")";
-            if (name == "image_get_resinfo")
-                give_up("image_get_resinfo");
             if (name == "image_load" || name == "image_load_mip") {
                 const auto level = name == "image_load_mip" ? integer(take()) : std::string("0");
-                if (texture.type == 1) {
-                    const auto object = declare(texture, std::string("RW") + types[dimension] + "<float4>");
-                    result = object + "[" + where + "]";
-                } else if (multisampled) {
-                    const auto object = declare(texture, std::string(types[dimension]) + "<float4>");
-                    result = object + ".Load(" + where + ", " + xs[count - 1] + ")";
-                } else {
-                    const auto object = declare(texture, std::string(types[dimension]) + "<float4>");
-                    result = object + ".Load(int" + std::to_string(places + 1) + "(" + where + ", " + level + "))";
-                }
+                if (texture.type == 1)
+                    result = object(texture, std::string("RW") + types[dimension] + "<float4>") + "[" + where + "]";
+                else if (multisampled)
+                    result = object(texture, std::string(types[dimension]) + "<float4>") + ".Load(" + where + ", " + xs[count - 1] + ")";
+                else
+                    result = object(texture, std::string(types[dimension]) + "<float4>") + ".Load(int" + std::to_string(places + 1) + "(" + where + ", " + level + "))";
             } else if (name == "image_store" || name == "image_store_mip") {
-                if (texture.type != 1)
-                    give_up("a store to a texture that is not an unordered access view");
-                const auto object = declare(texture, std::string("RW") + types[dimension] + "<float4>");
+                written(texture);
+                const auto target = object(texture, std::string("RW") + types[dimension] + "<float4>");
                 std::string value = "float4(";
                 std::uint32_t reg = data;
                 for (int c = 0; c < 4; ++c)
                     value += std::string(c ? ", " : "") + (mask >> c & 1 ? (half_data ? "f16tof32(" + v(reg++) + ")" : f(v(reg++))) : std::string("0.0"));
                 value += ")";
-                line(std::string(exec_changes_ ? "if " + active() + " " : "") + object + "[" + where + "] = " + value + ";");
+                line(guard + target + "[" + where + "] = " + value + ";");
                 return;
             } else {
-                give_up(std::string(name));
+                // an atomic operation on a texel, which leaves what was there before
+                written(texture);
+                const auto target = object(texture, std::string("RW") + types[dimension] + "<uint>") + "[" + where + "]";
+                const auto id = "x" + std::to_string(temporaries_++);
+                line("uint " + id + " = 0u;");
+                line(guard + atomic(name.substr(13), target, v(data), v(data + 1), id));
+                set_v(data, id);
+                return;
             }
         } else {
             const auto sampler_register = ((ins.w1 >> 21) & 0x1f) * 4;
-            const auto state = resource_of(sampler_register);
+            auto state = resource_of(sampler_register);
+            if (state.dynamic >= 0)
+                state.type = 3;
             if (state.type != 3)
                 give_up("a sampler that is not one");
             if (texture.type != 0)
@@ -1303,7 +1727,7 @@ class Translator {
             };
             const bool gather = starts(name, "image_gather4"), compare = has("_c"), offset = has("_o"),
                        gradients = has("_d"), level = has("_l"), bias = has("_b"), zero = has("_lz");
-            if (has("_cl") || name == "image_get_lod")
+            if (has("_cl"))
                 give_up(std::string(name));
             std::string offset_value, bias_value, reference, ddx_value, ddy_value, level_value;
             const auto real = [&](const std::string &reg) { return half_address ? "f16tof32(" + reg + ")" : f(reg); };
@@ -1326,15 +1750,29 @@ class Translator {
                     y += (n ? ", " : "") + real(take());
                 ddx_value = x + ")", ddy_value = y + ")";
             }
-            if (dimension == 3)
-                give_up("a cube, sampled by face");
+            if (dimension == 3 && gradients)
+                give_up("a cube sampled with gradients");
             std::string where = "float" + std::to_string(count) + "(";
             for (int n = 0; n < count; ++n)
                 where += (n ? ", " : "") + real(take());
             where += ")";
+            // the GPU takes a cube's face and the place on it; the host a direction
+            if (dimension == 3)
+                where = "cube_direction(" + where + ")";
             if (level) level_value = real(take());
-            const auto object = declare(texture, std::string(types[dimension]) + "<float4>");
-            const auto sampler = declare(state, compare ? "SamplerComparisonState" : "SamplerState");
+            const auto texture_name = object(texture, std::string(types[dimension]) + "<float4>");
+            const auto sampler = object(state, compare ? "SamplerComparisonState" : "SamplerState");
+            if (name == "image_get_lod") {
+                if (stage_ != Stage::pixel)
+                    give_up("image_get_lod outside a pixel shader");
+                std::uint32_t reg = data;
+                if (mask & 1)
+                    set_v(reg++, u(texture_name + ".CalculateLevelOfDetail(" + sampler + ", " + where + ")"));
+                if (mask & 2)
+                    set_v(reg++, u(texture_name + ".CalculateLevelOfDetailUnclamped(" + sampler + ", " + where + ")"));
+                return;
+            }
+            const auto &object = texture_name;
             if (gather) {
                 const int component = std::countr_zero(mask);
                 static constexpr const char *methods[] = {"GatherRed", "GatherGreen", "GatherBlue", "GatherAlpha"};
@@ -1370,54 +1808,116 @@ class Translator {
                 set_v(reg++, half_data ? "f32tof16(" + channel + ")" : u(channel));
             }
     }
+    // An atomic operation named by the end of its instruction's name, as a statement:
+    // `target` takes `value`, and `before` what was there.
+    std::string atomic(std::string_view how, const std::string &target, const std::string &value,
+                       const std::string &compare, const std::string &before) {
+        const auto call = [&](const char *function, const std::string &with) {
+            return std::string(function) + "(" + target + ", " + with + ", " + before + ");";
+        };
+        if (how == "add") return call("InterlockedAdd", value);
+        if (how == "sub") return call("InterlockedAdd", "(uint)(-(int)" + value + ")");
+        if (how == "inc") return call("InterlockedAdd", "1u");
+        if (how == "dec") return call("InterlockedAdd", "0xffffffffu");
+        if (how == "umin") return call("InterlockedMin", value);
+        if (how == "umax") return call("InterlockedMax", value);
+        if (how == "and") return call("InterlockedAnd", value);
+        if (how == "or") return call("InterlockedOr", value);
+        if (how == "xor") return call("InterlockedXor", value);
+        if (how == "swap") return call("InterlockedExchange", value);
+        if (how == "cmpswap") return call("InterlockedCompareExchange", compare + ", " + value);
+        give_up("an atomic " + std::string(how));
+    }
     void emit_buffer(const Ins &ins) {
         const auto name = ins.name;
+        if (name == "buffer_gl0_inv" || name == "buffer_gl1_inv")
+            return;
         const auto offset = ins.w0 & 0xfff;
         const bool has_offset = ins.w0 >> 12 & 1, has_index = ins.w0 >> 13 & 1;
         const auto address = ins.w1 & 0xff, data = (ins.w1 >> 8) & 0xff;
         const auto base = ((ins.w1 >> 16) & 0x1f) * 4, scalar_offset = ins.w1 >> 24;
         const auto resource = resource_of(base);
+        const std::string guard = exec_changes_ ? "if " + active() + " " : "";
         std::string index = "0u", extra = hex(offset);
+        std::uint32_t fixed = offset;
         if (has_index)
             index = v(address);
         if (has_offset)
-            extra = "(" + v(address + (has_index ? 1 : 0)) + " + " + extra + ")";
+            extra = "(" + v(address + (has_index ? 1 : 0)) + " + " + extra + ")", fixed = ~0u;
         if (scalar_offset != 0x80 && scalar_offset != 125)
-            extra = "(" + operand(ins, scalar_offset) + " + " + extra + ")";
-        if (starts(name, "buffer_load_format_")) {
+            extra = "(" + operand(ins, scalar_offset) + " + " + extra + ")", fixed = ~0u;
+        if (starts(name, "buffer_load_format_") || starts(name, "buffer_store_format_")) {
             // a buffer of elements with a format: element `index`
-            const auto components = name.size() - 19;
-            const auto object = declare(resource, resource.type == 1 ? "RWBuffer<float4>" : "Buffer<float4>");
+            const bool store = starts(name, "buffer_store");
+            const auto components = name.size() - (store ? 20 : 19);
+            if (resource.root || resource.type >= 2)
+                give_up("a buffer with a format that is not a view");
+            if (ends(name.substr(0, name.size() - components - 1), "d16"))
+                give_up(std::string(name));
+            if (store) {
+                written(resource);
+                std::string value = "float4(";
+                for (std::size_t c = 0; c < 4; ++c)
+                    value += std::string(c ? ", " : "") + (c < components ? f(v(data + static_cast<std::uint32_t>(c))) : std::string("0.0"));
+                line(guard + object(resource, "RWBuffer<float4>") + "[" + index + "] = " + value + ");");
+                return;
+            }
+            const auto buffer = object(resource, resource.type == 1 ? "RWBuffer<float4>" : "Buffer<float4>");
             const auto sample = "x" + std::to_string(temporaries_++);
-            line("float4 " + sample + " = " + object + (resource.type == 1 ? "[" + index + "]" : ".Load(" + index + ")") + ";");
+            line("float4 " + sample + " = " + buffer + (resource.type == 1 ? "[" + index + "]" : ".Load(" + index + ")") + ";");
             for (std::size_t c = 0; c < components; ++c)
                 set_v(data + static_cast<std::uint32_t>(c), u(sample + "." + "xyzw"[c]));
             return;
         }
-        if (starts(name, "buffer_load_dword")) {
-            const std::uint32_t words = name == "buffer_load_dword" ? 1 : name == "buffer_load_dwordx2" ? 2 : name == "buffer_load_dwordx3" ? 3 : 4;
-            // bytes: the element's index times the buffer's stride, which the title's view has
-            const auto where = "(" + index + " * " + stride(resource) + " + " + extra + ")";
-            for (std::uint32_t n = 0; n < words; ++n)
-                set_v(data + n, read_word(resource, "(" + where + " + " + std::to_string(4 * n) + "u)"));
+        const auto count = [&](std::string_view prefix) -> std::uint32_t {
+            const auto rest = name.substr(prefix.size());
+            return rest.empty() ? 1 : rest == "x2" ? 2 : rest == "x3" ? 3 : rest == "x4" ? 4 : 0;
+        };
+        if (starts(name, "buffer_load_dword") && count("buffer_load_dword")) {
+            for (std::uint32_t n = 0, words = count("buffer_load_dword"); n < words; ++n)
+                set_v(data + n, read_word(resource, index, extra, fixed, 4 * n));
+            return;
+        }
+        if (starts(name, "buffer_store_dword") && count("buffer_store_dword")) {
+            for (std::uint32_t n = 0, words = count("buffer_store_dword"); n < words; ++n)
+                write_word(resource, index, extra, fixed, 4 * n, v(data + n));
+            return;
+        }
+        if (name == "buffer_load_ubyte" || name == "buffer_load_sbyte" || name == "buffer_load_ushort" ||
+            name == "buffer_load_sshort") {
+            // part of a word, from where in it the offset says
+            const bool byte = ends(name, "byte"), extend = name[12] == 's';
+            const auto shift = "((" + extra + " & 3u) * 8u)";
+            const auto part = "((" + read_word(resource, index, extra, fixed == ~0u ? fixed : fixed & ~3u, 0) + " >> " + shift + ") & " + (byte ? "0xffu" : "0xffffu") + ")";
+            const auto bits = byte ? "24" : "16";
+            set_v(data, extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")" : part);
+            return;
+        }
+        if (starts(name, "buffer_atomic_") && !ends(name, "_x2")) {
+            written(resource);
+            const auto at = "(" + extra + " + 0u)";
+            const auto id = "x" + std::to_string(temporaries_++);
+            line("uint " + id + " = 0u;");
+            if (resource.root) {
+                const auto how = name.substr(14);
+                static constexpr std::pair<const char *, const char *> methods[] = {
+                    {"add", "InterlockedAdd"}, {"umin", "InterlockedMin"}, {"umax", "InterlockedMax"},
+                    {"and", "InterlockedAnd"}, {"or", "InterlockedOr"}, {"xor", "InterlockedXor"},
+                    {"swap", "InterlockedExchange"}};
+                const char *method = nullptr;
+                for (const auto &[suffix, function] : methods)
+                    if (how == suffix)
+                        method = function;
+                if (!method)
+                    give_up("an atomic " + std::string(how) + " on a root buffer");
+                line(guard + object(resource, "RWByteAddressBuffer") + "." + method + "(" + bytes_of(resource, index) + at + ", " + v(data) + ", " + id + ");");
+            } else {
+                line(guard + atomic(name.substr(14), words(resource) + "[" + index + "].w[" + field(at, fixed, 0) + "]", v(data), v(data + 1), id));
+            }
+            set_v(data, id);
             return;
         }
         give_up(std::string(name));
-    }
-    // the stride of the elements of a buffer: from the records after the code
-    std::string stride(const Resource &resource) {
-        const auto file = shader_.file;
-        const auto region = word(file, 0xc0), size = word(file, 0xc8);
-        std::size_t at = region + size;
-        while (word(file, at) == 0xbf9f0000)
-            at += 4;
-        for (; at + 20 <= file.size() && word(file, at + 8) != ~0u; at += 20) {
-            const auto kind = word(file, at);
-            if ((kind == 0x300 && resource.type == 0) || (kind == 0x303 && resource.type == 1))
-                if (word(file, at + 8) == resource.reg && (word(file, at + 16) & 0xff) == 4)
-                    return std::to_string(std::max<std::uint32_t>(word(file, at + 12), 1)) + "u";
-        }
-        give_up("a buffer whose stride is not known");
     }
 
     void emit_export(const Ins &ins) {
@@ -1530,8 +2030,31 @@ class Translator {
         if (stage_ == Stage::vertex && !fetched_ && !shader_.inputs.empty())
             give_up("a vertex shader that does not fetch its inputs");
         std::string text = helpers;
+        if (uses_words_)
+            text += "struct Words { uint w[" + std::to_string(words_in_element) + "]; };\n";
+        if (uses_constants_)
+            text += "struct Constants { uint4 w[4096]; };\n";
+        if (uses_data_) {
+            // the constants a shader keeps after its code, by their address from the first
+            // instruction
+            const auto count = std::min<std::size_t>(code_.size() - data_first_, 4096);
+            if (!count)
+                give_up("constants after the code that are not there");
+            text += "static const uint code_data[" + std::to_string(count) + "] = {";
+            for (std::size_t n = 0; n < count; ++n)
+                text += (n ? ", " : "") + hex(code_[data_first_ + n]);
+            text += "};\nuint code_word(uint address) { return code_data[min((address >> 2) - " +
+                    std::to_string(data_first_) + "u, " + std::to_string(count - 1) + "u)]; }\n";
+        }
+        for (const auto &[name, size] : constants_size_) {
+            const auto mark = "@" + name + "@";
+            if (const auto at = declarations_.find(mark); at != std::string::npos)
+                declarations_.replace(at, mark.size(), std::to_string(std::min(size, 4096u)));
+        }
         text += declarations_;
         std::string registers;
+        for (int n = 0; n < dynamics_; ++n)
+            registers += "    uint d" + std::to_string(n) + " = 0u;\n";
         for (const auto reg : used_s_)
             registers += "    uint s" + std::to_string(reg) + " = " + (reg == 126 || reg == 127 ? "0xffffffffu" : "0u") + ";\n";
         for (const auto reg : used_v_)
@@ -1571,16 +2094,37 @@ class Translator {
         "float cube_id(float x, float y, float z) { float3 a = abs(float3(x, y, z)); return a.z >= a.x && a.z >= a.y ? (z < 0.0 ? 5.0 : 4.0) : a.y >= a.x ? (y < 0.0 ? 3.0 : 2.0) : (x < 0.0 ? 1.0 : 0.0); }\n"
         "float cube_sc(float x, float y, float z) { float3 a = abs(float3(x, y, z)); return a.z >= a.x && a.z >= a.y ? (z < 0.0 ? -x : x) : a.y >= a.x ? x : (x < 0.0 ? z : -z); }\n"
         "float cube_tc(float x, float y, float z) { float3 a = abs(float3(x, y, z)); return a.z >= a.x && a.z >= a.y ? -y : a.y >= a.x ? (y < 0.0 ? -z : z) : -y; }\n"
+        "void shift_left(uint lo, uint hi, uint n, out uint rl, out uint rh) { n &= 63u;\n"
+        "    if (n == 0u) { rl = lo; rh = hi; } else if (n < 32u) { rl = lo << n; rh = (hi << n) | (lo >> (32u - n)); } else { rl = 0u; rh = lo << (n - 32u); } }\n"
+        "void shift_right(uint lo, uint hi, uint n, out uint rl, out uint rh) { n &= 63u;\n"
+        "    if (n == 0u) { rl = lo; rh = hi; } else if (n < 32u) { rl = (lo >> n) | (hi << (32u - n)); rh = hi >> n; } else { rl = hi >> (n - 32u); rh = 0u; } }\n"
+        "void shift_signed(uint lo, uint hi, uint n, out uint rl, out uint rh) { n &= 63u;\n"
+        "    if (n == 0u) { rl = lo; rh = hi; } else if (n < 32u) { rl = (lo >> n) | (hi << (32u - n)); rh = (uint)((int)hi >> n); } else { rl = (uint)((int)hi >> (n - 32u)); rh = (uint)((int)hi >> 31); } }\n"
+        "void field_mask(uint count, uint first, out uint rl, out uint rh) { count &= 63u;\n"
+        "    uint lo = count >= 32u ? 0xffffffffu : (1u << count) - 1u, hi = count > 32u ? (1u << (count - 32u)) - 1u : 0u;\n"
+        "    shift_left(lo, hi, first, rl, rh); }\n"
+        "float3 cube_direction(float3 place) { float2 at = (place.xy - 1.5) * 2.0; int face = (int)round(place.z);\n"
+        "    return face == 0 ? float3(1.0, -at.y, -at.x) : face == 1 ? float3(-1.0, -at.y, at.x) : face == 2 ? float3(at.x, 1.0, at.y)\n"
+        "         : face == 3 ? float3(at.x, -1.0, -at.y) : face == 4 ? float3(at.x, -at.y, 1.0) : float3(-at.x, -at.y, -1.0); }\n"
         "bool float_class(float x, uint mask) { uint b = asuint(x); bool neg = (b >> 31) != 0u; uint e = (b >> 23) & 255u; uint m = b & 0x7fffffu;\n"
         "    uint c = e == 255u ? (m != 0u ? ((m >> 22) != 0u ? 2u : 1u) : (neg ? 4u : 512u)) : e == 0u ? (m == 0u ? (neg ? 32u : 64u) : (neg ? 16u : 128u)) : (neg ? 8u : 256u);\n"
         "    return (mask & c) != 0u; }\n";
 
     Stage stage_;
     const Shader &shader_;
+    Facts &facts_;
+    int dynamics_ = 0;
+    std::map<std::string, std::pair<std::string, std::uint32_t>> arrays_; // name and first slot
+    std::set<std::pair<std::uint32_t, std::size_t>> taken_;             // ranges with an array
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> placed_;
+    std::map<std::string, std::uint32_t> constants_size_; // in vectors, by name
+    bool uses_words_ = false, uses_constants_ = false, uses_data_ = false, quad_ = false;
     std::vector<Parameter> parameters_;
     std::vector<std::uint32_t> code_;
     std::uint32_t header_[4] = {};
     std::vector<Ins> code_list_;
+    std::map<std::uint32_t, std::size_t> index_of_; // by an instruction's place, in words
+    std::uint32_t data_first_ = 0;                  // the word after the last instruction
     std::vector<Block> blocks_;
     std::vector<std::size_t> target_block_;
     std::map<std::size_t, std::size_t> loop_end_;
@@ -1603,8 +2147,16 @@ std::optional<std::string> translate(Stage stage, const Shader &shader, std::str
         return std::nullopt;
     }
     try {
-        // not on the stack: it is large, and a title's threads may have little
-        return std::make_unique<Translator>(stage, shader)->run();
+        // not on the stack: it is large, and a title's threads may have little; and again
+        // with what a pass found out, until a pass finds nothing new
+        Facts facts;
+        for (int pass = 0; pass < 64; ++pass) {
+            try {
+                return std::make_unique<Translator>(stage, shader, facts)->run();
+            } catch (const Retry &) {
+            }
+        }
+        give_up("descriptors that do not settle");
     } catch (const Unsupported &unsupported) {
         if (why)
             *why = unsupported.what;
