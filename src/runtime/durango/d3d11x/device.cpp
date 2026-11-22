@@ -55,13 +55,11 @@ std::size_t dxgi_inserted = 0;
 // IDXGIFactory2::CreateSwapChainForCoreWindow
 // The title's first direct queue: a console Direct3D 12 swap chain is made for the device,
 // the host's for the queue that presents
-HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, IUnknown *,
-                                            const DXGI_SWAP_CHAIN_DESC1 *description, IDXGIOutput *,
-                                            IDXGISwapChain1 **swap_chain) {
+HRESULT make_swap_chain(IDXGIFactory2 *factory, IUnknown *device,
+                        const DXGI_SWAP_CHAIN_DESC1 *description, IDXGISwapChain1 **swap_chain) {
     auto *const window = winrt::current_title_window();
     if (!window || !description || !swap_chain)
         return E_INVALIDARG;
-    auto *const factory = static_cast<IDXGIFactory2 *>(forwarder_host(self));
     // what a CoreWindow takes and a window handle does not
     auto host = *description;
     // flip swap chains take no typeless formats, which the console's do
@@ -109,6 +107,12 @@ HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, I
         description->Flags, static_cast<unsigned long>(result));
     std::fflush(stderr);
     return result;
+}
+HRESULT STDMETHODCALLTYPE create_swap_chain(Forwarder *self, IUnknown *device, IUnknown *,
+                                            const DXGI_SWAP_CHAIN_DESC1 *description, IDXGIOutput *,
+                                            IDXGISwapChain1 **swap_chain) {
+    return make_swap_chain(static_cast<IDXGIFactory2 *>(forwarder_host(self)), device, description,
+                           swap_chain);
 }
 // the host's factory up to IDXGIFactory7 where it has it, 32 methods, else IDXGIFactory2
 bool latest_factory = false;
@@ -249,6 +253,42 @@ HRESULT WINAPI create_device_x(const UINT *parameters, ID3D11Device **device,
     return create_device(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
                          parameters ? parameters[0] : D3D11_SDK_VERSION, device, nullptr, context);
 }
+// D3D11XCreateDeviceXAndSwapChain1: the device, and a swap chain for the title's window
+// from the factory of the device's adapter
+HRESULT WINAPI create_device_and_swap_chain(const UINT *parameters,
+                                            const DXGI_SWAP_CHAIN_DESC1 *description,
+                                            IDXGISwapChain1 **swap_chain, ID3D11Device **device,
+                                            ID3D11DeviceContext **context) {
+    if (swap_chain)
+        *swap_chain = nullptr;
+    ID3D11Device *made = nullptr;
+    auto result = create_device_x(parameters, &made, context);
+    if (FAILED(result))
+        return result;
+    if (description && swap_chain) {
+        auto *const host = static_cast<IUnknown *>(d3d11x::unwrap(made));
+        IDXGIDevice *dxgi = nullptr;
+        IDXGIAdapter *adapter = nullptr;
+        IDXGIFactory2 *factory = nullptr;
+        result = host->QueryInterface(&dxgi);
+        if (SUCCEEDED(result))
+            result = dxgi->GetAdapter(&adapter);
+        if (SUCCEEDED(result))
+            result = adapter->GetParent(IID_PPV_ARGS(&factory));
+        if (SUCCEEDED(result))
+            result = make_swap_chain(factory, made, description, swap_chain);
+        for (IUnknown *const object :
+             {static_cast<IUnknown *>(factory), static_cast<IUnknown *>(adapter),
+              static_cast<IUnknown *>(dxgi)})
+            if (object)
+                object->Release();
+    }
+    if (device && SUCCEEDED(result))
+        *device = made;
+    else
+        made->Release();
+    return result;
+}
 HRESULT WINAPI present_array(UINT interval, UINT, UINT, UINT count, void **swap_chains,
                              const void *) {
     auto result = S_OK;
@@ -288,6 +328,8 @@ void install_d3d11x(Registry &registry) {
     const std::pair<const char *, void *> functions[] = {
         {"D3D11CreateDevice", reinterpret_cast<void *>(&create_device)},
         {"D3D11XCreateDeviceX", reinterpret_cast<void *>(&create_device_x)},
+        {"D3D11XCreateDeviceXAndSwapChain1",
+         reinterpret_cast<void *>(&create_device_and_swap_chain)},
         {"DXGIXPresentArray", reinterpret_cast<void *>(&present_array)},
         {"DXGIXGetFrameStatistics", reinterpret_cast<void *>(&frame_statistics)},
         {"D3DMapEsramMemory", reinterpret_cast<void *>(&map_esram)},
