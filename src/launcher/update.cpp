@@ -19,6 +19,7 @@ constexpr char archive_name[] = "XValkyrie-Win-x86_64-Portable.zip";
 constexpr std::array<const wchar_t *, 2> executables{L"xvalkyrie.exe", L"xvboot.exe"};
 constexpr wchar_t replaced[] = L".replaced";
 
+struct NotFound {};
 struct Handle {
     HINTERNET handle = nullptr;
     ~Handle() {
@@ -61,6 +62,8 @@ std::vector<std::uint8_t> download(const std::wstring &address, std::size_t limi
     DWORD status = 0, size = sizeof status;
     WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+    if (status == 404)
+        throw NotFound{};
     if (status != 200)
         throw std::runtime_error("GitHub answered " + std::to_string(status));
     std::vector<std::uint8_t> body;
@@ -118,7 +121,7 @@ bool writable(const std::filesystem::path &folder) {
 }
 } // namespace
 
-std::optional<Update> find_update(std::string_view current) try {
+UpdateCheck find_update(std::string_view current) try {
     const auto body = download(std::wstring(L"https://") + releases_host + latest_release, 4 << 20);
     const auto release = nlohmann::json::parse(body.begin(), body.end());
     Update update;
@@ -128,11 +131,17 @@ std::optional<Update> find_update(std::string_view current) try {
             update.archive = asset.at("browser_download_url").get<std::string>();
     bool between = false, pre = false;
     const auto have = numbers(current, between), latest = numbers(update.version, pre);
-    if (update.archive.empty() || pre || latest < have || (latest == have && !between))
-        return std::nullopt;
-    return update;
-} catch (const std::exception &) {
-    return std::nullopt;
+    if (pre || latest < have || (latest == have && !between))
+        return {std::nullopt, "XValkyrie is up to date"};
+    if (update.archive.empty())
+        return {std::nullopt, update.version + " is out, without a download for Windows yet"};
+    return {update, {}};
+} catch (const NotFound &) {
+    return {std::nullopt, "No release has been published yet"};
+} catch (const std::exception &e) {
+    return {std::nullopt, std::string("Could not check for updates: ") + e.what()};
+} catch (...) {
+    return {std::nullopt, "Could not check for updates"};
 }
 
 void apply_update(const std::filesystem::path &staged) {
@@ -161,7 +170,7 @@ void apply_update(const std::filesystem::path &staged) {
     }
 }
 
-void install_update(const Update &update) {
+void install_update(const Update &update) try {
     const auto archive_bytes = download(wide(update.archive), 512u << 20);
     wchar_t temporary[MAX_PATH];
     GetTempPathW(MAX_PATH, temporary);
@@ -191,6 +200,10 @@ void install_update(const Update &update) {
         throw std::runtime_error("the program's files could not be replaced");
     }
     std::filesystem::remove_all(staged, ignored);
+} catch (const NotFound &) {
+    throw std::runtime_error("the release's download is not there");
+} catch (const std::filesystem::filesystem_error &) {
+    throw std::runtime_error("the update's files could not be written");
 }
 
 void restart() {

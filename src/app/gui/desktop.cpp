@@ -105,7 +105,7 @@ class Desktop {
                     std::filesystem::path(std::u8string(text.begin(), text.end()));
             }
         });
-        update_check_ = std::async(std::launch::async, [] { return find_update(release); });
+        check_for_updates(false);
         settings_host_.add_folder = [this] { pick_folder(Dialog::add_library); };
         settings_host_.change_folder = [this](std::size_t index) {
             pick_folder(Dialog::replace_library, index);
@@ -211,6 +211,10 @@ class Desktop {
 
   private:
     bool busy() const { return guest_ || dialog_.valid() || loading_.valid(); }
+    void check_for_updates(bool asked) {
+        update_asked_ = asked;
+        update_check_ = std::async(std::launch::async, [] { return find_update(release); });
+    }
     enum class Dialog { file, folder, add_library, replace_library };
     void pick() {
         if (!busy()) {
@@ -295,8 +299,13 @@ class Desktop {
             }
         }
         if (update_check_.valid() &&
-            update_check_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-            update_ = update_check_.get();
+            update_check_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto check = update_check_.get();
+            update_ = std::move(check.update);
+            // a check nobody asked for only speaks up when there is an update
+            if (update_asked_)
+                notice_ = update_ ? update_->version + " is available" : check.message;
+        }
         if (updating_.valid() &&
             updating_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             try {
@@ -393,6 +402,9 @@ class Desktop {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem(update_check_.valid() ? "Checking for Updates..." : "Check for Updates",
+                                nullptr, false, !update_check_.valid() && !updating_.valid()))
+                check_for_updates(true);
             if (ImGui::MenuItem("About XValkyrie"))
                 settings_.show(ui::Settings::Page::about);
             ImGui::EndMenu();
@@ -1019,7 +1031,8 @@ class Desktop {
     std::chrono::steady_clock::time_point started_; // when the title was
     bool ran_ = false; // the title opened ran and has ended: its log is what is on screen
     std::future<LaunchResult> loading_;
-    std::future<std::optional<Update>> update_check_;
+    std::future<UpdateCheck> update_check_;
+    bool update_asked_ = false; // through the menu, rather than when the window opened
     std::optional<Update> update_;
     std::future<void> updating_;
     std::filesystem::path path_; // what loading_ is reading
