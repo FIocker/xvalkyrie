@@ -3110,6 +3110,8 @@ void configure_lists() {
     // DriverHintX, the counters, and the binning of primitive batches
     ignore({99, 100, 101, 102, 103, 104});
     list_vtable[113] = reinterpret_cast<Slot>(&begin_render_pass);
+    // SetPredicationBufferX: nothing is drawn by a predicate here
+    ignore({85});
 }
 void *make_list_proxy(List *host) {
     auto *const proxy = new ListProxy{};
