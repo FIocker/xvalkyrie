@@ -100,8 +100,6 @@ MappedImage::MappedImage(std::span<const std::uint8_t> file, const json &pe,
     if (delta && (pe.at("characteristics").get<std::uint64_t>() & 1))
         throw std::runtime_error(
             "Relocations were stripped; image only loads at its preferred base");
-    if (delta && !contents.contains("base_relocations"))
-        throw std::runtime_error("Image has no base relocations and cannot be rebased");
     if (contents.contains("base_relocations")) {
         // the entries are read from the mapped .reloc data, which pe::inspect has checked
         for (const auto &block : contents.at("base_relocations")) {

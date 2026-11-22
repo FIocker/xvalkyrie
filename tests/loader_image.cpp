@@ -89,13 +89,18 @@ TEST_CASE("import slots") {
     }
 }
 
+TEST_CASE("an image that has no relocations, and did not have them stripped, loads anywhere") {
+    auto bytes = fixture();
+    put(bytes, 264 + 5 * 8, 0, 8);
+    CHECK_NOTHROW(MappedImage(bytes, {.guest_base = 0x150000000, .resolve = {}}));
+}
+
 TEST_CASE("unmappable images") {
     auto bytes = fixture();
     std::optional<std::uint64_t> base = 0x150000000;
     SECTION("unaligned base") { base = 0x150001000; }
     SECTION("base out of range") { base = 0x7fffffff0000; }
     SECTION("relocations stripped") { put(bytes, 150, 0x23, 2); }
-    SECTION("no relocation directory") { put(bytes, 264 + 5 * 8, 0, 8); }
     SECTION("unsupported relocation type") { put(bytes, 512 + 0x108, 0x3140, 2); }
     SECTION("relocation target unmapped") { put(bytes, 512 + 0x100, 0x1800); }
     SECTION("relocation target past section end") { put(bytes, 512 + 0x108, 0xa1fc, 2); }

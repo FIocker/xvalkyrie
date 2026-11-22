@@ -248,7 +248,17 @@ void *WINAPI resolve_delay_loaded(void *module, const IMAGE_DELAYLOAD_DESCRIPTOR
         IMAGE_SNAP_BY_ORDINAL(entry.u1.Ordinal)
             ? "#" + std::to_string(IMAGE_ORDINAL(entry.u1.Ordinal))
             : reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(base + entry.u1.AddressOfData)->Name;
-    const auto found = guest->resolve(library, symbol);
+    std::optional<std::uint64_t> found;
+    {
+        // binding may make a stub, and the stubs can only be written while a module loads
+        const std::lock_guard lock(guest->loading);
+        DWORD previous;
+        VirtualProtect(guest->stubs, stub_size * stub_limit + trace_size * trace_limit,
+                       PAGE_EXECUTE_READWRITE, &previous);
+        found = guest->resolve(library, symbol);
+        VirtualProtect(guest->stubs, stub_size * stub_limit + trace_size * trace_limit,
+                       PAGE_EXECUTE_READ, &previous);
+    }
     if (!found)
         return nullptr;
     DWORD old = 0;
