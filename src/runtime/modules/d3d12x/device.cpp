@@ -1927,20 +1927,48 @@ std::array<Slot, 48> queue_vtable_of(std::index_sequence<Index...>) {
     return vtable;
 }
 std::array<Slot, 48> queue_vtable = queue_vtable_of(std::make_index_sequence<48>{});
-// Later kits (a title that asks for version 0x20004 was seen) have two more methods before
-// Signal: it is at 16 there and PresentX at 32. Which two is not known; they lie among the
-// event markers, which do nothing here, so the slots from 11 to 15 are all taken for those.
-std::array<Slot, 48> later_queue_vtable = [] {
-    auto vtable = queue_vtable;
-    for (std::size_t slot = 47; slot >= 16; --slot)
-        vtable[slot] = queue_vtable[slot - 2];
-    for (std::size_t slot = 11; slot <= 15; ++slot)
-        vtable[slot] = reinterpret_cast<Slot>(&ignored_queue_method);
-    return vtable;
-}();
+// Titles built with later headers have two more methods before Signal: it is at 16 there
+// and PresentX at 32. Which two is not known; they lie among the event markers, which do
+// nothing here. Neither the version a title creates its device with nor its system DLLs
+// tell the two layouts apart, so the calls do: Signal and Wait are given a fence, which
+// nothing else at their places is, and only the later layout has a method at 32.
 std::atomic<bool> later_queue{false};
+bool is_object(std::uint64_t address) {
+    MEMORY_BASIC_INFORMATION region{};
+    if (!address || !VirtualQuery(reinterpret_cast<void *>(address), &region, sizeof region) ||
+        region.State != MEM_COMMIT || (region.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return false;
+    const auto vtable = *reinterpret_cast<const void *const *>(address);
+    return vtable && VirtualQuery(vtable, &region, sizeof region) && region.State == MEM_COMMIT &&
+           region.Type == MEM_IMAGE;
+}
+template <std::size_t Index>
+std::uint64_t STDMETHODCALLTYPE queue_by_layout(void *self, std::uint64_t a, std::uint64_t b,
+                                                std::uint64_t c, std::uint64_t d, std::uint64_t e,
+                                                std::uint64_t f, std::uint64_t g, std::uint64_t h,
+                                                std::uint64_t i, std::uint64_t j) {
+    const bool fence = (Index >= 14 && Index <= 17) && is_object(a);
+    if (Index >= 32 || (Index >= 16 && fence))
+        later_queue = true;
+    std::size_t slot = Index;
+    if (later_queue) {
+        if (Index < 16)
+            return 0; // markers, and the two methods that are not known
+        slot = Index - 2;
+    } else if (Index < 16 && !fence) {
+        return 0; // a marker of a later title that has not signalled yet
+    }
+    return reinterpret_cast<Raw>(queue_vtable[slot])(self, a, b, c, d, e, f, g, h, i, j);
+}
+template <std::size_t... Index>
+std::array<Slot, 48> layout_queue_vtable_of(std::index_sequence<Index...>) {
+    auto vtable = queue_vtable;
+    ((vtable[14 + Index] = reinterpret_cast<Slot>(&queue_by_layout<14 + Index>)), ...);
+    return vtable;
+}
+std::array<Slot, 48> layout_queue_vtable = layout_queue_vtable_of(std::make_index_sequence<34>{});
 void *make_queue_proxy(ID3D12CommandQueue *host) {
-    return new QueueProxy{later_queue ? later_queue_vtable.data() : queue_vtable.data(), host, 1};
+    return new QueueProxy{layout_queue_vtable.data(), host, 1};
 }
 // slot 48: CreateCommandQueue(desc, iid, queue), by its arguments at Unreal's call site
 HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
@@ -3785,7 +3813,6 @@ HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, vo
     *device = nullptr;
     // the first of the parameters is the version of the kit the title was built with
     if (parameters && console == Target::scarlett) {
-        later_queue = *parameters >= 0x20004;
         std::fprintf(stderr, "[Runtime] the title asks for Direct3D 12 of kit version 0x%x\n",
                      *parameters);
     }
