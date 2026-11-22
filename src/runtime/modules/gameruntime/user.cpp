@@ -191,7 +191,7 @@ std::wstring communications_endpoint(bool capture) {
     return id;
 }
 // XUserDefaultAudioEndpointKind: communication render, communication capture
-HRESULT WINAPI default_audio_endpoint(void *, User *, std::uint32_t kind, std::size_t size,
+HRESULT WINAPI default_audio_endpoint(void *, std::uint64_t, std::uint32_t kind, std::size_t size,
                                       wchar_t *buffer, std::size_t *used) {
     if (kind > 1)
         return E_INVALIDARG;

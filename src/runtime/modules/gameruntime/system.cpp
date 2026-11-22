@@ -16,6 +16,8 @@ namespace {
 std::atomic<std::uint64_t> tokens{0};
 const char port_identity[] = "XNetworkingQueryPreferredLocalUdpMultiplayerPortAsync";
 const char space_identity[] = "XPersistentLocalStoragePromptUserForSpaceAsync";
+const char security_identity[] = "XNetworkingQuerySecurityInformationForUrlAsync";
+const char folder_identity[] = "XGameSaveFilesGetFolderWithUiAsync";
 
 std::filesystem::path package_root() {
     std::error_code error;
@@ -103,15 +105,34 @@ HRESULT WINAPI launch_uri(void *, void *, const char *uri) {
     return S_OK;
 }
 
-// XPersistentLocalStorage: a folder of the title's that outlives it, next to its saves
-std::string local_storage() {
+// a folder of the title's that outlives it, next to its saves
+std::string folder_of_title(const std::filesystem::path &name) {
     auto root = save_directory();
     if (root.empty())
         root = std::filesystem::temp_directory_path() / "xvalkyrie-saves";
-    const auto folder = root / "LocalStorage";
+    const auto folder = root / name;
     std::error_code error;
     std::filesystem::create_directories(folder, error);
     return utf8(folder);
+}
+// XPersistentLocalStorage
+std::string local_storage() { return folder_of_title("LocalStorage"); }
+// XGameSaveFiles: saved games as plain files, in a folder that is the user's. Nothing
+// synchronizes it, so there is no screen to show while it does.
+HRESULT WINAPI save_files_folder(void *, void *, const char *, XAsyncBlock *block) {
+    const auto folder = folder_of_title("Files");
+    return finish(block, folder_identity, S_OK,
+                  std::vector<std::uint8_t>(folder.c_str(), folder.c_str() + folder.size() + 1));
+}
+HRESULT WINAPI save_files_folder_result(void *, XAsyncBlock *block, std::size_t size,
+                                        char *folder) {
+    return result(block, folder_identity, size, folder, nullptr);
+}
+HRESULT WINAPI save_files_quota(void *, void *, const char *, std::int64_t *remaining) {
+    if (!remaining)
+        return E_POINTER;
+    *remaining = std::int64_t{1} << 30;
+    return S_OK;
 }
 HRESULT WINAPI storage_path_size(void *, std::size_t *size) {
     if (!size)
@@ -231,7 +252,7 @@ HRESULT WINAPI connectivity_hint(void *, ConnectivityHint *hint) {
     if (!hint)
         return E_POINTER;
     // internet access, unrestricted, over Ethernet
-    *hint = {4, 1, 6, true, false, false, false};
+    *hint = {3, 1, 6, true, false, false, false};
     return S_OK;
 }
 HRESULT WINAPI udp_port(void *, std::uint16_t *port) {
@@ -248,6 +269,39 @@ HRESULT WINAPI udp_port_async(void *, XAsyncBlock *block) {
 }
 HRESULT WINAPI udp_port_result(void *, XAsyncBlock *block, std::uint16_t *port) {
     return result(block, port_identity, sizeof *port, port, nullptr);
+}
+
+// XNetworkingSecurityInformation: what a title has to ask of a connection to a URL. TLS 1.2
+// (the host's WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2), and no certificate it must be made with.
+struct SecurityInformation {
+    std::uint32_t protocols;
+    std::size_t thumbprint_count;
+    void *thumbprints;
+};
+HRESULT WINAPI security_information(void *, const void *, XAsyncBlock *block) {
+    const SecurityInformation information{0x800, 0, nullptr};
+    std::vector<std::uint8_t> payload(sizeof information);
+    std::memcpy(payload.data(), &information, sizeof information);
+    return finish(block, security_identity, S_OK, std::move(payload));
+}
+HRESULT WINAPI security_information_size(void *, XAsyncBlock *block, std::size_t *size) {
+    return result_size(block, size);
+}
+HRESULT WINAPI security_information_result(void *, XAsyncBlock *block, std::size_t size,
+                                           std::size_t *used, void *buffer,
+                                           SecurityInformation **information) {
+    const auto status = result(block, security_identity, size, buffer, used);
+    if (information)
+        *information = SUCCEEDED(status) ? static_cast<SecurityInformation *>(buffer) : nullptr;
+    return status;
+}
+// XNetworkingTcpQueuedReceivedBufferUsageStatistics: five counts of bytes the console's
+// network stack queues and drops, which the host's does not tell
+HRESULT WINAPI networking_statistics(void *, std::uint32_t, std::uint64_t *statistics) {
+    if (!statistics)
+        return E_POINTER;
+    std::memset(statistics, 0, 5 * sizeof *statistics);
+    return S_OK;
 }
 
 // events the host never raises: a token for the registration, and nothing more. The token
@@ -327,6 +381,20 @@ void install_system() {
     implement("XPackageRegisterPackageInstalled", &register_3);
     implement("XPackageUnregisterPackageInstalled", &unregister);
     implement("XNetworkingGetConnectivityHint", &connectivity_hint);
+    implement("XNetworkingQuerySecurityInformationForUrlAsync", &security_information);
+    implement("XNetworkingQuerySecurityInformationForUrlUtf16Async", &security_information);
+    implement("XNetworkingQuerySecurityInformationForUrlAsyncResultSize",
+              &security_information_size);
+    implement("XNetworkingQuerySecurityInformationForUrlUtf16AsyncResultSize",
+              &security_information_size);
+    implement("XNetworkingQuerySecurityInformationForUrlAsyncResult", &security_information_result);
+    implement("XNetworkingQuerySecurityInformationForUrlUtf16AsyncResult",
+              &security_information_result);
+    implement("XNetworkingVerifyServerCertificate", &succeeded);
+    implement("XNetworkingQueryStatistics", &networking_statistics);
+    implement("XGameSaveFilesGetFolderWithUiAsync", &save_files_folder);
+    implement("XGameSaveFilesGetFolderWithUiResult", &save_files_folder_result);
+    implement("XGameSaveFilesGetRemainingQuota", &save_files_quota);
     implement("XNetworkingRegisterConnectivityHintChanged", &register_3);
     implement("XNetworkingUnregisterConnectivityHintChanged", &unregister);
     implement("XNetworkingQueryPreferredLocalUdpMultiplayerPort", &udp_port);

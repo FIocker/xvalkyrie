@@ -19,6 +19,7 @@ const char dialog_identity[] = "XGameUiShowMessageDialogAsync";
 const char text_identity[] = "XGameUiShowTextEntryAsync";
 const char shown_identity[] = "XGameUiShow";
 const char picker_identity[] = "XGameUiShowPlayerPickerAsync";
+const char web_identity[] = "XGameUiShowWebAuthenticationAsync";
 std::atomic<std::uint32_t> hypotheses{0};
 
 std::wstring wide(const char *text) {
@@ -109,6 +110,20 @@ HRESULT WINAPI player_picker_result(void *, XAsyncBlock *block, std::uint32_t, s
     return result(block, picker_identity, 0, nullptr, nullptr);
 }
 
+// a page of a service to sign in to: there is no browser to show it, and the user leaves
+HRESULT WINAPI web_authentication(void *, XAsyncBlock *block) {
+    return finish(block, web_identity, E_ABORT);
+}
+HRESULT WINAPI web_authentication_size(void *, XAsyncBlock *block, std::size_t *size) {
+    return result_size(block, size);
+}
+HRESULT WINAPI web_authentication_result(void *, XAsyncBlock *block, std::size_t, void *,
+                                         void **data, std::size_t *used) {
+    if (data)
+        *data = nullptr;
+    return result(block, web_identity, 0, nullptr, used);
+}
+
 // XGameUiTextEntryInputScope: number 29, password 31, telephone number 32
 HRESULT WINAPI text_entry(void *, XAsyncBlock *block, const char *title, const char *description,
                           const char *suggested, std::uint32_t scope, std::uint32_t max_length) {
@@ -152,6 +167,19 @@ HRESULT WINAPI text_entry_result(void *, XAsyncBlock *block, std::uint32_t size,
 }
 
 HRESULT WINAPI succeeded(void *) { return S_OK; }
+// XClosedCaptionProperties: captions are off, and would be white on black at the usual size
+struct ClosedCaptions {
+    std::uint8_t background[4], font[4], window[4]; // alpha, red, green, blue
+    std::uint32_t font_edge, font_style;
+    float font_scale;
+    bool enabled;
+};
+HRESULT WINAPI closed_captions(void *, ClosedCaptions *properties) {
+    if (!properties)
+        return E_POINTER;
+    *properties = {{255, 0, 0, 0}, {255, 255, 255, 255}, {0, 0, 0, 0}, 0, 0, 1.0f, false};
+    return S_OK;
+}
 HRESULT WINAPI high_contrast(void *, std::uint32_t *mode) {
     if (!mode)
         return E_POINTER;
@@ -294,6 +322,13 @@ void install_ui() {
     implement("XGameUiShowTextEntryResultSize", &text_entry_size);
     implement("XGameUiShowTextEntryResult", &text_entry_result);
     implement("XGameUiSetNotificationPositionHint", &succeeded);
+    implement("XGameUiShowStateShareAsync", &shown);
+    implement("XGameUiShowStateShareResult", &shown_result);
+    implement("XGameUiShowWebAuthenticationAsync", &web_authentication);
+    implement("XGameUiShowWebAuthenticationWithOptionsAsync", &web_authentication);
+    implement("XGameUiShowWebAuthenticationResultSize", &web_authentication_size);
+    implement("XGameUiShowWebAuthenticationResult", &web_authentication_result);
+    implement("XClosedCaptionGetProperties", &closed_captions);
     implement("XClosedCaptionSetEnabled", &succeeded);
     implement("XHighContrastGetMode", &high_contrast);
     implement("XSpeechToTextSetPositionHint", &succeeded);

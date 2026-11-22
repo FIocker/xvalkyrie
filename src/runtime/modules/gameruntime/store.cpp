@@ -35,7 +35,7 @@ struct GameLicense {
     std::time_t expiration_date;
 };
 struct CanAcquireLicenseResult {
-    char licensable_sku[18];
+    char licensable_sku[5];
     std::uint32_t status; // XStoreCanLicenseStatus: not licensable, licensable, not found
 };
 
