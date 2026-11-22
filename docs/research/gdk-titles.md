@@ -223,8 +223,14 @@ Four do not run:
   with a small program on the host: a map with one mip paired with a ten-mip texture
   removes the device). The sample then reads the map with `CopyTextureRegion` straight
   into a buffer, in a fixed point form of the console's; the host only decodes a map with
-  `ResolveSubresourceRegion`. Not done. It also clears the map through a CPU handle of a
-  shader-visible heap, which the host's debug layer calls invalid.
+  `ResolveSubresourceRegion`. Such a copy is now a resolve into a texture of ours and a copy
+  of that one; the bytes are whole mip levels, so a title that asks for the console's form
+  (a footprint of `R8_TYPELESS`, five bits of level and three of fraction) reads an eighth
+  of the level. It also clears the map through a CPU handle of a shader-visible heap, which
+  the host cannot read: the clear gets a view of the map in a heap of ours. The view the
+  title makes was not marked as the host's in the heap's shadow, and was written over
+  before the first draw. The sample draws its picture and says mip 0, which is what its
+  512-pixel texture on a quad that large asks for; a level other than 0 was not seen.
 - FrontPanelDemo and FrontPanelDolphin ask for the panel's screen size without asking
   whether there is a panel, and throw on the failure. What a retail console answers there
   is not known.
@@ -253,8 +259,8 @@ not tried.
   the retail title calls, and the page mapping methods of the queue.
 - Raytracing and variable rate shading go to the host's methods of the same name without
   their arguments being looked at; nothing has called them. `CheckFeatureSupport` is the
-  host's answer, unchanged. Sampler feedback readback, and the console's quad and
-  rectangle topologies (see the samples above).
+  host's answer, unchanged. The fraction of a sampler feedback map read back, and the
+  console's quad topology (see the samples above).
 - `DispatchMeshX` only in its plain form.
 - `dstorage_xs.dll`, `GameInput` keyboards and mice, rumble, XStore, XGameUi.
 - DXGI outputs past the desktop's methods (`GetRefreshRate` and the like).

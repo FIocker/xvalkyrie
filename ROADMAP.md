@@ -150,10 +150,11 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
 - [x] `PresentX` and the frame events on a swap chain of the title surface
 - [x] `GameInput.dll` with the emulated gamepad, `xmem.dll`, `xaudio2_9.dll` by ordinal
 - [x] The Series sample draws its picture and reads the gamepad
-- [x] 36 of the 40 public samples that build for Series present frames
+- [x] 37 of the 40 public samples that build for Series present frames
 - [x] Rectangle lists: the fourth corner of each comes from a geometry shader made for the
   pipeline's vertex shader
-- [ ] Indexed quad lists, sampler feedback readback
+- [x] A sampler feedback map read back by copying it to a buffer, as whole mip levels
+- [ ] Indexed quad lists, the fraction of a level in a sampler feedback map read back
 - [ ] Shaders that only carry the console's GPU code (the retail GDK title looked at)
 - [ ] `xg_xs.dll` texture layouts, `dstorage_xs.dll`
 - [x] XStore without a store (the title is owned, nothing is for sale), XGameUi's dialogs and

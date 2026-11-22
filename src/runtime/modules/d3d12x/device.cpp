@@ -2238,11 +2238,118 @@ struct Staging {
 };
 std::mutex staging_mutex;
 std::deque<Staging> staging;
+// A sampler feedback map copied to a buffer. The console decodes the map on the way; the host
+// copies a map only to another map, and decodes it with ResolveSubresourceRegion into a
+// texture of bytes. So the map is resolved into a texture of ours, one for each map and kept,
+// and that one copied to where the title wants it. A byte is the least mip that was asked
+// for, 255 for none. In a footprint of R8_TYPELESS the console gives it with three bits of
+// fraction, which is not done here: the title reads an eighth of the level.
+struct DecodedFeedback {
+    ID3D12Resource *texture;
+    UINT64 width;
+    UINT height;
+};
+std::mutex decoded_feedback_mutex;
+std::map<ID3D12Resource *, DecodedFeedback> decoded_feedback; // by map
+bool copy_feedback_map(List *host, const D3D12_TEXTURE_COPY_LOCATION *target,
+                       const D3D12_TEXTURE_COPY_LOCATION *source) {
+    if (!target || !source || !target->pResource || !source->pResource ||
+        target->Type != D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT ||
+        source->Type != D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX ||
+        target->PlacedFootprint.Offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT)
+        return false;
+    ID3D12Resource2 *map = nullptr;
+    if (FAILED(source->pResource->QueryInterface(IID_PPV_ARGS(&map))))
+        return false;
+    const auto desc = map->GetDesc1();
+    map->Release();
+    if (desc.Format != DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE)
+        return false;
+    const auto &region = desc.SamplerFeedbackMipRegion;
+    const auto width = std::max<UINT64>(desc.Width / std::max<UINT>(region.Width, 1), 1);
+    const auto height = std::max<UINT>(desc.Height / std::max<UINT>(region.Height, 1), 1);
+    ID3D12GraphicsCommandList1 *list = nullptr;
+    if (FAILED(host->QueryInterface(IID_PPV_ARGS(&list))))
+        return false;
+    ID3D12Resource *texture = nullptr;
+    {
+        const std::lock_guard lock(decoded_feedback_mutex);
+        auto &decoded = decoded_feedback[source->pResource];
+        if (decoded.texture && (decoded.width != width || decoded.height != height)) {
+            decoded.texture->Release();
+            decoded.texture = nullptr;
+        }
+        ID3D12Device *device = nullptr;
+        if (!decoded.texture && SUCCEEDED(host->GetDevice(IID_PPV_ARGS(&device)))) {
+            const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+            D3D12_RESOURCE_DESC bytes{};
+            bytes.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            bytes.Width = width;
+            bytes.Height = height;
+            bytes.DepthOrArraySize = desc.DepthOrArraySize;
+            bytes.MipLevels = 1;
+            bytes.Format = DXGI_FORMAT_R8_UINT;
+            bytes.SampleDesc.Count = 1;
+            device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &bytes,
+                                            D3D12_RESOURCE_STATE_RESOLVE_DEST, nullptr,
+                                            IID_PPV_ARGS(&decoded.texture));
+            device->Release();
+            decoded.width = width;
+            decoded.height = height;
+        }
+        texture = decoded.texture;
+    }
+    if (!texture) {
+        list->Release();
+        return false;
+    }
+    const auto transition = [&](ID3D12Resource *resource, D3D12_RESOURCE_STATES from,
+                                D3D12_RESOURCE_STATES to) {
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Transition = {resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, from, to};
+        host->ResourceBarrier(1, &barrier);
+    };
+    transition(source->pResource, D3D12_RESOURCE_STATE_COPY_SOURCE,
+               D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+    list->ResolveSubresourceRegion(texture, ~0u, 0, 0, source->pResource, ~0u, nullptr,
+                                   DXGI_FORMAT_R8_UINT, D3D12_RESOLVE_MODE_DECODE_SAMPLER_FEEDBACK);
+    list->Release();
+    transition(source->pResource, D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+               D3D12_RESOURCE_STATE_COPY_SOURCE);
+    transition(texture, D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    auto placed = *target;
+    auto &footprint = placed.PlacedFootprint.Footprint;
+    footprint.Format = DXGI_FORMAT_R8_UINT;
+    D3D12_TEXTURE_COPY_LOCATION from{};
+    from.pResource = texture;
+    from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    from.SubresourceIndex = source->SubresourceIndex < desc.DepthOrArraySize
+                                ? source->SubresourceIndex
+                                : 0;
+    const D3D12_BOX part{0,
+                         0,
+                         0,
+                         static_cast<UINT>(std::min<UINT64>(width, footprint.Width)),
+                         std::min(height, footprint.Height),
+                         1};
+    host->CopyTextureRegion(&placed, 0, 0, 0, &from, &part);
+    transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+    if (static std::atomic<bool> shown{false};
+        target->PlacedFootprint.Footprint.Format == DXGI_FORMAT_R8_TYPELESS &&
+        !shown.exchange(true)) {
+        std::fprintf(stderr, "[Runtime] a sampler feedback map is read back as whole mip levels, "
+                             "where the title asks for the console's 5.3 fixed point\n");
+        std::fflush(stderr);
+    }
+    return true;
+}
 void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_LOCATION *target,
                                            UINT x, UINT y, UINT z,
                                            const D3D12_TEXTURE_COPY_LOCATION *source,
                                            const D3D12_BOX *box) {
     auto *const host = host_of(self);
+    if (!x && !y && !z && copy_feedback_map(host, target, source))
+        return;
     ID3D12Device *device = nullptr;
     // the other way, a texture read into a buffer at such an offset: into a buffer of ours
     // at 0, and from there to where the title wants it
@@ -2727,12 +2834,50 @@ void STDMETHODCALLTYPE clear_render_target(void *self, Handle view, const FLOAT 
                                            const D3D12_RECT *rects) {
     host_of(self)->ClearRenderTargetView(host_view(view), color, count, rects);
 }
+// The view a clear names by its CPU handle is one the host reads, which it cannot in a heap
+// shaders see, and a console title has the view of its sampler feedback map in no other. The
+// host gets a view of the map in a heap of ours instead, made for the clear: the host reads
+// it when the clear is recorded, so the slots are used in turn.
+std::mutex feedback_mutex;
+std::map<ID3D12Resource *, ID3D12Resource *> feedback_texture; // by map: what it is paired with
+struct FeedbackViews {
+    ID3D12DescriptorHeap *heap = nullptr;
+    UINT stride = 0, next = 0;
+} feedback_views;
+Handle feedback_clear_view(List *host, Handle view, ID3D12Resource *map) {
+    constexpr UINT slots = 64;
+    const std::lock_guard lock(feedback_mutex);
+    const auto paired = feedback_texture.find(map);
+    if (paired == feedback_texture.end())
+        return view;
+    ID3D12Device *device = nullptr;
+    if (FAILED(host->GetDevice(IID_PPV_ARGS(&device))))
+        return view;
+    auto &views = feedback_views;
+    if (!views.heap) {
+        const D3D12_DESCRIPTOR_HEAP_DESC desc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, slots};
+        using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_DESCRIPTOR_HEAP_DESC *,
+                                                    REFIID, void **);
+        original<Create>(device, 14)(device, &desc, IID_PPV_ARGS(&views.heap));
+        views.stride = device->GetDescriptorHandleIncrementSize(desc.Type);
+    }
+    if (views.heap) {
+        view = {views.heap->GetCPUDescriptorHandleForHeapStart().ptr +
+                std::size_t{views.next++ % slots} * views.stride};
+        using Create = void(STDMETHODCALLTYPE *)(void *, ID3D12Resource *, ID3D12Resource *,
+                                                 D3D12_CPU_DESCRIPTOR_HANDLE);
+        original<Create>(device, 71)(device, paired->second, map, view);
+    }
+    device->Release();
+    return view;
+}
 void STDMETHODCALLTYPE clear_uav_uint(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                       ID3D12Resource *resource, const UINT *values, UINT count,
                                       const D3D12_RECT *rects) {
     bind_heap_of(self, gpu.ptr);
-    host_of(self)->ClearUnorderedAccessViewUint(host_gpu(gpu), host_view(cpu), resource, values,
-                                                count, rects);
+    host_of(self)->ClearUnorderedAccessViewUint(
+        host_gpu(gpu), feedback_clear_view(host_of(self), host_view(cpu), resource), resource,
+        values, count, rects);
 }
 void STDMETHODCALLTYPE clear_uav_float(void *self, D3D12_GPU_DESCRIPTOR_HANDLE gpu, Handle cpu,
                                        ID3D12Resource *resource, const FLOAT *values, UINT count,
@@ -3369,6 +3514,9 @@ void STDMETHODCALLTYPE create_feedback_view(ID3D12Device *self, ID3D12Resource *
     using Create = void(STDMETHODCALLTYPE *)(void *, ID3D12Resource *, ID3D12Resource *,
                                              D3D12_CPU_DESCRIPTOR_HANDLE);
     original<Create>(self, 71)(self, target, feedback, host_handle(handle));
+    mark_host(handle);
+    const std::lock_guard lock(feedback_mutex);
+    feedback_texture[feedback] = target;
 }
 // GetCopyableFootprints (38): the description is a console one, with the console's flags
 // and layouts, which the host answers with offsets of -1. A title adds those to the address
