@@ -5,19 +5,6 @@ number counts is at the top of that file.
 
 ![status map](img/status.svg)
 
-| Area | Covered | |
-|---|---|---|
-| Console modules, Xbox One | 22 modules, 225 functions; 12 more answered by the host |  |
-| Console modules, Xbox Series X&#124;S | 15 modules, 93 functions; 7 more answered by the host |  |
-| Gaming Runtime | 152 of 422 functions | `███████░░░░░░░░░░░░░` 36% |
-| Console shader code | 661 of 1440 instructions | `█████████░░░░░░░░░░░` 46% |
-| Roadmap: Phase 1: PE loader | 12 of 14 items | `█████████████████░░░` 86% |
-| Roadmap: Phase 2: Xbox One runtime | 33 of 39 items | `█████████████████░░░` 85% |
-| Roadmap: Phase 3: Graphics | 11 of 15 items | `███████████████░░░░░` 73% |
-| Roadmap: Phase 4: Xbox One compatibility | 1 of 6 items | `███░░░░░░░░░░░░░░░░░` 17% |
-| Roadmap: GDK titles and Scarlett | 8 of 13 items | `████████████░░░░░░░░` 62% |
-| Roadmap: Other | 2 of 4 items | `██████████░░░░░░░░░░` 50% |
-
 ## Console modules
 
 A module is one a console title imports from. Functions with an implementation here
@@ -319,34 +306,34 @@ everything else.
 The functions of `xgameruntime.dll` whose place in its tables is known. One without an
 implementation says so in the log when a title calls it, and fails.
 
-| API | Implemented | Known | |
-|---|---|---|---|
-| XUser | 35 | 44 | `████████░░` |
-| XUserGamertag | 1 | 1 | `██████████` |
-| XDisplay | 1 | 1 | `██████████` |
-| XGameInvite | 4 | 5 | `████████░░` |
-| XAsync | 28 | 28 | `██████████` |
-| XGameStreaming | 3 | 32 | `█░░░░░░░░░` |
-| XGameStreamingExperimental | 0 | 4 | `░░░░░░░░░░` |
-| XStore | 0 | 78 | `░░░░░░░░░░` |
-| XAppBroadcast | 1 | 16 | `█░░░░░░░░░` |
-| XLauncher | 3 | 3 | `██████████` |
-| XNetworking | 8 | 18 | `████░░░░░░` |
-| XAccessibility | 0 | 19 | `░░░░░░░░░░` |
-| XGameSave | 30 | 47 | `██████░░░░` |
-| XUserDevice | 5 | 8 | `██████░░░░` |
-| XGameActivation | 2 | 3 | `███████░░░` |
-| XGameRuntimeFeature | 1 | 1 | `██████████` |
-| XError | 3 | 3 | `██████████` |
-| XGameProtocol | 2 | 2 | `██████████` |
-| XGame | 2 | 3 | `███████░░░` |
-| XAppCapture | 0 | 15 | `░░░░░░░░░░` |
-| XPackage | 15 | 35 | `████░░░░░░` |
-| XSystemAnalytics | 1 | 1 | `██████████` |
-| XGameEvent | 1 | 1 | `██████████` |
-| XGameUi | 0 | 42 | `░░░░░░░░░░` |
-| XSystem | 3 | 6 | `█████░░░░░` |
-| XPersistentLocalStorage | 3 | 6 | `█████░░░░░` |
+| API | Implemented | Known |
+|---|---|---|
+| XUser | 35 | 44 |
+| XUserGamertag | 1 | 1 |
+| XDisplay | 1 | 1 |
+| XGameInvite | 4 | 5 |
+| XAsync | 28 | 28 |
+| XGameStreaming | 3 | 32 |
+| XGameStreamingExperimental | 0 | 4 |
+| XStore | 0 | 78 |
+| XAppBroadcast | 1 | 16 |
+| XLauncher | 3 | 3 |
+| XNetworking | 8 | 18 |
+| XAccessibility | 0 | 19 |
+| XGameSave | 30 | 47 |
+| XUserDevice | 5 | 8 |
+| XGameActivation | 2 | 3 |
+| XGameRuntimeFeature | 1 | 1 |
+| XError | 3 | 3 |
+| XGameProtocol | 2 | 2 |
+| XGame | 2 | 3 |
+| XAppCapture | 0 | 15 |
+| XPackage | 15 | 35 |
+| XSystemAnalytics | 1 | 1 |
+| XGameEvent | 1 | 1 |
+| XGameUi | 0 | 42 |
+| XSystem | 3 | 6 |
+| XPersistentLocalStorage | 3 | 6 |
 
 <details><summary>XUser: 9 not implemented</summary>
 
@@ -456,26 +443,26 @@ Shaders of Series titles are machine code for the console's GPU, translated to H
 An instruction counts when the translator has something for it; a shader is only
 translated when all of its instructions do, and its resources are followed.
 
-| Format | Handled | Known | |
-|---|---|---|---|
-| scalar, two operands | 46 | 51 | `█████████░` |
-| scalar, immediate | 20 | 27 | `███████░░░` |
-| scalar, one operand | 38 | 65 | `██████░░░░` |
-| scalar compare | 16 | 18 | `█████████░` |
-| program control | 14 | 37 | `████░░░░░░` |
-| scalar memory | 10 | 78 | `█░░░░░░░░░` |
-| vector, two operands | 44 | 48 | `█████████░` |
-| vector, one operand | 39 | 81 | `█████░░░░░` |
-| vector compare | 100 | 190 | `█████░░░░░` |
-| vector, three operands | 219 | 428 | `█████░░░░░` |
-| packed vector | 8 | 22 | `████░░░░░░` |
-| interpolation | 3 | 3 | `██████████` |
-| shared memory | 0 | 147 | `░░░░░░░░░░` |
-| global memory | 0 | 54 | `░░░░░░░░░░` |
-| untyped buffer | 38 | 64 | `██████░░░░` |
-| typed buffer | 0 | 16 | `░░░░░░░░░░` |
-| image | 65 | 110 | `██████░░░░` |
-| export | 1 | 1 | `██████████` |
+| Format | Handled | Known |
+|---|---|---|
+| scalar, two operands | 46 | 51 |
+| scalar, immediate | 20 | 27 |
+| scalar, one operand | 38 | 65 |
+| scalar compare | 16 | 18 |
+| program control | 14 | 37 |
+| scalar memory | 10 | 78 |
+| vector, two operands | 44 | 48 |
+| vector, one operand | 39 | 81 |
+| vector compare | 100 | 190 |
+| vector, three operands | 219 | 428 |
+| packed vector | 8 | 22 |
+| interpolation | 3 | 3 |
+| shared memory | 0 | 147 |
+| global memory | 0 | 54 |
+| untyped buffer | 38 | 64 |
+| typed buffer | 0 | 16 |
+| image | 65 | 110 |
+| export | 1 | 1 |
 
 <details><summary>scalar, two operands: 5 not handled</summary>
 

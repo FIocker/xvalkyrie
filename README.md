@@ -38,19 +38,6 @@ through.
 <!-- status:begin -->
 [![status map](docs/img/status.svg)](docs/STATUS.md)
 
-| Area | Covered | |
-|---|---|---|
-| Console modules, Xbox One | 22 modules, 225 functions; 12 more answered by the host |  |
-| Console modules, Xbox Series X&#124;S | 15 modules, 93 functions; 7 more answered by the host |  |
-| Gaming Runtime | 152 of 422 functions | `███████░░░░░░░░░░░░░` 36% |
-| Console shader code | 661 of 1440 instructions | `█████████░░░░░░░░░░░` 46% |
-| Roadmap: Phase 1: PE loader | 12 of 14 items | `█████████████████░░░` 86% |
-| Roadmap: Phase 2: Xbox One runtime | 33 of 39 items | `█████████████████░░░` 85% |
-| Roadmap: Phase 3: Graphics | 11 of 15 items | `███████████████░░░░░` 73% |
-| Roadmap: Phase 4: Xbox One compatibility | 1 of 6 items | `███░░░░░░░░░░░░░░░░░` 17% |
-| Roadmap: GDK titles and Scarlett | 8 of 13 items | `████████████░░░░░░░░` 62% |
-| Roadmap: Other | 2 of 4 items | `██████████░░░░░░░░░░` 50% |
-
 Every function and instruction behind these numbers is listed in [docs/STATUS.md](docs/STATUS.md).
 <!-- status:end -->
 

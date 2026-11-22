@@ -120,43 +120,11 @@ def roadmap():
     return [tuple(section) for section in sections if section[2]]
 
 
-def bar(done, total, width=20):
-    filled = round(width * done / total) if total else 0
-    return "█" * filled + "░" * (width - filled)
-
-
-def percent(done, total):
-    return f"{100 * done / total:.0f}%" if total else "-"
-
-
-def summary(data):
-    rows = []
-    for console, label in CONSOLES:
-        entries = data["modules"][console]["modules"]
-        own = {name: entry for name, entry in entries.items() if entry["symbols"]}
-        functions = sum(not data_symbol(symbol) for entry in own.values() for symbol in entry["symbols"])
-        hosted = sum(1 for entry in entries.values() if entry["host"])
-        rows.append((f"Console modules, {label}",
-                     f"{len(own)} modules, {functions} functions; {hosted} more answered by the host", ""))
-    methods = [done for _, names in data["runtime"] for _, done in names]
-    rows.append(("Gaming Runtime", f"{sum(methods)} of {len(methods)} functions",
-                 f"`{bar(sum(methods), len(methods))}` {percent(sum(methods), len(methods))}"))
-    handled = [done for _, _, done in data["instructions"]]
-    rows.append(("Console shader code", f"{sum(handled)} of {len(handled)} instructions",
-                 f"`{bar(sum(handled), len(handled))}` {percent(sum(handled), len(handled))}"))
-    for heading, done, total in data["roadmap"]:
-        rows.append((f"Roadmap: {heading}", f"{done} of {total} items",
-                     f"`{bar(done, total)}` {percent(done, total)}"))
-    text = "| Area | Covered | |\n|---|---|---|\n"
-    return text + "".join(f"| {area.replace('|', '&#124;')} | {covered} | {progress} |\n"
-                          for area, covered, progress in rows)
-
-
 def report(data):
     out = ["# Status\n",
            "Written by `tools/status.py` from the tree and the built `xvboot`; do not edit. What each\n"
            "number counts is at the top of that file.\n",
-           "![status map](img/status.svg)\n", summary(data)]
+           "![status map](img/status.svg)\n"]
     out.append("## Console modules\n")
     out.append("A module is one a console title imports from. Functions with an implementation here\n"
                "are listed; a module with a host is forwarded to the host's DLL of that name for\n"
@@ -180,9 +148,8 @@ def report(data):
     out.append("## Gaming Runtime\n")
     out.append("The functions of `xgameruntime.dll` whose place in its tables is known. One without an\n"
                "implementation says so in the log when a title calls it, and fails.\n")
-    out.append("| API | Implemented | Known | |\n|---|---|---|---|\n" + "".join(
-        f"| {api} | {sum(done for _, done in names)} | {len(names)} | "
-        f"`{bar(sum(done for _, done in names), len(names), 10)}` |\n" for api, names in data["runtime"]))
+    out.append("| API | Implemented | Known |\n|---|---|---|\n" + "".join(
+        f"| {api} | {sum(done for _, done in names)} | {len(names)} |\n" for api, names in data["runtime"]))
     for api, names in data["runtime"]:
         missing = [name for name, done in names if not done]
         if missing:
@@ -195,9 +162,9 @@ def report(data):
     by_format = collections.OrderedDict()
     for fmt, name, done in data["instructions"]:
         by_format.setdefault(fmt, []).append((name, done))
-    out.append("| Format | Handled | Known | |\n|---|---|---|---|\n" + "".join(
-        f"| {FORMATS.get(fmt, fmt)} | {sum(done for _, done in names)} | {len(names)} | "
-        f"`{bar(sum(done for _, done in names), len(names), 10)}` |\n" for fmt, names in by_format.items()))
+    out.append("| Format | Handled | Known |\n|---|---|---|\n" + "".join(
+        f"| {FORMATS.get(fmt, fmt)} | {sum(done for _, done in names)} | {len(names)} |\n"
+        for fmt, names in by_format.items()))
     for fmt, names in by_format.items():
         missing = [name for name, done in names if not done]
         if missing:
@@ -350,7 +317,7 @@ def picture(data):
 
 
 def readme_block(data):
-    return (f"{BEGIN}\n[![status map](docs/img/status.svg)](docs/STATUS.md)\n\n{summary(data)}\n"
+    return (f"{BEGIN}\n[![status map](docs/img/status.svg)](docs/STATUS.md)\n\n"
             f"Every function and instruction behind these numbers is listed in [docs/STATUS.md](docs/STATUS.md).\n{END}")
 
 
