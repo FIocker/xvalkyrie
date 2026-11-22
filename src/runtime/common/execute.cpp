@@ -588,8 +588,8 @@ LONG WINAPI first_chance(EXCEPTION_POINTERS *info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 // XV_BREAK=<rva>[,<rva>...]: the registers each time the title gets to one of these addresses
-// of its image (hexadecimal), up to 40 times each or XV_BREAK_LIMIT. A breakpoint is put there; the handler
-// puts the instruction back, steps over it and sets the breakpoint again.
+// of its image (hexadecimal), up to 40 times each or XV_BREAK_LIMIT. A breakpoint is put there; the
+// handler puts the instruction back, steps over it and sets the breakpoint again.
 struct Breakpoint {
     std::uint8_t *address;
     std::uint8_t original;
@@ -631,15 +631,16 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
             read(context.Rdx, at_rdx, sizeof at_rdx);
             read(context.R8, at_r8, sizeof at_r8);
             std::fprintf(stderr,
-                         "[Break] image+0x%llx thread %lu rax %llx (image at %llx) rcx %llx rdx %llx r8 %llx r9 %llx "
-                         "[rcx] %llx %llx %llx %llx [rdx] %llx %llx %llx %llx [r8] %llx %llx %llx %llx %llx from %s\n",
+                         "[Break] image+0x%llx thread %lu rax %llx (image at %llx) rcx %llx rdx "
+                         "%llx r8 %llx r9 %llx "
+                         "[rcx] %llx %llx %llx %llx [rdx] %llx %llx %llx %llx [r8] %llx %llx %llx "
+                         "%llx %llx from %s\n",
                          static_cast<unsigned long long>(
                              reinterpret_cast<std::uint64_t>(point.address) - guest->base),
                          GetCurrentThreadId(), context.Rax,
                          static_cast<unsigned long long>(guest->base), context.Rcx, context.Rdx,
-                         context.R8, context.R9,
-                         at_rcx[0], at_rcx[1], at_rcx[2], at_rcx[3], at_rdx[0], at_rdx[1], at_rdx[2],
-                         at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
+                         context.R8, context.R9, at_rcx[0], at_rcx[1], at_rcx[2], at_rcx[3],
+                         at_rdx[0], at_rdx[1], at_rdx[2], at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
                          at_r8[3], at_r8[4],
                          detail::guest_location(*reinterpret_cast<void **>(context.Rsp)).c_str());
             std::fflush(stderr);

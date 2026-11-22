@@ -230,8 +230,8 @@ void WINAPI async_complete(void *, XAsyncBlock *block, HRESULT result, std::size
     complete(state, result, size);
     release(state);
 }
-HRESULT WINAPI async_get_result(void *, XAsyncBlock *block, const void *identity,
-                                std::size_t size, void *buffer, std::size_t *used) {
+HRESULT WINAPI async_get_result(void *, XAsyncBlock *block, const void *identity, std::size_t size,
+                                void *buffer, std::size_t *used) {
     if (used)
         *used = 0;
     if (!block)

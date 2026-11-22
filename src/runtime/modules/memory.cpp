@@ -1,5 +1,5 @@
-#include "runtime/common/runtime.hpp"
 #include "runtime/modules/memory.hpp"
+#include "runtime/common/runtime.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -444,8 +444,8 @@ void install_xmem(Registry &registry) {
     for (const auto &[name, function] : more)
         registry.add("xmem.dll", name, function);
     // a GDK title asks the API sets for memory in the console's page sizes
-    for (const auto *name : {"VirtualAlloc", "VirtualAllocEx", "VirtualFree", "VirtualFreeEx",
-                             "VirtualProtect"})
+    for (const auto *name :
+         {"VirtualAlloc", "VirtualAllocEx", "VirtualFree", "VirtualFreeEx", "VirtualProtect"})
         for (const auto &[known, function] : functions)
             if (std::string_view(known) == name)
                 registry.add_api(name, function);

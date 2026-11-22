@@ -55,8 +55,7 @@ void set_borderless(HWND handle, bool on) {
         SetWindowLongPtrW(handle, GWL_STYLE, windowed.style);
         SetWindowPlacement(handle, &windowed.placement);
         SetWindowPos(handle, nullptr, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
-                         SWP_FRAMECHANGED);
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
         windowed.window = nullptr;
         return;
     }

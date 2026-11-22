@@ -11,7 +11,14 @@
 // shader is made for each one and kept in the shader cache, by the hash of the original.
 namespace xv::runtime::modules {
 // geometry_points, _lines and _triangles: a geometry shader, by what it is given
-enum class ShaderStage { vertex, pixel, compute, geometry_points, geometry_lines, geometry_triangles };
+enum class ShaderStage {
+    vertex,
+    pixel,
+    compute,
+    geometry_points,
+    geometry_lines,
+    geometry_triangles
+};
 // whether the container's DXIL part has no bitcode
 bool console_only_shader(std::span<const std::uint8_t> container);
 // The machine code of such a shader, as little-endian words up to and including the one

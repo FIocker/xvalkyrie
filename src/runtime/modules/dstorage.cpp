@@ -24,10 +24,14 @@
 // console's texture compression (BCPack) is not known here, and such a request fails.
 namespace xv::runtime::modules {
 namespace {
-constexpr GUID file_iid{0x43704f9f, 0x27c6, 0x4a9f, {0x88, 0x15, 0xd1, 0x65, 0x27, 0x89, 0x4d, 0xf4}};
-constexpr GUID factory_iid{0xfb3b54ac, 0xbf82, 0x463a, {0xb7, 0x77, 0x73, 0x19, 0x58, 0x37, 0x86, 0x4d}};
-constexpr GUID status_iid{0xcd66d752, 0x2786, 0x44f7, {0x90, 0x70, 0xe2, 0xa6, 0xfd, 0xad, 0x3f, 0x1b}};
-constexpr GUID queue_iid{0xa3f6649a, 0x8c2c, 0x4b3a, {0x8b, 0x6e, 0x10, 0x18, 0x6a, 0x04, 0xb9, 0xbc}};
+constexpr GUID file_iid{
+    0x43704f9f, 0x27c6, 0x4a9f, {0x88, 0x15, 0xd1, 0x65, 0x27, 0x89, 0x4d, 0xf4}};
+constexpr GUID factory_iid{
+    0xfb3b54ac, 0xbf82, 0x463a, {0xb7, 0x77, 0x73, 0x19, 0x58, 0x37, 0x86, 0x4d}};
+constexpr GUID status_iid{
+    0xcd66d752, 0x2786, 0x44f7, {0x90, 0x70, 0xe2, 0xa6, 0xfd, 0xad, 0x3f, 0x1b}};
+constexpr GUID queue_iid{
+    0xa3f6649a, 0x8c2c, 0x4b3a, {0x8b, 0x6e, 0x10, 0x18, 0x6a, 0x04, 0xb9, 0xbc}};
 
 template <class Interface> class Object : public Interface {
   public:
@@ -328,7 +332,8 @@ class Queue final : public Object<QueueInterface> {
         if (!info)
             return;
         const std::lock_guard lock(mutex_);
-        const auto used = static_cast<UINT16>(std::min<std::size_t>(pending_.size(), desc_.capacity));
+        const auto used =
+            static_cast<UINT16>(std::min<std::size_t>(pending_.size(), desc_.capacity));
         *info = {desc_, static_cast<UINT16>(desc_.capacity - used),
                  static_cast<UINT16>(desc_.capacity / 2 > used ? desc_.capacity / 2 - used : 0)};
     }
@@ -385,14 +390,14 @@ class Factory final : public Object<FactoryInterface> {
         if (handle == INVALID_HANDLE_VALUE) {
             const auto error = GetLastError();
             if (static std::atomic<int> shown{0}; shown++ < 6)
-                std::fprintf(stderr, "[Runtime] DirectStorage: cannot open %ls (as %ls): error %lu\n",
-                             path, console_file_path(path).c_str(), error);
+                std::fprintf(stderr,
+                             "[Runtime] DirectStorage: cannot open %ls (as %ls): error %lu\n", path,
+                             console_file_path(path).c_str(), error);
             return HRESULT_FROM_WIN32(error);
         }
         if (static std::atomic<int> shown{0}; std::getenv("XV_FILE_TRACE") && shown++ < 40)
             std::fprintf(stderr, "[Runtime] DirectStorage: opened %ls (%zu characters) from %s\n",
-                         path, wcslen(path),
-                         detail::guest_location(_ReturnAddress()).c_str());
+                         path, wcslen(path), detail::guest_location(_ReturnAddress()).c_str());
         auto *const made = new File(handle);
         const auto result = made->QueryInterface(iid, file);
         made->Release();

@@ -113,7 +113,7 @@ constexpr Row rows[] = {
     {user, user_statics, 26, {Inert::event_add}},
 
     // public interface INetworkInformationStatics
-    {network, network_statics, 7, {Inert::zero64}}, // GetInternetConnectionProfile: none
+    {network, network_statics, 7, {Inert::zero64}},     // GetInternetConnectionProfile: none
     {network, network_statics, 12, {Inert::event_add}}, // NetworkStatusChanged
 
     // IAchievementNotifierStatics: GetTitleIdFilteredSource, GetUnfilteredSource. The
@@ -687,7 +687,9 @@ constexpr Row rows[] = {
      7,
      {Inert::string, L"Windows.Xbox.Input.Gamepad"}},
     // IPackageTransferManagerStatics::Current
-    {transfer_manager, guid("d6cf4cae-9eb1-4cbe-b426-7e75d429f846"), 6,
+    {transfer_manager,
+     guid("d6cf4cae-9eb1-4cbe-b426-7e75d429f846"),
+     6,
      {Inert::shared, transfer_manager}},
     {transfer_manager, direct, 8, {Inert::event_add}},
     // ISpeechRecognizerFactory::Create(language, SpeechRecognizer **)
@@ -727,10 +729,7 @@ constexpr Row rows[] = {
     {speech_recognizer, direct, 31, {Inert::event_add}},
     {transport, game_transport_controls, 26, {Inert::accept}}, // button pressed, removed
     // ISecureDeviceAssociationTemplateStatics::Templates: none
-    {association_template,
-     guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"),
-     7,
-     {Inert::empty_list}},
+    {association_template, guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"), 7, {Inert::empty_list}},
     // IUserStatics::GetUserById(id, User **): the one user there is
     {user, user_statics, 14, {Inert::shared2, user}},
 };

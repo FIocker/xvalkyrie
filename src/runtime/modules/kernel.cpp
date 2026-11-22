@@ -288,8 +288,7 @@ void WINAPI get_system_info(SYSTEM_INFO *info) {
     GetSystemInfo(info);
     if (std::getenv("XV_THREAD_TRACE")) {
         std::fprintf(stderr, "[Runtime] GetSystemInfo: %lu processors, from %s\n",
-                     info->dwNumberOfProcessors,
-                     detail::guest_location(_ReturnAddress()).c_str());
+                     info->dwNumberOfProcessors, detail::guest_location(_ReturnAddress()).c_str());
         std::fflush(stderr);
     }
 }
@@ -376,38 +375,37 @@ void *WINAPI pc_to_file_header(void *address, void **base) {
     return found;
 }
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
-const ApiFunction functions[] = {
-    {"OutputDebugStringW", erase(output_debug_string_w)},
-    {"OutputDebugStringA", erase(output_debug_string_a)},
-    {"SetThreadpoolAffinityMask", erase(set_threadpool_affinity_mask)},
-    {"CreateFileW", erase(create_file_w)},
-    {"CreateFile2", erase(create_file2)},
-    {"GetFileAttributesExW", erase(get_file_attributes_ex_w)},
-    {"GetFileAttributesW", erase(get_file_attributes_w)},
-    {"FindFirstFileExW", erase(find_first_file_ex_w)},
-    {"FindFirstFileW", erase(find_first_file_w)},
-    {"SetThreadAffinityMask", erase(set_thread_affinity_mask)},
-    {"GetCurrentProcessorNumber", erase(get_current_processor_number)},
-    {"GetSystemInfo", erase(get_system_info)},
-    {"CreateFileA", erase(create_file_a)},
-    {"GetFileAttributesExA", erase(get_file_attributes_ex_a)},
-    {"GetFileAttributesA", erase(get_file_attributes_a)},
-    {"FindFirstFileExA", erase(find_first_file_ex_a)},
-    {"FindFirstFileA", erase(find_first_file_a)},
-    {"CreateDirectoryW", erase(create_directory_w)},
-    {"RemoveDirectoryW", erase(remove_directory_w)},
-    {"DeleteFileW", erase(delete_file_w)},
-    {"MoveFileExW", erase(move_file_ex_w)},
-    {"SetFileAttributesW", erase(set_file_attributes_w)},
-    {"LoadLibraryExW", erase(load_library)},
-    {"LoadLibraryW", erase(load_library_w)},
-    {"LoadLibraryExA", erase(load_library_ex_a)},
-    {"LoadLibraryA", erase(load_library_a)},
-    {"LoadPackagedLibrary", erase(load_packaged_library)},
-    {"GetProcAddress", erase(get_proc_address_of)},
-    {"FreeLibrary", erase(free_library)},
-    {"ReadFile", erase(read_file)},
-    {"ReadFileEx", erase(read_file_ex)}};
+const ApiFunction functions[] = {{"OutputDebugStringW", erase(output_debug_string_w)},
+                                 {"OutputDebugStringA", erase(output_debug_string_a)},
+                                 {"SetThreadpoolAffinityMask", erase(set_threadpool_affinity_mask)},
+                                 {"CreateFileW", erase(create_file_w)},
+                                 {"CreateFile2", erase(create_file2)},
+                                 {"GetFileAttributesExW", erase(get_file_attributes_ex_w)},
+                                 {"GetFileAttributesW", erase(get_file_attributes_w)},
+                                 {"FindFirstFileExW", erase(find_first_file_ex_w)},
+                                 {"FindFirstFileW", erase(find_first_file_w)},
+                                 {"SetThreadAffinityMask", erase(set_thread_affinity_mask)},
+                                 {"GetCurrentProcessorNumber", erase(get_current_processor_number)},
+                                 {"GetSystemInfo", erase(get_system_info)},
+                                 {"CreateFileA", erase(create_file_a)},
+                                 {"GetFileAttributesExA", erase(get_file_attributes_ex_a)},
+                                 {"GetFileAttributesA", erase(get_file_attributes_a)},
+                                 {"FindFirstFileExA", erase(find_first_file_ex_a)},
+                                 {"FindFirstFileA", erase(find_first_file_a)},
+                                 {"CreateDirectoryW", erase(create_directory_w)},
+                                 {"RemoveDirectoryW", erase(remove_directory_w)},
+                                 {"DeleteFileW", erase(delete_file_w)},
+                                 {"MoveFileExW", erase(move_file_ex_w)},
+                                 {"SetFileAttributesW", erase(set_file_attributes_w)},
+                                 {"LoadLibraryExW", erase(load_library)},
+                                 {"LoadLibraryW", erase(load_library_w)},
+                                 {"LoadLibraryExA", erase(load_library_ex_a)},
+                                 {"LoadLibraryA", erase(load_library_a)},
+                                 {"LoadPackagedLibrary", erase(load_packaged_library)},
+                                 {"GetProcAddress", erase(get_proc_address_of)},
+                                 {"FreeLibrary", erase(free_library)},
+                                 {"ReadFile", erase(read_file)},
+                                 {"ReadFileEx", erase(read_file_ex)}};
 } // namespace
 
 std::span<const ApiFunction> kernel_functions() { return functions; }

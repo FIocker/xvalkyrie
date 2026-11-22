@@ -7,10 +7,10 @@
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
-#include "runtime/modules/acphal.hpp"
-#include "runtime/modules/memory.hpp"
 #include "runtime/durango/winrt/application.hpp"
+#include "runtime/modules/acphal.hpp"
 #include "runtime/modules/d3d12x.hpp"
+#include "runtime/modules/memory.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -164,9 +164,9 @@ HRESULT wrap_adapter(IDXGIAdapter *host, IDXGIAdapter **adapter) {
     host->Release();
     if (FAILED(result))
         return result;
-    *adapter = reinterpret_cast<IDXGIAdapter *>(make_forwarder(
-        latest, latest_adapter ? 19 : 12, &adapter_query, {{6, slot(&adapter_parent)}},
-        dxgi_inserted));
+    *adapter = reinterpret_cast<IDXGIAdapter *>(
+        make_forwarder(latest, latest_adapter ? 19 : 12, &adapter_query,
+                       {{6, slot(&adapter_parent)}}, dxgi_inserted));
     return S_OK;
 }
 // IDXGIDevice::GetAdapter
@@ -278,9 +278,9 @@ HRESULT d3d11x::device_dxgi(IUnknown *host_device, REFIID, void **object) {
     const auto result = host_device->QueryInterface(&host);
     if (FAILED(result))
         return result;
-    *object = make_forwarder(host, 14, &dxgi_device_query,
-                             {{6, slot(&device_parent)}, {7, slot(&device_adapter)}},
-                             dxgi_inserted);
+    *object =
+        make_forwarder(host, 14, &dxgi_device_query,
+                       {{6, slot(&device_parent)}, {7, slot(&device_adapter)}}, dxgi_inserted);
     return S_OK;
 }
 

@@ -1,16 +1,16 @@
 #include "runtime/common/runtime.hpp"
-#include "formats/appx/manifest.hpp"
 #include "analysis/modules.hpp"
+#include "formats/appx/manifest.hpp"
 #include "formats/pe/inspect.hpp"
 #include "host/files.hpp"
 #include "loader/image.hpp"
 #include <algorithm>
 #include <map>
 #include <mutex>
-#include <set>
-#include <vector>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <system_error>
+#include <vector>
 
 namespace xv::runtime {
 namespace {
@@ -78,7 +78,9 @@ nlohmann::json Registry::describe() const {
         forwards[module] = host;
     for (const auto &[symbol, function] : apis_)
         apis.push_back(symbol);
-    return {{"modules", std::move(modules)}, {"forwards", std::move(forwards)}, {"apis", std::move(apis)}};
+    return {{"modules", std::move(modules)},
+            {"forwards", std::move(forwards)},
+            {"apis", std::move(apis)}};
 }
 std::string_view Registry::forwarded(std::string_view module) const {
     const auto entry = forwards_.find(lower(module));
@@ -175,8 +177,8 @@ std::string package_name(const std::filesystem::path &folder) {
 // The packages the one in `root` depends on (its framework packages), where they are
 // unpacked next to it: the folders beside `root` whose manifest has a name `root`'s lists.
 // The manifest names a package as "Name.2.2"; the folder of an unpacked one is anything.
-const std::vector<std::filesystem::path> &dependency_directories(
-    const std::filesystem::path &package) {
+const std::vector<std::filesystem::path> &
+dependency_directories(const std::filesystem::path &package) {
     std::error_code absolute_error;
     auto root = std::filesystem::absolute(package, absolute_error).lexically_normal();
     if (!root.has_filename()) // "folder/." normalizes to "folder/"
@@ -284,9 +286,10 @@ nlohmann::json bind_plan(std::span<const std::uint8_t> file, const Registry &reg
             for (const auto &item : entry.at("symbols")) {
                 const auto symbol = loader::import_label(item);
                 const std::string_view origin =
-                    from_system(module, symbol)                                   ? "system"
-                    : detail::title_provides(registry, directory, module, symbol) ? "title"
-                    : detail::resolve(registry, module, symbol).origin;
+                    from_system(module, symbol) ? "system"
+                    : detail::title_provides(registry, directory, module, symbol)
+                        ? "title"
+                        : detail::resolve(registry, module, symbol).origin;
                 ++(origin == "own"      ? own
                    : origin == "host"   ? host
                    : origin == "title"  ? title

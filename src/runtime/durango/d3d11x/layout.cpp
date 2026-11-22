@@ -1,13 +1,13 @@
-#include "runtime/modules/watchdog.hpp"
 #include "runtime/durango/d3d11x/layout.hpp"
 #include "backends/graphics/d3d11/host.hpp"
 #include "backends/surface/surface.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/durango/d3d11x/descriptors.hpp"
-#include "runtime/modules/d3d12x.hpp"
-#include "runtime/modules/placement.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
+#include "runtime/modules/d3d12x.hpp"
+#include "runtime/modules/placement.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -531,7 +531,7 @@ void average(ID3D11Texture2D *texture, const char *what) {
         context->CopySubresourceRegion(staging, 0, 0, 0, 0, texture, 0, nullptr);
         if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
             d3d12x::report_picture(static_cast<const std::uint8_t *>(mapped.pData), mapped.RowPitch,
-                           desc.Width, desc.Height, desc.Format, what);
+                                   desc.Width, desc.Height, desc.Format, what);
             context->Unmap(staging, 0);
         }
         staging->Release();
@@ -576,11 +576,12 @@ void probe(IDXGISwapChain *swap_chain) {
         int index = 0;
         for (auto *const target : d3d12x::bound_render_targets())
             if (d3d12x::read_back(target, data, pitch, width, height, format,
-                                D3D12_RESOURCE_STATE_RENDER_TARGET))
+                                  D3D12_RESOURCE_STATE_RENDER_TARGET))
                 d3d12x::report_picture(data.data(), pitch, width, height, format,
-                               ("render target " + std::to_string(index++) + " (" +
-                                std::to_string(d3d12x::draws_into_target(target)) + " draws)")
-                                   .c_str());
+                                       ("render target " + std::to_string(index++) + " (" +
+                                        std::to_string(d3d12x::draws_into_target(target)) +
+                                        " draws)")
+                                           .c_str());
         d3d12x::report_failure();
         resource->Release();
     }

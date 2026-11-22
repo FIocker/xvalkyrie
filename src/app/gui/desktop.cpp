@@ -114,8 +114,8 @@ class Desktop {
         settings_host_.check_updates = [this] { check_for_updates(); };
         settings_host_.install_update = [this] {
             if (update_ && !busy())
-                updating_ = std::async(std::launch::async,
-                                       [update = *update_] { install_update(update); });
+                updating_ =
+                    std::async(std::launch::async, [update = *update_] { install_update(update); });
         };
         settings_host_.updates = [this] {
             return ui::Settings::Updates{update_check_.valid(), updating_.valid(), busy(),

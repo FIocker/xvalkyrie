@@ -65,6 +65,7 @@ template <class Interface> class Object : public Interface {
 struct IGamepadReading : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE get_Timestamp(std::uint64_t *value) = 0;
     virtual HRESULT STDMETHODCALLTYPE get_Buttons(std::uint32_t *value) = 0;
+    // clang-format off
 #define XV_PRESSED(Name) virtual HRESULT STDMETHODCALLTYPE get_Is##Name##Pressed(boolean *) = 0;
     XV_PRESSED(DPadUp)
     XV_PRESSED(DPadDown)
@@ -78,6 +79,7 @@ struct IGamepadReading : IInspectable {
             XV_AXIS(LeftTrigger) XV_AXIS(RightTrigger) XV_AXIS(LeftThumbstickX)
                 XV_AXIS(LeftThumbstickY) XV_AXIS(RightThumbstickX) XV_AXIS(RightThumbstickY)
 #undef XV_AXIS
+    // clang-format on
 };
 // GamepadButtons, the same bits as the raw reading
 class Reading final : public IGamepadReading {
@@ -112,6 +114,7 @@ class Reading final : public IGamepadReading {
     }
     STDMETHODIMP get_Timestamp(std::uint64_t *value) override { return put(value, raw_.timestamp); }
     STDMETHODIMP get_Buttons(std::uint32_t *value) override { return put(value, raw_.buttons); }
+    // clang-format off
 #define XV_PRESSED(Name, Bit)                                                                      \
     STDMETHODIMP get_Is##Name##Pressed(boolean *value) override {                                  \
         return put<boolean>(value, (raw_.buttons & (Bit)) != 0);                                   \
@@ -131,9 +134,10 @@ class Reading final : public IGamepadReading {
                   XV_AXIS(LeftThumbstickX, left_x) XV_AXIS(LeftThumbstickY, left_y)
                       XV_AXIS(RightThumbstickX, right_x) XV_AXIS(RightThumbstickY, right_y)
 #undef XV_AXIS
+        // clang-format on
 
-                          private : template <class T>
-                                    static HRESULT put(T *value, T field) {
+        private : template <class T>
+                  static HRESULT put(T *value, T field) {
         if (!value)
             return E_POINTER;
         *value = field;

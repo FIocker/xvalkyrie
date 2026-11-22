@@ -132,8 +132,8 @@ std::map<std::size_t, std::string> names(const Reader &file, const Section &sect
     bool extended_names = false;
     if (section.kind == "[mrm_hschemaex]") {
         const auto kind = file.at(at, 16);
-        extended_names = std::string_view(reinterpret_cast<const char *>(kind.data()), 13) ==
-                         "[def_hnamesx]";
+        extended_names =
+            std::string_view(reinterpret_cast<const char *>(kind.data()), 13) == "[def_hnamesx]";
         at += 16;
     }
     at += 12; // version and checksum
@@ -164,7 +164,7 @@ std::map<std::size_t, std::string> names(const Reader &file, const Section &sect
         const auto length = file.u8(base + 6), flags = file.u8(base + 7);
         const std::size_t offset = file.u16(base + 8) | std::size_t{flags & 0xfu} << 16;
         list[entry] = {file.u16(base), file.u16(base + 10), (flags & 0x10) != 0,
-                       !length         ? std::string()
+                       !length        ? std::string()
                        : flags & 0x20 ? narrow_string(file, narrow_data + offset, length)
                                       : wide_string(file, wide_data + offset * 2, length)};
     }

@@ -18,7 +18,7 @@ class Settings {
     struct Updates {
         bool checking = false, installing = false, blocked = false; // blocked: a title runs
         std::string available;                                      // the later release, if any
-        std::string message;                                        // what the last check or update said
+        std::string message; // what the last check or update said
     };
     struct Host {
         std::function<void()> add_folder;                 // ask for a folder to add

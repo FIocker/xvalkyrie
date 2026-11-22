@@ -136,7 +136,7 @@ HRESULT STDMETHODCALLTYPE monitor_register(StateMonitor *, void *, void *, std::
 void STDMETHODCALLTYPE monitor_unregister(StateMonitor *, std::int64_t) {}
 // SoundLevel: 0 muted, 1 low, 2 full
 int STDMETHODCALLTYPE monitor_sound_level(StateMonitor *) { return 2; }
-const void *const monitor_vtable[] = {&monitor_query,    &monitor_add_ref,   &monitor_release,
+const void *const monitor_vtable[] = {&monitor_query,    &monitor_add_ref,    &monitor_release,
                                       &monitor_register, &monitor_unregister, &monitor_sound_level};
 HRESULT WINAPI create_state_monitor(int, int, StateMonitor **monitor) {
     if (!monitor)
@@ -193,8 +193,8 @@ struct Hal;
 struct HalVtable {
     HRESULT(STDMETHODCALLTYPE *connect)(Hal *, std::uint32_t, std::uint32_t);
     HRESULT(STDMETHODCALLTYPE *disconnect)(Hal *);
-    HRESULT(STDMETHODCALLTYPE *submit)(Hal *, std::uint32_t, std::uint64_t, std::uint32_t, void *,
-                                       std::uint32_t);
+    HRESULT(STDMETHODCALLTYPE *submit)
+    (Hal *, std::uint32_t, std::uint64_t, std::uint32_t, void *, std::uint32_t);
     bool(STDMETHODCALLTYPE *pop)(Hal *, Message *);
     std::uint32_t(STDMETHODCALLTYPE *message_count)(Hal *);
     void(STDMETHODCALLTYPE *release)(Hal *);
@@ -235,8 +235,8 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
     if (static std::atomic<int> shown{0}; std::getenv("XV_ACP_TRACE") && shown++ < 40) {
         const auto *words = static_cast<const std::uint32_t *>(data);
         std::fprintf(stderr,
-                     "[Runtime] audio command %u id %llx frame %u data %x %x %x %x from %s\n",
-                     type, static_cast<unsigned long long>(id), frame_index, words ? words[0] : 0,
+                     "[Runtime] audio command %u id %llx frame %u data %x %x %x %x from %s\n", type,
+                     static_cast<unsigned long long>(id), frame_index, words ? words[0] : 0,
                      words ? words[1] : 0, words ? words[2] : 0, words ? words[3] : 0,
                      detail::guest_location(_ReturnAddress()).c_str());
     }

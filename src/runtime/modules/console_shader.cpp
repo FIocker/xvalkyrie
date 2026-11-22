@@ -7,21 +7,21 @@
 #include <atomic>
 #include <bit>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
-#include <mutex>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <string>
 #include <thread>
 #include <vector>
-#include <string>
 #include <windows.h>
 #include <xmmintrin.h>
 
@@ -174,7 +174,8 @@ class Inflate {
                 value = lengths[i - 1];
                 repeat = 3 + static_cast<int>(bits(2));
             } else {
-                repeat = symbol == 17 ? 3 + static_cast<int>(bits(3)) : 11 + static_cast<int>(bits(7));
+                repeat =
+                    symbol == 17 ? 3 + static_cast<int>(bits(3)) : 11 + static_cast<int>(bits(7));
             }
             if (i + repeat > literal_count + distance_count)
                 return false;
@@ -189,9 +190,8 @@ class Inflate {
         static constexpr std::uint16_t length_base[29] = {
             3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
             31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-        static constexpr std::uint8_t length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
-                                                          1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
-                                                          4, 4, 4, 4, 5, 5, 5, 5, 0};
+        static constexpr std::uint8_t length_extra[29] = {
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
         static constexpr std::uint16_t distance_base[30] = {
             1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
             193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
@@ -296,11 +296,10 @@ std::vector<Element> signature(Bytes container, const char *name) {
 }
 // The fields of a signature as an HLSL struct: element n is the field fn. The values the
 // pipeline makes up itself are declared after everything else, as the compiler wants.
-std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
-                        bool interpolated) {
+std::string hlsl_struct(const char *name, const std::vector<Element> &elements, bool interpolated) {
     const auto generated = [](const Element &element) {
-        for (const auto *made : {"SV_VertexID", "SV_InstanceID", "SV_PrimitiveID",
-                                 "SV_IsFrontFace", "SV_SampleIndex", "SV_Coverage"})
+        for (const auto *made : {"SV_VertexID", "SV_InstanceID", "SV_PrimitiveID", "SV_IsFrontFace",
+                                 "SV_SampleIndex", "SV_Coverage"})
             if (!_stricmp(element.name.c_str(), made))
                 return true;
         return false;
@@ -316,7 +315,9 @@ std::string hlsl_struct(const char *name, const std::vector<Element> &elements,
             text += "    ";
             if (interpolated && integer && !named)
                 text += "nointerpolation ";
-            text += std::string(element.type == 1 ? "uint" : element.type == 2 ? "int" : "float") +
+            text += std::string(element.type == 1   ? "uint"
+                                : element.type == 2 ? "int"
+                                                    : "float") +
                     (element.width > 1 ? std::to_string(element.width) : "") + " f" +
                     std::to_string(field) + " : " + element.name;
             // SV_Position and the like take no index; the others always may
@@ -349,9 +350,10 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     if (stage >= ShaderStage::geometry_points) {
         if (inputs.empty() || outputs.empty())
             return {};
-        const char *const primitive = stage == ShaderStage::geometry_points  ? "point Input input[1]"
-                                      : stage == ShaderStage::geometry_lines ? "line Input input[2]"
-                                                                             : "triangle Input input[3]";
+        const char *const primitive = stage == ShaderStage::geometry_points ? "point Input input[1]"
+                                      : stage == ShaderStage::geometry_lines
+                                          ? "line Input input[2]"
+                                          : "triangle Input input[3]";
         return hlsl_struct("Input", inputs, false) + hlsl_struct("Output", outputs, false) +
                "[maxvertexcount(1)] void main(" + primitive +
                ", inout TriangleStream<Output> stream) {\n"
@@ -363,15 +365,17 @@ std::string stand_in(ShaderStage stage, Bytes container) {
     if (outputs.empty())
         text += "void main(Input input) {}\n";
     else
-        text += hlsl_struct("Output", outputs, false) +
-                "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
+        text +=
+            hlsl_struct("Output", outputs, false) +
+            "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
     return inputs.empty() ? without_input(std::move(text)) : text;
 }
 // the translation of the code; nothing if the code is not one that is handled, and then
 // `why` says what stopped it
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
                                              std::string *why = nullptr) {
-    if (stage != ShaderStage::vertex && stage != ShaderStage::pixel && stage != ShaderStage::compute)
+    if (stage != ShaderStage::vertex && stage != ShaderStage::pixel &&
+        stage != ShaderStage::compute)
         return std::nullopt;
     const auto file = code_container(container);
     rdna::Shader shader;
@@ -383,8 +387,7 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
 }
 
 using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
-                                  const char *, const char *, UINT, UINT, IUnknown **,
-                                  IUnknown **);
+                                  const char *, const char *, UINT, UINT, IUnknown **, IUnknown **);
 struct Blob : IUnknown {
     virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
     virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
@@ -418,10 +421,11 @@ std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &sour
         const auto *const data = static_cast<const std::uint8_t *>(blob->GetBufferPointer());
         bytes.assign(data, data + blob->GetBufferSize());
     } else if (static std::atomic<int> shown{0}; report && shown++ < 4) {
-        std::fprintf(stderr, "[Runtime] a host shader for a console one did not compile: %s\n%s\n",
-                     errors ? static_cast<const char *>(static_cast<Blob *>(errors)->GetBufferPointer())
-                            : "no message",
-                     source.c_str());
+        std::fprintf(
+            stderr, "[Runtime] a host shader for a console one did not compile: %s\n%s\n",
+            errors ? static_cast<const char *>(static_cast<Blob *>(errors)->GetBufferPointer())
+                   : "no message",
+            source.c_str());
         std::fflush(stderr);
     }
     if (code)
@@ -508,9 +512,7 @@ std::set<std::string> making;                          // by cache name, on some
 std::atomic<unsigned> translated{0}, stood_in{0};
 } // namespace
 
-bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) {
-    return Inflate(stream).run(out);
-}
+bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) { return Inflate(stream).run(out); }
 
 bool console_only_shader(Bytes container);
 std::string shader_signature(Bytes container) {
@@ -544,7 +546,9 @@ std::string console_shader_probe(std::span<const std::uint32_t> words) {
     // sizes, a hash, the code, and the record that ends the records
     constexpr std::size_t region = 0x140, start = region + 0x28;
     std::vector<std::uint8_t> file(start + 4 * code.size() + 20, 0);
-    const auto put = [&](std::size_t at, std::uint32_t value) { std::memcpy(file.data() + at, &value, 4); };
+    const auto put = [&](std::size_t at, std::uint32_t value) {
+        std::memcpy(file.data() + at, &value, 4);
+    };
     std::memcpy(file.data(), "FSSM", 4);
     put(0xc0, static_cast<std::uint32_t>(region));
     put(0xc8, static_cast<std::uint32_t>(0x28 + 4 * code.size()));
@@ -557,10 +561,10 @@ std::string console_shader_probe(std::span<const std::uint32_t> words) {
     // header, two parameters (type, visibility, offset), each table (ranges, offset) and
     // its ranges (type, count, register, space, offset in the table).
     static constexpr std::uint32_t signature[] = {
-        1, 2, 24, 0, 48, 0,   // version, parameters and where, static samplers and where, flags
-        0, 0, 48, 0, 0, 76,   // the two tables
-        1, 56, 0, ~0u, 0, 0, 0, // resources: one range of shader resources from t0
-        1, 84, 3, 16, 0, 0, 0,  // samplers: sixteen from s0
+        1, 2,  24, 0,   48, 0,  // version, parameters and where, static samplers and where, flags
+        0, 0,  48, 0,   0,  76, // the two tables
+        1, 56, 0,  ~0u, 0,  0,  0, // resources: one range of shader resources from t0
+        1, 84, 3,  16,  0,  0,  0, // samplers: sixteen from s0
     };
     rdna::Shader shader;
     shader.file = file;
@@ -661,8 +665,8 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         // XV_SHADER_CODE: the HLSL made for it as well
         if (const auto *const dump = std::getenv("XV_SHADER_CODE"); dump && source) {
             const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");
-            write_file(text, {reinterpret_cast<const std::uint8_t *>(source->data()),
-                              source->size()});
+            write_file(text,
+                       {reinterpret_cast<const std::uint8_t *>(source->data()), source->size()});
         }
         const bool kept = !folder.empty() && !asking;
         if (source)

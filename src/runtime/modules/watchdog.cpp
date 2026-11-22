@@ -1,10 +1,10 @@
-#include "runtime/common/runtime.hpp"
 #include "runtime/modules/watchdog.hpp"
-#include <cstring>
+#include "runtime/common/runtime.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <windows.h>

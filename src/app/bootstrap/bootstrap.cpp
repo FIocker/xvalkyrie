@@ -24,9 +24,9 @@ runtime::ConsoleSettings console_settings() {
     return {wide(saved.gamertag), wide(saved.xbox_user_id), saved.gamerscore, saved.age_group,
             saved.headset,        saved.keyboard_dialog};
 }
-// "<title> [<title ID>] | <video driver> | <n> FPS | XValkyrie <version> <commit>", with the frame rate
-// over the time since it was last asked for. The driver is what the title's device was
-// made on, and the backend selected until it has one.
+// "<title> [<title ID>] | <video driver> | <n> FPS | XValkyrie <version> <commit>", with the frame
+// rate over the time since it was last asked for. The driver is what the title's device was made
+// on, and the backend selected until it has one.
 struct Caption {
     using Clock = std::chrono::steady_clock;
     std::wstring name;

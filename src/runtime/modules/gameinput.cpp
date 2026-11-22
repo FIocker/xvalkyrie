@@ -66,10 +66,23 @@ struct DeviceInfo {
     std::uint8_t rest[896];
 };
 static_assert(offsetof(DeviceInfo, supported_input) == 104);
-DeviceInfo device_info{sizeof(DeviceInfo), 0x045e, 0x0b12, 1,      0,
-                       0,                  1,      5,      {1},    {1},
-                       {0x58, 0x53, 1},    {0x58, 0x53, 1}, 1, 8,
-                       kind_gamepad | kind_controller | kind_ui_navigation | 2 | 4 | 8, 0xf, {}};
+DeviceInfo device_info{sizeof(DeviceInfo),
+                       0x045e,
+                       0x0b12,
+                       1,
+                       0,
+                       0,
+                       1,
+                       5,
+                       {1},
+                       {1},
+                       {0x58, 0x53, 1},
+                       {0x58, 0x53, 1},
+                       1,
+                       8,
+                       kind_gamepad | kind_controller | kind_ui_navigation | 2 | 4 | 8,
+                       0xf,
+                       {}};
 const void *WINAPI get_device_info(Object *) { return &device_info; }
 std::uint32_t WINAPI get_device_status(Object *) { return device_connected; }
 void WINAPI set_rumble(Object *, const void *) {}

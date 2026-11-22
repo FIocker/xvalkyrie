@@ -1,7 +1,7 @@
-#include "runtime/modules/d3d12x.hpp"
 #include "backends/graphics/backend.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/console_shader.hpp"
+#include "runtime/modules/d3d12x.hpp"
 #include "runtime/modules/d3d12x/internal.hpp"
 #include "runtime/modules/placement.hpp"
 #include <algorithm>
@@ -154,7 +154,7 @@ class ConsoleOutput final : public IDXGIOutput {
     }
     // GetDisplayModeListX: the modes a television gives the console, at 60 Hz
     virtual HRESULT STDMETHODCALLTYPE GetDisplayModeListX(DXGI_FORMAT format, UINT, UINT *count,
-                                                         ConsoleMode *modes) {
+                                                          ConsoleMode *modes) {
         if (!count)
             return E_POINTER;
         static constexpr UINT sizes[][2] = {{1920, 1080}, {2560, 1440}, {3840, 2160}};
@@ -164,8 +164,13 @@ class ConsoleOutput final : public IDXGIOutput {
         }
         const auto given = std::min<UINT>(*count, static_cast<UINT>(std::size(sizes)));
         for (UINT i = 0; i < given; ++i)
-            modes[i] = {sizes[i][0], sizes[i][1], {60, 1}, format,
-                        DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE, DXGI_MODE_SCALING_UNSPECIFIED, 0};
+            modes[i] = {sizes[i][0],
+                        sizes[i][1],
+                        {60, 1},
+                        format,
+                        DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE,
+                        DXGI_MODE_SCALING_UNSPECIFIED,
+                        0};
         const bool all = given == std::size(sizes);
         *count = given;
         return all ? S_OK : DXGI_ERROR_MORE_DATA;
@@ -435,10 +440,10 @@ void console_resource(void *resource) {
                                          {{15, reinterpret_cast<Slot>(&no_console_method)},
                                           {16, reinterpret_cast<Slot>(&no_console_method)}});
 }
-// Map (8) of a resource the host does not map, and the address of one that has none. All of the console's memory is the CPU's as
-// well, and a title maps a texture of the default heap to fill it (one clears its back
-// buffers that way). The title gets memory of ours of the resource's size instead, and what
-// it writes there goes nowhere.
+// Map (8) of a resource the host does not map, and the address of one that has none. All of the
+// console's memory is the CPU's as well, and a title maps a texture of the default heap to fill it
+// (one clears its back buffers that way). The title gets memory of ours of the resource's size
+// instead, and what it writes there goes nowhere.
 std::mutex scratch_mutex;
 struct Scratch {
     void *memory = nullptr;
@@ -930,8 +935,9 @@ void check_address(const char *what, std::uint64_t address, std::uint64_t bytes)
         MEMORY_BASIC_INFORMATION info{};
         const bool cpu = VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
                          info.State == MEM_COMMIT;
-        std::fprintf(stderr, "[Runtime] %s at %llx (%llu bytes) is in no buffer known here%s\n", what,
-                     static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes),
+        std::fprintf(stderr, "[Runtime] %s at %llx (%llu bytes) is in no buffer known here%s\n",
+                     what, static_cast<unsigned long long>(address),
+                     static_cast<unsigned long long>(bytes),
                      cpu ? ": it is memory of the title's" : "");
         std::fflush(stderr);
     }
@@ -997,9 +1003,13 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
         std::uint32_t more[4]{};
         if (heap.stride >= 32)
             std::memcpy(more, reinterpret_cast<const void *>(at + 16), sizeof more);
-        std::fprintf(stderr, "[Runtime] title %s descriptor: %08x %08x %08x %08x | %08x %08x %08x %08x"
+        std::fprintf(stderr,
+                     "[Runtime] title %s descriptor: %08x %08x %08x %08x | %08x %08x %08x %08x"
                      "\n",
-                     type == 0 ? "SRV" : type == 1 ? "UAV" : type == 2 ? "CBV" : "sampler",
+                     type == 0   ? "SRV"
+                     : type == 1 ? "UAV"
+                     : type == 2 ? "CBV"
+                                 : "sampler",
                      words[0], words[1], words[2], words[3], more[0], more[1], more[2], more[3]);
         std::fflush(stderr);
     }
@@ -1010,10 +1020,10 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
     // last. A sampler slot the host is left without hangs the GPU when it is sampled with.
     if (type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
         static constexpr D3D12_TEXTURE_ADDRESS_MODE modes[] = {
-            D3D12_TEXTURE_ADDRESS_MODE_WRAP,        D3D12_TEXTURE_ADDRESS_MODE_MIRROR,
-            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,       D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
-            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,       D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
-            D3D12_TEXTURE_ADDRESS_MODE_BORDER,      D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE};
+            D3D12_TEXTURE_ADDRESS_MODE_WRAP,   D3D12_TEXTURE_ADDRESS_MODE_MIRROR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,  D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE,
+            D3D12_TEXTURE_ADDRESS_MODE_BORDER, D3D12_TEXTURE_ADDRESS_MODE_MIRROR_ONCE};
         const auto magnify = (words[2] >> 20) & 3, minify = (words[2] >> 22) & 3,
                    mip = (words[2] >> 26) & 3, compare = (words[0] >> 12) & 7,
                    ratio = (words[0] >> 9) & 7, border = words[3] >> 30;
@@ -1026,7 +1036,8 @@ void decode_as(const ShadowHeap &heap, std::uintptr_t at, D3D12_DESCRIPTOR_RANGE
         desc.AddressU = modes[words[0] & 7];
         desc.AddressV = modes[(words[0] >> 3) & 7];
         desc.AddressW = modes[(words[0] >> 6) & 7];
-        desc.MipLODBias = static_cast<float>(static_cast<std::int32_t>(words[2] << 18) >> 18) / 256.0f;
+        desc.MipLODBias =
+            static_cast<float>(static_cast<std::int32_t>(words[2] << 18) >> 18) / 256.0f;
         desc.MaxAnisotropy = anisotropic ? 1u << ratio : 1;
         desc.ComparisonFunc = compares ? static_cast<D3D12_COMPARISON_FUNC>(compare + 1)
                                        : D3D12_COMPARISON_FUNC_NEVER;
@@ -1234,7 +1245,10 @@ void STDMETHODCALLTYPE create_sampler_x(ID3D12Device *self, const ConsoleSampler
     // 2 linear; mode: 0 a blend, 1 the minimum, 2 the maximum
     const bool compares = desc->comparison > D3D12_COMPARISON_FUNC_NEVER &&
                           desc->comparison < D3D12_COMPARISON_FUNC_ALWAYS;
-    const UINT reduction = compares ? 1 : desc->filter_mode == 1 ? 2 : desc->filter_mode == 2 ? 3 : 0;
+    const UINT reduction = compares                 ? 1
+                           : desc->filter_mode == 1 ? 2
+                           : desc->filter_mode == 2 ? 3
+                                                    : 0;
     const bool anisotropic = desc->filter_mag >= 2 || desc->filter_min >= 2;
     const UINT basic = (desc->filter_min & 1) << 4 | (desc->filter_mag & 1) << 2 |
                        (desc->filter_mip == 2 ? 1u : 0u);
@@ -1563,9 +1577,9 @@ struct DerivedState {
     };
 };
 HRESULT STDMETHODCALLTYPE create_derived_graphics_pipeline(ID3D12Device *self,
-                                                           ID3D12PipelineState *source,
-                                                           UINT count, const DerivedState *states,
-                                                           REFIID iid, void **state) {
+                                                           ID3D12PipelineState *source, UINT count,
+                                                           const DerivedState *states, REFIID iid,
+                                                           void **state) {
     using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *,
                                                 REFIID, void **);
     if (!source || !state || (count && !states))
@@ -1612,17 +1626,17 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
         host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
-        const auto geometry =
-            host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT
-                ? modules::ShaderStage::geometry_points
-                : host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
-                      ? modules::ShaderStage::geometry_lines
-                      : modules::ShaderStage::geometry_triangles;
+        const auto geometry = host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT
+                                  ? modules::ShaderStage::geometry_points
+                              : host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
+                                  ? modules::ShaderStage::geometry_lines
+                                  : modules::ShaderStage::geometry_triangles;
         const bool made = host_bytecode(modules::ShaderStage::vertex, host.VS) |
                           host_bytecode(modules::ShaderStage::pixel, host.PS) |
                           host_bytecode(geometry, host.GS);
         if (made && !host.pRootSignature)
-            host.pRootSignature = from_shader = shader_root_signature(self, true, {desc->VS, desc->PS, desc->GS});
+            host.pRootSignature = from_shader =
+                shader_root_signature(self, true, {desc->VS, desc->PS, desc->GS});
     }
     const auto result = original<Create>(self, 10)(self, desc ? &host : nullptr, iid, state);
     if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
@@ -1645,12 +1659,14 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
             if (desc->GS.pShaderBytecode)
                 std::fprintf(stderr, "[Runtime]   geometry %s\n",
                              modules::shader_signature(bytes(desc->GS)).c_str());
-            std::fprintf(stderr, "[Runtime]   topology %d, %u targets of format %d, depth %d, "
-                                 "samples %u, layout:",
+            std::fprintf(stderr,
+                         "[Runtime]   topology %d, %u targets of format %d, depth %d, "
+                         "samples %u, layout:",
                          host.PrimitiveTopologyType, host.NumRenderTargets, host.RTVFormats[0],
                          host.DSVFormat, host.SampleDesc.Count);
             for (UINT i = 0; i < host.InputLayout.NumElements; ++i)
-                std::fprintf(stderr, " %s%u/%d", host.InputLayout.pInputElementDescs[i].SemanticName,
+                std::fprintf(stderr, " %s%u/%d",
+                             host.InputLayout.pInputElementDescs[i].SemanticName,
                              host.InputLayout.pInputElementDescs[i].SemanticIndex,
                              host.InputLayout.pInputElementDescs[i].Format);
             std::fprintf(stderr, "\n");
@@ -1924,13 +1940,13 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
                      "format %d flags 0x%x state 0x%x\n",
                      heap->Type, flags, desc->Dimension, desc->Width, desc->Height, desc->Format,
                      desc->Flags, state);
-    auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr,
-                                             state, clear, iid, resource);
+    auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr, state,
+                                             clear, iid, resource);
     // a buffer the host does not make there is made where the title asked
     if (FAILED(result) && heap != asked) {
         heap = asked;
-        result = original<Create>(self, 27)(self, heap, flags, &host_desc, state, clear, iid,
-                                            resource);
+        result =
+            original<Create>(self, 27)(self, heap, flags, &host_desc, state, clear, iid, resource);
     }
     if (SUCCEEDED(result) && resource && *resource) {
         console_resource(*resource);
@@ -1987,7 +2003,7 @@ struct ListProxy {
     std::atomic<ULONG> references;
     ID3D12Resource *target = nullptr; // bound last, for XV_D3D_PROBE's draw counts
     const void *graphics_root = nullptr, *compute_root = nullptr;
-    ID3D12DescriptorHeap *heaps[2]{}; // the host's, as bound: views, then samplers
+    ID3D12DescriptorHeap *heaps[2]{};  // the host's, as bound: views, then samplers
     UINT topology = 0;                 // as the title set it, the console's own included
     D3D12_INDEX_BUFFER_VIEW indices{}; // the title's, to put back after a quad draw
 };
@@ -2083,9 +2099,10 @@ HRESULT STDMETHODCALLTYPE list_query(void *self, REFIID iid, void **object) {
                                               : iid;
     bool ours = is_any<IUnknown, ID3D12Object, ID3D12DeviceChild, ID3D12CommandList,
                        ID3D12GraphicsCommandList>(host_iid);
-    if (!ours && is_any<ID3D12GraphicsCommandList1, ID3D12GraphicsCommandList2,
-                        ID3D12GraphicsCommandList3, ID3D12GraphicsCommandList4,
-                        ID3D12GraphicsCommandList5, ID3D12GraphicsCommandList6>(host_iid)) {
+    if (!ours &&
+        is_any<ID3D12GraphicsCommandList1, ID3D12GraphicsCommandList2, ID3D12GraphicsCommandList3,
+               ID3D12GraphicsCommandList4, ID3D12GraphicsCommandList5, ID3D12GraphicsCommandList6>(
+            host_iid)) {
         IUnknown *later = nullptr;
         if (SUCCEEDED(host_of(self)->QueryInterface(host_iid, reinterpret_cast<void **>(&later)))) {
             later->Release();
@@ -2184,18 +2201,17 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
         const auto bytes = std::min<UINT64>(UINT64{footprint.RowPitch} * rows * footprint.Depth,
                                             room > offset ? room - offset : 0);
         const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
-        const D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_BUFFER,
-                                       0,
-                                       std::max<UINT64>(UINT64{footprint.RowPitch} * rows *
-                                                            footprint.Depth,
-                                                        1),
-                                       1,
-                                       1,
-                                       1,
-                                       DXGI_FORMAT_UNKNOWN,
-                                       {1, 0},
-                                       D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
-                                       D3D12_RESOURCE_FLAG_NONE};
+        const D3D12_RESOURCE_DESC desc{
+            D3D12_RESOURCE_DIMENSION_BUFFER,
+            0,
+            std::max<UINT64>(UINT64{footprint.RowPitch} * rows * footprint.Depth, 1),
+            1,
+            1,
+            1,
+            DXGI_FORMAT_UNKNOWN,
+            {1, 0},
+            D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            D3D12_RESOURCE_FLAG_NONE};
         ID3D12Resource *buffer = nullptr;
         const auto made = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
                                                           D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
@@ -2239,12 +2255,19 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
     device->GetCopyableFootprints(&texture, 0, 1, 0, nullptr, &rows, nullptr, nullptr);
     const auto offset = source->PlacedFootprint.Offset;
     const auto available = source->pResource->GetDesc().Width;
-    const auto bytes = std::min<UINT64>(
-        UINT64{footprint.RowPitch} * rows * footprint.Depth, available > offset ? available - offset : 0);
+    const auto bytes = std::min<UINT64>(UINT64{footprint.RowPitch} * rows * footprint.Depth,
+                                        available > offset ? available - offset : 0);
     const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
-    const D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_BUFFER, 0, std::max<UINT64>(bytes, 1),
-                                   1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0},
-                                   D3D12_TEXTURE_LAYOUT_ROW_MAJOR, D3D12_RESOURCE_FLAG_NONE};
+    const D3D12_RESOURCE_DESC desc{D3D12_RESOURCE_DIMENSION_BUFFER,
+                                   0,
+                                   std::max<UINT64>(bytes, 1),
+                                   1,
+                                   1,
+                                   1,
+                                   DXGI_FORMAT_UNKNOWN,
+                                   {1, 0},
+                                   D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                                   D3D12_RESOURCE_FLAG_NONE};
     ID3D12Resource *buffer = nullptr;
     const auto made = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
                                                       D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
@@ -2277,9 +2300,8 @@ void STDMETHODCALLTYPE copy_texture_region(void *self, const D3D12_TEXTURE_COPY_
     }
 }
 // CopyTextureRegionX (83): the same copy with flags for the console's compressed surfaces
-void STDMETHODCALLTYPE copy_texture_region_x(void *self,
-                                             const D3D12_TEXTURE_COPY_LOCATION *target, UINT x,
-                                             UINT y, UINT z,
+void STDMETHODCALLTYPE copy_texture_region_x(void *self, const D3D12_TEXTURE_COPY_LOCATION *target,
+                                             UINT x, UINT y, UINT z,
                                              const D3D12_TEXTURE_COPY_LOCATION *source,
                                              const D3D12_BOX *box, UINT) {
     copy_texture_region(self, target, x, y, z, source, box);
@@ -2725,8 +2747,8 @@ void STDMETHODCALLTYPE begin_render_pass(void *self, UINT count,
     ID3D12GraphicsCommandList4 *host = nullptr;
     if (FAILED(host_of(self)->QueryInterface(IID_PPV_ARGS(&host))))
         return;
-    std::vector<D3D12_RENDER_PASS_RENDER_TARGET_DESC> host_targets(
-        targets, targets + (targets ? count : 0));
+    std::vector<D3D12_RENDER_PASS_RENDER_TARGET_DESC> host_targets(targets,
+                                                                   targets + (targets ? count : 0));
     for (auto &target : host_targets)
         target.cpuDescriptor = host_view(target.cpuDescriptor);
     D3D12_RENDER_PASS_DEPTH_STENCIL_DESC host_depth{};
@@ -2844,8 +2866,7 @@ HRESULT STDMETHODCALLTYPE dma_reset(void *self, ID3D12CommandAllocator *, ID3D12
     return list->host->Reset(list->allocator, nullptr);
 }
 void STDMETHODCALLTYPE dma_copy_buffer(void *self, ID3D12Resource *target, UINT64 target_offset,
-                                       ID3D12Resource *source, UINT64 source_offset,
-                                       UINT64 bytes) {
+                                       ID3D12Resource *source, UINT64 source_offset, UINT64 bytes) {
     host_of(self)->CopyBufferRegion(target, target_offset, source, source_offset, bytes);
 }
 void STDMETHODCALLTYPE dma_copy_texture(void *self, const D3D12_TEXTURE_COPY_LOCATION *target,
@@ -3036,12 +3057,14 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
                 const auto plane = std::size_t{pitch} * rows[i];
                 for (UINT slice = 0; slice < footprints[i].Footprint.Depth; ++slice)
                     for (UINT row = 0;
-                         row < rows[i] && slice * plane + std::size_t{row + 1} * pitch <= source.size();
+                         row < rows[i] &&
+                         slice * plane + std::size_t{row + 1} * pitch <= source.size();
                          ++row)
                         std::memcpy(static_cast<std::uint8_t *>(mapped) + footprints[i].Offset +
                                         (std::size_t{slice} * rows[i] + row) *
                                             footprints[i].Footprint.RowPitch,
-                                    source.data() + slice * plane + std::size_t{row} * pitch, pitch);
+                                    source.data() + slice * plane + std::size_t{row} * pitch,
+                                    pitch);
             }
             buffer->Unmap(0, nullptr);
             D3D12_RESOURCE_BARRIER barrier{};
@@ -3141,9 +3164,9 @@ HRESULT STDMETHODCALLTYPE create_placed_resource(ID3D12Device *self, ID3D12Heap 
                                                  D3D12_RESOURCE_STATES state,
                                                  const D3D12_CLEAR_VALUE *clear, REFIID iid,
                                                  void **resource) {
-    using Create = HRESULT(STDMETHODCALLTYPE *)(
-        void *, ID3D12Heap *, UINT64, const D3D12_RESOURCE_DESC *, D3D12_RESOURCE_STATES,
-        const D3D12_CLEAR_VALUE *, REFIID, void **);
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, ID3D12Heap *, UINT64,
+                                                const D3D12_RESOURCE_DESC *, D3D12_RESOURCE_STATES,
+                                                const D3D12_CLEAR_VALUE *, REFIID, void **);
     D3D12_RESOURCE_DESC host{};
     if (desc)
         host = host_resource_desc(*desc);
@@ -3247,11 +3270,11 @@ void STDMETHODCALLTYPE create_feedback_view(ID3D12Device *self, ID3D12Resource *
 // it copies to.
 void STDMETHODCALLTYPE copyable_footprints(ID3D12Device *self, const D3D12_RESOURCE_DESC *desc,
                                            UINT first, UINT count, UINT64 offset,
-                                           D3D12_PLACED_SUBRESOURCE_FOOTPRINT *layouts,
-                                           UINT *rows, UINT64 *row_sizes, UINT64 *total) {
-    using Get = void(STDMETHODCALLTYPE *)(void *, const D3D12_RESOURCE_DESC *, UINT, UINT, UINT64,
-                                          D3D12_PLACED_SUBRESOURCE_FOOTPRINT *, UINT *, UINT64 *,
-                                          UINT64 *);
+                                           D3D12_PLACED_SUBRESOURCE_FOOTPRINT *layouts, UINT *rows,
+                                           UINT64 *row_sizes, UINT64 *total) {
+    using Get =
+        void(STDMETHODCALLTYPE *)(void *, const D3D12_RESOURCE_DESC *, UINT, UINT, UINT64,
+                                  D3D12_PLACED_SUBRESOURCE_FOOTPRINT *, UINT *, UINT64 *, UINT64 *);
     D3D12_RESOURCE_DESC host{};
     if (desc) {
         host = *desc;
@@ -3440,8 +3463,8 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
         // The debug layer raises an exception of its own (0x87d) for some messages, for a
         // debugger to see. With none attached and a title's frames below, nobody takes it
         // and the process ends: it is passed over.
-        static const auto passed_over = AddVectoredExceptionHandler(
-            1, [](EXCEPTION_POINTERS *exception) -> LONG {
+        static const auto passed_over =
+            AddVectoredExceptionHandler(1, [](EXCEPTION_POINTERS *exception) -> LONG {
                 return exception->ExceptionRecord->ExceptionCode == 0x87d
                            ? EXCEPTION_CONTINUE_EXECUTION
                            : EXCEPTION_CONTINUE_SEARCH;
@@ -3490,7 +3513,7 @@ HRESULT WINAPI xbox_create_device(void *, const void *, REFIID iid, void **devic
     overrides.push_back({22, reinterpret_cast<Slot>(&create_sampler)});
     if (console == Target::scarlett)
         overrides.push_back({61, reinterpret_cast<Slot>(&create_sampler_x)});
-        overrides.push_back({55, reinterpret_cast<Slot>(&create_derived_graphics_pipeline)});
+    overrides.push_back({55, reinterpret_cast<Slot>(&create_derived_graphics_pipeline)});
     overrides.push_back({23, reinterpret_cast<Slot>(&copy_descriptors)});
     overrides.push_back({24, reinterpret_cast<Slot>(&copy_descriptors_simple)});
     overrides.push_back({25, reinterpret_cast<Slot>(&resource_allocation_info)});
@@ -3597,9 +3620,9 @@ std::vector<ID3D12Resource *> bound_render_targets() {
     const std::lock_guard lock(target_mutex);
     return bound_targets;
 }
-bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data,
-                             unsigned &pitch, unsigned &width, unsigned &height,
-                             DXGI_FORMAT &format, D3D12_RESOURCE_STATES state) {
+bool read_back(ID3D12Resource *resource, std::vector<std::uint8_t> &data, unsigned &pitch,
+               unsigned &width, unsigned &height, DXGI_FORMAT &format,
+               D3D12_RESOURCE_STATES state) {
     auto *const queue = first_direct_queue.load();
     ID3D12Device *device = nullptr;
     if (!queue || FAILED(resource->GetDevice(IID_PPV_ARGS(&device))))

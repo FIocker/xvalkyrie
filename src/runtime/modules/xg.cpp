@@ -137,7 +137,8 @@ std::int32_t optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std:
 void install_xg(Registry &registry, std::string_view module) {
     registry.add(module, "XGCreateTexture2DComputer",
                  reinterpret_cast<void *>(&create_texture2d_computer));
-    registry.add(module, "XGCreateTextureComputer", reinterpret_cast<void *>(&create_texture_computer));
+    registry.add(module, "XGCreateTextureComputer",
+                 reinterpret_cast<void *>(&create_texture_computer));
     registry.add(module, "XGComputeTexture2DLayout", reinterpret_cast<void *>(&texture2d_layout));
     registry.add(module, "XGComputeOptimalTileMode", reinterpret_cast<void *>(&optimal_tile_mode));
     registry.add(module, "XGComputeOptimalDepthStencilTileModes",

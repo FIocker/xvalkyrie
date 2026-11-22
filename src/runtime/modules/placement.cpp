@@ -22,7 +22,7 @@ struct Placement {
     UINT tile_mode, pitch;
     ID3D12Resource *d3d12 = nullptr; // one reference of ours
     D3D12_RESOURCE_DESC desc{};
-    bool series = false; // laid out as the Series console's xg_xs.dll says, from `layout`
+    bool series = false;          // laid out as the Series console's xg_xs.dll says, from `layout`
     D3D12_RESOURCE_DESC layout{}; // the description the title gave, with its swizzle mode
 };
 void release(Placement &placement) {
@@ -101,8 +101,7 @@ UINT row_bytes(UINT width, DXGI_FORMAT format) {
 }
 UINT rows(UINT height, DXGI_FORMAT format) {
     height = std::max(height, 1u);
-    return format_size(static_cast<std::uint32_t>(format)).blocks ? (height + 3) / 4
-                                                                           : height;
+    return format_size(static_cast<std::uint32_t>(format)).blocks ? (height + 3) / 4 : height;
 }
 // the subresources of a 2D texture in XG's linear layout: per array slice, mips in order
 std::size_t texture_layout(const D3D11_TEXTURE2D_DESC &desc, std::uintptr_t address,
@@ -483,8 +482,8 @@ std::size_t placed_bytes(const D3D12_RESOURCE_DESC &desc, UINT tile_mode) {
     if (!create || FAILED(create(&xg, &computer)) || !computer)
         return linear;
     auto *const vtable = *static_cast<void ***>(computer);
-    const auto size = reinterpret_cast<std::uint64_t(WINAPI *)(void *, UINT, UINT)>(vtable[3])(
-        computer, 0, 0);
+    const auto size =
+        reinterpret_cast<std::uint64_t(WINAPI *)(void *, UINT, UINT)>(vtable[3])(computer, 0, 0);
     reinterpret_cast<ULONG(WINAPI *)(void *)>(vtable[1])(computer);
     return size ? static_cast<std::size_t>(size) : linear;
 }

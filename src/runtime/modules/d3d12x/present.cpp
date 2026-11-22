@@ -1,18 +1,18 @@
 #include "backends/graphics/backend.hpp"
 #include "backends/surface/surface.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/d3d12x.hpp"
 #include "runtime/modules/d3d12x/internal.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/window.hpp"
 #include <algorithm>
-#include <intrin.h>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dxgi1_6.h>
+#include <intrin.h>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -122,8 +122,8 @@ HRESULT prepare(ID3D12CommandQueue *queue, const D3D12_RESOURCE_DESC &desc) {
     chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     chain_desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
     if (SUCCEEDED(result))
-        result = factory->CreateSwapChainForHwnd(queue, window, &chain_desc, nullptr, nullptr,
-                                                 &chain);
+        result =
+            factory->CreateSwapChainForHwnd(queue, window, &chain_desc, nullptr, nullptr, &chain);
     if (SUCCEEDED(result)) {
         factory->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
         result = chain->QueryInterface(IID_PPV_ARGS(&presenter.chain));
@@ -207,13 +207,14 @@ void probe(ID3D12Resource *picture) {
     // go of one that is still listed, and reading that back takes the process down.
     int index = 0;
     if (std::getenv("XV_D3D_PROBE_TARGETS"))
-    for (auto *const target : bound_render_targets())
-        if (target != picture && read_back(target, data, pitch, width, height, format,
-                      tracked_state(target, D3D12_RESOURCE_STATE_RENDER_TARGET)))
-            report_picture(data.data(), pitch, width, height, format,
-                           ("render target " + std::to_string(index++) + " (" +
-                            std::to_string(draws_into_target(target)) + " draws)")
-                               .c_str());
+        for (auto *const target : bound_render_targets())
+            if (target != picture &&
+                read_back(target, data, pitch, width, height, format,
+                          tracked_state(target, D3D12_RESOURCE_STATE_RENDER_TARGET)))
+                report_picture(data.data(), pitch, width, height, format,
+                               ("render target " + std::to_string(index++) + " (" +
+                                std::to_string(draws_into_target(target)) + " draws)")
+                                   .c_str());
     report_failure();
 }
 } // namespace
@@ -265,16 +266,17 @@ HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_para
     if (static std::atomic<int> shown{0}; frame_trace(shown, 30)) {
         const auto *const first = static_cast<const PlaneParameters *>(plane_parameters);
         const auto *const whole = static_cast<const UINT *>(present_parameters);
-        std::fprintf(stderr, "[Runtime] PresentX: %u planes, token %llu, %u resources, flags 0x%x, from %s\n",
-                     planes, first ? first->token : 0, first ? first->resource_count : 0,
-                     whole ? whole[6] : 0, detail::guest_location(_ReturnAddress()).c_str());
+        std::fprintf(
+            stderr,
+            "[Runtime] PresentX: %u planes, token %llu, %u resources, flags 0x%x, from %s\n",
+            planes, first ? first->token : 0, first ? first->resource_count : 0,
+            whole ? whole[6] : 0, detail::guest_location(_ReturnAddress()).c_str());
     }
-    const Shown shown{plane_parameters ? static_cast<const PlaneParameters *>(plane_parameters)->token
-                                       : 0};
+    const Shown shown{
+        plane_parameters ? static_cast<const PlaneParameters *>(plane_parameters)->token : 0};
     // no planes: the title shows nothing, which it does while it starts and suspends
     const auto *const plane = static_cast<const PlaneParameters *>(plane_parameters);
-    if (!planes || !plane || !plane->resource_count || !plane->resources ||
-        !plane->resources[0])
+    if (!planes || !plane || !plane->resource_count || !plane->resources || !plane->resources[0])
         return S_OK;
     auto *const picture = plane->resources[0];
     const auto desc = picture->GetDesc();
@@ -341,10 +343,11 @@ HRESULT present_x(ID3D12CommandQueue *queue, UINT planes, const void *plane_para
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE set_frame_interval(ID3D12Device *, void *, UINT microseconds,
-                                             UINT period, UINT flags) {
+HRESULT STDMETHODCALLTYPE set_frame_interval(ID3D12Device *, void *, UINT microseconds, UINT period,
+                                             UINT flags) {
     if (static std::atomic<int> shown{0}; frame_trace(shown))
-        std::fprintf(stderr, "[Runtime] SetFrameIntervalX: %u microseconds, period %u, flags 0x%x\n",
+        std::fprintf(stderr,
+                     "[Runtime] SetFrameIntervalX: %u microseconds, period %u, flags 0x%x\n",
                      microseconds, period, flags);
     if (microseconds)
         interval_microseconds = microseconds;
@@ -384,8 +387,8 @@ void run_schedules() {
         std::stable_sort(due.begin(), due.end(),
                          [](const auto &a, const auto &b) { return a.first < b.first; });
         for (const auto &[offset, objects] : due) {
-            std::this_thread::sleep_until(
-                origin + std::min<std::chrono::microseconds>(std::chrono::microseconds(offset), frame));
+            std::this_thread::sleep_until(origin + std::min<std::chrono::microseconds>(
+                                                       std::chrono::microseconds(offset), frame));
             for (const auto object : objects)
                 if (!SetEvent(object))
                     ReleaseSemaphore(object, 1, nullptr);
@@ -400,9 +403,11 @@ HRESULT STDMETHODCALLTYPE schedule_frame_event(ID3D12Device *, UINT type, UINT o
                                                void *signal_list, UINT flags) {
     const auto *const list = static_cast<const FrameObjects *>(signal_list);
     if (static std::atomic<int> shown{0}; frame_trace(shown))
-        std::fprintf(stderr, "[Runtime] ScheduleFrameEventX: type %u, offset %u, %u objects, flags 0x%x, from %s\n",
-                     type, offset, list ? list->count : 0, flags,
-                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fprintf(
+            stderr,
+            "[Runtime] ScheduleFrameEventX: type %u, offset %u, %u objects, flags 0x%x, from %s\n",
+            type, offset, list ? list->count : 0, flags,
+            detail::guest_location(_ReturnAddress()).c_str());
     if (type >= std::size(schedules))
         return E_INVALIDARG;
     std::vector<HANDLE> objects;
@@ -432,8 +437,10 @@ HRESULT STDMETHODCALLTYPE schedule_frame_event(ID3D12Device *, UINT type, UINT o
 HRESULT STDMETHODCALLTYPE wait_frame_event(ID3D12Device *, UINT type, UINT timeout, void *list,
                                            UINT flags, UINT64 *token) {
     if (static std::atomic<int> shown{0}; frame_trace(shown))
-        std::fprintf(stderr, "[Runtime] WaitFrameEventX: type %u, timeout %u, list %p, flags 0x%x, from %s\n",
-                     type, timeout, list, flags, detail::guest_location(_ReturnAddress()).c_str());
+        std::fprintf(
+            stderr,
+            "[Runtime] WaitFrameEventX: type %u, timeout %u, list %p, flags 0x%x, from %s\n", type,
+            timeout, list, flags, detail::guest_location(_ReturnAddress()).c_str());
     using Clock = std::chrono::steady_clock;
     static std::mutex wait_mutex;
     static Clock::time_point last{};
@@ -460,9 +467,9 @@ HRESULT STDMETHODCALLTYPE wait_frame_event(ID3D12Device *, UINT type, UINT timeo
 HRESULT STDMETHODCALLTYPE frame_statistics(ID3D12Device *, UINT64 token, UINT types, UINT *count,
                                            void *statistics) {
     if (static std::atomic<int> shown{0}; frame_trace(shown))
-        std::fprintf(stderr, "[Runtime] GetFrameStatisticsX: token %llu, types 0x%x, room for %u, from %s\n",
-                     token, types, count ? *count : 0,
-                     detail::guest_location(_ReturnAddress()).c_str());
+        std::fprintf(
+            stderr, "[Runtime] GetFrameStatisticsX: token %llu, types 0x%x, room for %u, from %s\n",
+            token, types, count ? *count : 0, detail::guest_location(_ReturnAddress()).c_str());
     // D3D12XBOX_FRAME_STATISTICS: a type and 48 bytes of what goes with it; one entry for
     // each type asked for that there is something to say about
     struct Entry {

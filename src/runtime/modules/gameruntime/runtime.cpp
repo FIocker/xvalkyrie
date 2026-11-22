@@ -1,5 +1,5 @@
-#include "runtime/modules/gameruntime.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/gameruntime.hpp"
 #include "runtime/modules/gameruntime/gameruntime.hpp"
 #include <array>
 #include <atomic>
@@ -40,14 +40,12 @@ HRESULT WINAPI unimplemented(Table *table, std::uint64_t a, std::uint64_t b, std
                      "[Runtime] unimplemented Gaming Runtime call: %s (%s slot %zu) (%llx, %llx, "
                      "%llx) from %s\n",
                      method_name(*table->info, Id % table_slots), table->info->name,
-                     Id % table_slots, a, b, c,
-                     detail::guest_location(_ReturnAddress()).c_str());
+                     Id % table_slots, a, b, c, detail::guest_location(_ReturnAddress()).c_str());
         std::fflush(stderr);
     }
     return E_NOTIMPL;
 }
-template <std::size_t... Id>
-void fill_unimplemented(std::index_sequence<Id...>) {
+template <std::size_t... Id> void fill_unimplemented(std::index_sequence<Id...>) {
     ((vtables[Id / table_slots][Id % table_slots] = reinterpret_cast<Slot>(&unimplemented<Id>)),
      ...);
 }
@@ -98,8 +96,9 @@ HRESULT WINAPI query_api(const GUID *api, const GUID *iid, void **table) {
                 *table = &tables[i];
                 return S_OK;
             }
-    std::fprintf(stderr, "[Runtime] the title asks for a Gaming Runtime API nothing here has: %s, "
-                         "info %s\n",
+    std::fprintf(stderr,
+                 "[Runtime] the title asks for a Gaming Runtime API nothing here has: %s, "
+                 "info %s\n",
                  guid_text(*api).c_str(), guid_text(*iid).c_str());
     std::fflush(stderr);
     return E_NOINTERFACE;

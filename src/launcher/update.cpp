@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 #include <windows.h>
+
 #include <shellapi.h>
 #include <winhttp.h>
 
@@ -29,9 +30,9 @@ struct Handle {
     explicit operator bool() const { return handle != nullptr; }
 };
 std::wstring wide(std::string_view text) {
-    std::wstring out(MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
-                                         nullptr, 0),
-                     L'\0');
+    std::wstring out(
+        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0),
+        L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(),
                         static_cast<int>(out.size()));
     return out;
@@ -102,8 +103,9 @@ DWORD run(const std::filesystem::path &program, const std::wstring &arguments, b
     info.lpParameters = arguments.c_str();
     info.nShow = SW_HIDE;
     if (!ShellExecuteExW(&info) || !info.hProcess)
-        throw std::runtime_error(elevated ? "the update was not allowed to change the program's folder"
-                                          : "a program the update needs did not start");
+        throw std::runtime_error(elevated
+                                     ? "the update was not allowed to change the program's folder"
+                                     : "a program the update needs did not start");
     WaitForSingleObject(info.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(info.hProcess, &code);
@@ -164,7 +166,8 @@ void apply_update(const std::filesystem::path &staged) {
         for (const auto *name : moved) {
             std::error_code ignored;
             std::filesystem::remove(folder / name, ignored);
-            std::filesystem::rename(folder / (std::wstring(name) + replaced), folder / name, ignored);
+            std::filesystem::rename(folder / (std::wstring(name) + replaced), folder / name,
+                                    ignored);
         }
         throw std::runtime_error("the program's files could not be replaced");
     }
@@ -196,7 +199,8 @@ void install_update(const Update &update) try {
     const auto folder = host::executable_directory();
     if (writable(folder)) {
         apply_update(staged);
-    } else if (run(folder / executables[0], L"--apply-update \"" + staged.wstring() + L"\"", true) != 0) {
+    } else if (run(folder / executables[0], L"--apply-update \"" + staged.wstring() + L"\"",
+                   true) != 0) {
         throw std::runtime_error("the program's files could not be replaced");
     }
     std::filesystem::remove_all(staged, ignored);
@@ -214,7 +218,8 @@ void restart() {
 void clear_replaced() {
     for (const auto *name : executables) {
         std::error_code ignored;
-        std::filesystem::remove(host::executable_directory() / (std::wstring(name) + replaced), ignored);
+        std::filesystem::remove(host::executable_directory() / (std::wstring(name) + replaced),
+                                ignored);
     }
 }
 } // namespace xv

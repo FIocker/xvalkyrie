@@ -17,9 +17,9 @@ HMODULE host_xaudio2() {
 // The processor argument names console cores, so the host's default is used instead
 HRESULT __cdecl xaudio2_create(void **engine, UINT32 flags, UINT32) {
     using Create = HRESULT(__cdecl *)(void **, UINT32, UINT32);
-    const auto create = host_xaudio2() ? reinterpret_cast<Create>(
-                                             GetProcAddress(host_xaudio2(), "XAudio2Create"))
-                                       : nullptr;
+    const auto create =
+        host_xaudio2() ? reinterpret_cast<Create>(GetProcAddress(host_xaudio2(), "XAudio2Create"))
+                       : nullptr;
     // the host's engine makes its voices through COM, which a console title never starts
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const auto result = create ? create(engine, flags & 0x8000, 1) : E_NOTIMPL;
@@ -53,12 +53,10 @@ void install_xaudio2(Registry &registry) {
     registry.add(module, "XAudio2Create", reinterpret_cast<void *>(&xaudio2_create));
     registry.add(module, "#1", reinterpret_cast<void *>(&xaudio2_create));
     // the console's ordinals for what the host exports by name
-    const std::pair<const char *, const char *> named[] = {{"#2", "CreateAudioReverb"},
-                                                           {"#3", "CreateAudioVolumeMeter"},
-                                                           {"#4", "CreateFX"},
-                                                           {"#5", "X3DAudioCalculate"},
-                                                           {"#6", "X3DAudioInitialize"},
-                                                           {"#7", "CreateAudioReverbV2_8"}};
+    const std::pair<const char *, const char *> named[] = {
+        {"#2", "CreateAudioReverb"},  {"#3", "CreateAudioVolumeMeter"},
+        {"#4", "CreateFX"},           {"#5", "X3DAudioCalculate"},
+        {"#6", "X3DAudioInitialize"}, {"#7", "CreateAudioReverbV2_8"}};
     for (const auto &[ordinal, name] : named)
         if (auto *const function =
                 host_xaudio2() ? GetProcAddress(host_xaudio2(), name) : nullptr) {

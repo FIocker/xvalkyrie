@@ -275,9 +275,8 @@ HRESULT WINAPI read_blobs_result(void *, XAsyncBlock *block, std::size_t size, B
     if (FAILED(status) || !used)
         return status == e_not_sufficient_buffer ? e_buffer_too_small : status;
     // the first name follows the array
-    const auto blobs_packed =
-        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(blobs[0].info.name) /
-                                   sizeof(Blob));
+    const auto blobs_packed = static_cast<std::uint32_t>(
+        reinterpret_cast<std::uintptr_t>(blobs[0].info.name) / sizeof(Blob));
     rebase(blobs, blobs_packed);
     if (count)
         *count = blobs_packed;
@@ -293,8 +292,8 @@ HRESULT WINAPI create_update(void *, Container *container, const char *display_n
     return S_OK;
 }
 void WINAPI close_update(void *, Update *update) { delete update; }
-HRESULT WINAPI submit_blob_write(void *, Update *update, const char *name,
-                                 const std::uint8_t *data, std::size_t bytes) {
+HRESULT WINAPI submit_blob_write(void *, Update *update, const char *name, const std::uint8_t *data,
+                                 std::size_t bytes) {
     if (!update || !name || (!data && bytes))
         return E_INVALIDARG;
     update->writes[name].assign(data, data + bytes);

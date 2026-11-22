@@ -1,4 +1,3 @@
-#include <windows.h>
 #include "runtime/scarlett/runtime.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/acphal.hpp"
@@ -12,6 +11,7 @@
 #include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/window.hpp"
 #include "runtime/modules/xg.hpp"
+#include <windows.h>
 
 namespace xv::runtime::scarlett {
 namespace {

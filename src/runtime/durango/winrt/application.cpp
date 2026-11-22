@@ -1,9 +1,9 @@
-#include "runtime/modules/watchdog.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include "backends/surface/surface.hpp"
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/collection.hpp"
 #include "runtime/durango/winrt/object.hpp"
+#include "runtime/modules/watchdog.hpp"
 #include <atomic>
 #include <corewindow.h>
 #include <cstdint>
@@ -470,7 +470,8 @@ class Application : public Class<Application, IActivationFactory, ICoreApplicati
         if (SUCCEEDED(result))
             result = view_->activate();
         step("CoreApplication: activated, entering the view's Run");
-        modules::frame_watchdog(); // a title that never presents a frame counts as stalled from here
+        modules::frame_watchdog(); // a title that never presents a frame counts as stalled from
+                                   // here
         if (SUCCEEDED(result))
             result = view->Run();
         step("CoreApplication: the view's Run returned");

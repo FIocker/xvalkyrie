@@ -93,8 +93,8 @@ HRESULT WINAPI get_gamertag_classic(void *, User *, std::size_t size, char *buff
     return copy_text(gamertag().substr(0, 15), size, buffer, used);
 }
 // classic, modern, the modern one's suffix, modern with its suffix
-HRESULT WINAPI get_gamertag(void *, User *, std::uint32_t component, std::size_t size,
-                            char *buffer, std::size_t *used) {
+HRESULT WINAPI get_gamertag(void *, User *, std::uint32_t component, std::size_t size, char *buffer,
+                            std::size_t *used) {
     if (component > 3)
         return E_INVALIDARG;
     return copy_text(component == 2 ? std::string() : gamertag(), size, buffer, used);
@@ -129,8 +129,8 @@ HRESULT WINAPI token_async(void *, User *, std::uint32_t, const void *, const vo
 HRESULT WINAPI token_result_size(void *, XAsyncBlock *block, std::size_t *size) {
     return result_size(block, size);
 }
-HRESULT WINAPI token_result(void *, XAsyncBlock *block, std::size_t size, void *buffer,
-                            void **data, std::size_t *used) {
+HRESULT WINAPI token_result(void *, XAsyncBlock *block, std::size_t size, void *buffer, void **data,
+                            std::size_t *used) {
     if (data)
         *data = nullptr;
     return result(block, token_identity, size, buffer, used);

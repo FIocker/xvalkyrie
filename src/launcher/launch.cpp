@@ -47,7 +47,7 @@ bool named(const std::filesystem::path &path, std::string_view name) {
 std::filesystem::path find_manifest(const std::filesystem::path &path) {
     if (!std::filesystem::is_directory(path))
         return named(path, manifest_name) || named(path, config_name) ? path
-                                                                       : std::filesystem::path{};
+                                                                      : std::filesystem::path{};
     for (const auto &folder : {path, path / "Mount"})
         for (const auto *name : {config_name, manifest_name})
             if (std::filesystem::is_regular_file(folder / name))
@@ -69,31 +69,30 @@ nlohmann::json config_manifest(const nlohmann::json &config) {
     for (const auto *key : {"large_logo", "logo", "small_logo"})
         if (config.at(key).is_string())
             logos.push_back(config.at(key));
-    return {{"name", config.at("name")},
-            {"display_name", config.at("display_name")},
-            {"version", config.at("version")},
-            {"publisher", config.at("publisher_display_name")},
-            {"title_id", config.at("title_id")},
-            {"store_id", config.at("store_id")},
-            {"logos", std::move(logos)},
-            {"store_logo", config.at("store_logo")},
-            {"logo",
-             config.at("large_logo").is_string() ? config.at("large_logo") : config.at("logo")},
-            {"splash", config.at("splash_screen")},
-            {"applications", {{{"executable", chosen->at("name")}}}}};
+    return {
+        {"name", config.at("name")},
+        {"display_name", config.at("display_name")},
+        {"version", config.at("version")},
+        {"publisher", config.at("publisher_display_name")},
+        {"title_id", config.at("title_id")},
+        {"store_id", config.at("store_id")},
+        {"logos", std::move(logos)},
+        {"store_logo", config.at("store_logo")},
+        {"logo", config.at("large_logo").is_string() ? config.at("large_logo") : config.at("logo")},
+        {"splash", config.at("splash_screen")},
+        {"applications", {{{"executable", chosen->at("name")}}}}};
 }
 } // namespace
 
-nlohmann::json title_manifest(const std::filesystem::path &path,
-                              std::filesystem::path &directory) {
+nlohmann::json title_manifest(const std::filesystem::path &path, std::filesystem::path &directory) {
     const auto manifest = find_manifest(path);
     if (manifest.empty())
         return nullptr;
     directory = manifest.parent_path();
-    auto info = named(manifest, config_name)
-                    ? config_manifest(
-                          gdk::inspect_config(host::read_snapshot(manifest, gdk::config_limit)))
-                    : appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
+    auto info =
+        named(manifest, config_name)
+            ? config_manifest(gdk::inspect_config(host::read_snapshot(manifest, gdk::config_limit)))
+            : appx::inspect_manifest(host::read_snapshot(manifest, appx::manifest_limit));
     // A display name that is a reference into the package's resources ("ms-resource:AppName")
     // is replaced by what it stands for, from the resource index next to the manifest; the
     // reference is kept beside it. A package without a readable index keeps the reference.
@@ -114,10 +113,9 @@ nlohmann::json title_manifest(const std::filesystem::path &path,
     }
     // the Xbox Live title ID, which either kind of manifest has under a name of its own, as
     // eight hexadecimal digits in capitals
-    auto id = info.contains("title_id") && info.at("title_id").is_string()
-                  ? info.at("title_id")
-                  : info.contains("xbox_live_title_id") ? info.at("xbox_live_title_id")
-                                                        : nlohmann::json(nullptr);
+    auto id = info.contains("title_id") && info.at("title_id").is_string() ? info.at("title_id")
+              : info.contains("xbox_live_title_id") ? info.at("xbox_live_title_id")
+                                                    : nlohmann::json(nullptr);
     if (id.is_string()) {
         auto text = id.get<std::string>();
         for (auto &c : text)
@@ -285,8 +283,8 @@ LaunchResult launch_file(const std::filesystem::path &path) {
             std::to_string(plan.at("host").get<std::size_t>()) + " to host APIs, " +
             std::to_string(plan.at("title").get<std::size_t>()) + " to the title's own DLLs, " +
             std::to_string(plan.at("system").get<std::size_t>()) +
-            " to the console system modules it came with and " +
-            std::to_string(missing) + " have no implementation";
+            " to the console system modules it came with and " + std::to_string(missing) +
+            " have no implementation";
         if (!missing && plan.at("imports").size()) {
             result.status = LaunchStatus::runnable;
             result.detail += ".";

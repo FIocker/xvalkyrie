@@ -1,9 +1,9 @@
 #include "runtime/durango/winrt/storage.hpp"
 #include "runtime/common/runtime.hpp"
-#include "runtime/modules/storage.hpp"
 #include "runtime/durango/winrt/async.hpp"
 #include "runtime/durango/winrt/placeholder.hpp"
 #include "runtime/durango/winrt/title_info.hpp"
+#include "runtime/modules/storage.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>

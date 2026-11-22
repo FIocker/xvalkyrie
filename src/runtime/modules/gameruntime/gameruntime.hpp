@@ -36,8 +36,7 @@ struct Queue;
 enum class Port : std::uint32_t { work, completion };
 using TaskCallback = void CALLBACK(void *context, bool canceled);
 // the process queue when `queue` is null; `delay` in milliseconds
-HRESULT submit(Queue *queue, Port port, std::uint32_t delay, void *context,
-               TaskCallback *callback);
+HRESULT submit(Queue *queue, Port port, std::uint32_t delay, void *context, TaskCallback *callback);
 Queue *duplicate(Queue *queue);
 void close(Queue *queue);
 // one more reference to the process queue, null if the title took it away
