@@ -242,6 +242,20 @@ BOOL WINAPI move_file_ex_w(const wchar_t *from, const wchar_t *to, DWORD flags) 
 BOOL WINAPI set_file_attributes_w(const wchar_t *name, DWORD attributes) {
     return SetFileAttributesW(console_path(name).c_str(), attributes);
 }
+// the ANSI ones, which titles of the older kits use for their own folders on the drives
+BOOL WINAPI create_directory_a(const char *name, SECURITY_ATTRIBUTES *security) {
+    return CreateDirectoryA(console_path(name).c_str(), security);
+}
+BOOL WINAPI remove_directory_a(const char *name) {
+    return RemoveDirectoryA(console_path(name).c_str());
+}
+BOOL WINAPI delete_file_a(const char *name) { return DeleteFileA(console_path(name).c_str()); }
+BOOL WINAPI move_file_ex_a(const char *from, const char *to, DWORD flags) {
+    return MoveFileExA(console_path(from).c_str(), to ? console_path(to).c_str() : nullptr, flags);
+}
+BOOL WINAPI set_file_attributes_a(const char *name, DWORD attributes) {
+    return SetFileAttributesA(console_path(name).c_str(), attributes);
+}
 // Free space of a console drive: that of the host's volume the drive's folder is on. The
 // host wants a directory that exists; the nearest parent that does is asked.
 std::wstring existing_directory(const wchar_t *name) {
@@ -500,6 +514,11 @@ const ApiFunction functions[] = {{"OutputDebugStringW", erase(output_debug_strin
                                  {"DeleteFileW", erase(delete_file_w)},
                                  {"MoveFileExW", erase(move_file_ex_w)},
                                  {"SetFileAttributesW", erase(set_file_attributes_w)},
+                                 {"CreateDirectoryA", erase(create_directory_a)},
+                                 {"RemoveDirectoryA", erase(remove_directory_a)},
+                                 {"DeleteFileA", erase(delete_file_a)},
+                                 {"MoveFileExA", erase(move_file_ex_a)},
+                                 {"SetFileAttributesA", erase(set_file_attributes_a)},
                                  {"GetDiskFreeSpaceExW", erase(get_disk_free_space_ex_w)},
                                  {"GetDiskFreeSpaceW", erase(get_disk_free_space_w)},
                                  {"_wfopen", erase(crt_wfopen)},
