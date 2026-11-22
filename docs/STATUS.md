@@ -27,7 +27,7 @@ everything else.
 | `dxcompiler_x.dll` | 1 | 0 |  |
 | `etwplus.dll` | 4 | 0 |  |
 | `gameinput.dll` | 2 | 0 |  |
-| `kernelx.dll` | 82 | 0 | kernel32.dll |
+| `kernelx.dll` | 97 | 0 | kernel32.dll |
 | `mfplat.dll` | 5 | 0 | mfplat.dll |
 | `mmdevapi.dll` | 6 | 0 | mmdevapi.dll |
 | `msvcp_win.dll` | 0 | 0 | msvcp_win.dll |
@@ -45,9 +45,9 @@ everything else.
 | `xgameruntime.dll` | 6 | 0 |  |
 | `xmem.dll` | 18 | 0 |  |
 
-45 functions of the host's API are answered the console's way, whichever API set a title imports them from:
+79 functions of the host's API are answered the console's way, whichever API set a title imports them from:
 
-`CoCreateInstance`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `CreateWindowExA`, `CreateWindowExW`, `DeleteFileW`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `GetCurrentProcessorNumber`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetProcAddress`, `GetSystemInfo`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `ReadFile`, `ReadFileEx`, `RegCloseKey`, `RegOpenKeyExW`, `RegOpenKeyW`, `RegQueryValueExW`, `RemoveDirectoryW`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadpoolAffinityMask`, `ShowWindow`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `__C_specific_handler`
+`CoCreateInstance`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `CreateWindowExA`, `CreateWindowExW`, `DeleteFileW`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `GetCurrentProcessorNumber`, `GetDiskFreeSpaceExW`, `GetDiskFreeSpaceW`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetLocaleInfoA`, `GetLocaleInfoEx`, `GetLocaleInfoW`, `GetProcAddress`, `GetProcessPreferredUILanguages`, `GetSystemDefaultLCID`, `GetSystemDefaultLangID`, `GetSystemDefaultLocaleName`, `GetSystemDefaultUILanguage`, `GetSystemInfo`, `GetSystemPreferredUILanguages`, `GetThreadLocale`, `GetThreadPreferredUILanguages`, `GetThreadUILanguage`, `GetUserDefaultGeoName`, `GetUserDefaultLCID`, `GetUserDefaultLangID`, `GetUserDefaultLocaleName`, `GetUserDefaultUILanguage`, `GetUserGeoID`, `GetUserPreferredUILanguages`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `ReadFile`, `ReadFileEx`, `RegCloseKey`, `RegOpenKeyExW`, `RegOpenKeyW`, `RegQueryValueExW`, `RemoveDirectoryW`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadpoolAffinityMask`, `ShowWindow`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `__C_specific_handler`, `_fsopen`, `_stat64i32`, `_wfopen`, `_wfopen_s`, `_wfsopen`, `_wmkdir`, `_wremove`, `_wrename`, `_wrmdir`, `_wstat64`, `fopen`, `fopen_s`, `remove`
 
 <details><summary><code>acphal.dll</code>: 10 functions</summary>
 
@@ -97,9 +97,9 @@ everything else.
 
 </details>
 
-<details><summary><code>kernelx.dll</code>: 82 functions</summary>
+<details><summary><code>kernelx.dll</code>: 97 functions</summary>
 
-`AllocateTitlePhysicalPages`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `DeleteFileW`, `EventActivityIdControl`, `EventEnabled`, `EventProviderEnabled`, `EventRegister`, `EventSetInformation`, `EventUnregister`, `EventWrite`, `EventWriteEx`, `EventWriteString`, `EventWriteTransfer`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `FreeTitlePhysicalPages`, `GetConsoleType`, `GetCurrentProcessorNumber`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetProcAddress`, `GetSystemInfo`, `GetSystemOSVersion`, `GetThreadName`, `GetTraceEnableFlags`, `GetTraceEnableLevel`, `GetTraceLoggerHandle`, `JobTitleMemoryStatus`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MapTitlePhysicalPages`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `QueryProcessorSchedulingStatistics`, `ReadFile`, `ReadFileEx`, `RegisterTraceGuidsA`, `RegisterTraceGuidsW`, `RemoveDirectoryW`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadName`, `SetThreadpoolAffinityMask`, `TitleMemoryStatus`, `ToolingMemoryStatus`, `TraceEvent`, `TraceEventInstance`, `TraceMessage`, `TraceMessageVa`, `UnregisterTraceGuids`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `WaitOnAddress`, `WakeByAddressAll`, `WakeByAddressSingle`, `XMemAlloc`, `XMemAllocDefault`, `XMemCheckDefaultHeaps`, `XMemFree`, `XMemFreeDefault`, `XMemGetAllocationHysteresis`, `XMemGetAllocationStatistics`, `XMemGetAuxiliaryTitleMemory`, `XMemPreallocateFreeSpace`, `XMemReleaseAuxiliaryTitleMemory`, `XMemSetAllocationHooks`, `XMemSetAllocationHysteresis`
+`AllocateTitlePhysicalPages`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `DeleteFileW`, `EventActivityIdControl`, `EventEnabled`, `EventProviderEnabled`, `EventRegister`, `EventSetInformation`, `EventUnregister`, `EventWrite`, `EventWriteEx`, `EventWriteString`, `EventWriteTransfer`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `FreeTitlePhysicalPages`, `GetConsoleType`, `GetCurrentProcessorNumber`, `GetDiskFreeSpaceExW`, `GetDiskFreeSpaceW`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetProcAddress`, `GetSystemInfo`, `GetSystemOSVersion`, `GetThreadName`, `GetTraceEnableFlags`, `GetTraceEnableLevel`, `GetTraceLoggerHandle`, `JobTitleMemoryStatus`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MapTitlePhysicalPages`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `QueryProcessorSchedulingStatistics`, `ReadFile`, `ReadFileEx`, `RegisterTraceGuidsA`, `RegisterTraceGuidsW`, `RemoveDirectoryW`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadName`, `SetThreadpoolAffinityMask`, `TitleMemoryStatus`, `ToolingMemoryStatus`, `TraceEvent`, `TraceEventInstance`, `TraceMessage`, `TraceMessageVa`, `UnregisterTraceGuids`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `WaitOnAddress`, `WakeByAddressAll`, `WakeByAddressSingle`, `XMemAlloc`, `XMemAllocDefault`, `XMemCheckDefaultHeaps`, `XMemFree`, `XMemFreeDefault`, `XMemGetAllocationHysteresis`, `XMemGetAllocationStatistics`, `XMemGetAuxiliaryTitleMemory`, `XMemPreallocateFreeSpace`, `XMemReleaseAuxiliaryTitleMemory`, `XMemSetAllocationHooks`, `XMemSetAllocationHysteresis`, `_fsopen`, `_stat64i32`, `_wfopen`, `_wfopen_s`, `_wfsopen`, `_wmkdir`, `_wremove`, `_wrename`, `_wrmdir`, `_wstat64`, `fopen`, `fopen_s`, `remove`
 
 </details>
 
@@ -207,9 +207,9 @@ everything else.
 | `xgameruntime.dll` | 6 | 0 |  |
 | `xmem.dll` | 18 | 0 |  |
 
-46 functions of the host's API are answered the console's way, whichever API set a title imports them from:
+80 functions of the host's API are answered the console's way, whichever API set a title imports them from:
 
-`CoCreateInstance`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `CreateWindowExA`, `CreateWindowExW`, `DeleteFileW`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `GetCurrentProcessorNumber`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetProcAddress`, `GetSystemInfo`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `ReadFile`, `ReadFileEx`, `RegCloseKey`, `RegOpenKeyExW`, `RegOpenKeyW`, `RegQueryValueExW`, `RemoveDirectoryW`, `RtlPcToFileHeader`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadpoolAffinityMask`, `ShowWindow`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `__C_specific_handler`
+`CoCreateInstance`, `CreateDirectoryW`, `CreateFile2`, `CreateFileA`, `CreateFileW`, `CreateWindowExA`, `CreateWindowExW`, `DeleteFileW`, `FindFirstFileA`, `FindFirstFileExA`, `FindFirstFileExW`, `FindFirstFileW`, `FreeLibrary`, `GetCurrentProcessorNumber`, `GetDiskFreeSpaceExW`, `GetDiskFreeSpaceW`, `GetFileAttributesA`, `GetFileAttributesExA`, `GetFileAttributesExW`, `GetFileAttributesW`, `GetLocaleInfoA`, `GetLocaleInfoEx`, `GetLocaleInfoW`, `GetProcAddress`, `GetProcessPreferredUILanguages`, `GetSystemDefaultLCID`, `GetSystemDefaultLangID`, `GetSystemDefaultLocaleName`, `GetSystemDefaultUILanguage`, `GetSystemInfo`, `GetSystemPreferredUILanguages`, `GetThreadLocale`, `GetThreadPreferredUILanguages`, `GetThreadUILanguage`, `GetUserDefaultGeoName`, `GetUserDefaultLCID`, `GetUserDefaultLangID`, `GetUserDefaultLocaleName`, `GetUserDefaultUILanguage`, `GetUserGeoID`, `GetUserPreferredUILanguages`, `LoadLibraryA`, `LoadLibraryExA`, `LoadLibraryExW`, `LoadLibraryW`, `LoadPackagedLibrary`, `MoveFileExW`, `OutputDebugStringA`, `OutputDebugStringW`, `ReadFile`, `ReadFileEx`, `RegCloseKey`, `RegOpenKeyExW`, `RegOpenKeyW`, `RegQueryValueExW`, `RemoveDirectoryW`, `RtlPcToFileHeader`, `SetFileAttributesW`, `SetThreadAffinityMask`, `SetThreadpoolAffinityMask`, `ShowWindow`, `VirtualAlloc`, `VirtualAllocEx`, `VirtualFree`, `VirtualFreeEx`, `VirtualProtect`, `__C_specific_handler`, `_fsopen`, `_stat64i32`, `_wfopen`, `_wfopen_s`, `_wfsopen`, `_wmkdir`, `_wremove`, `_wrename`, `_wrmdir`, `_wstat64`, `fopen`, `fopen_s`, `remove`
 
 <details><summary><code>acphal.dll</code>: 10 functions</summary>
 
@@ -318,7 +318,7 @@ implementation says so in the log when a title calls it, and fails.
 | XStore | 78 | 78 |
 | XAppBroadcast | 16 | 16 |
 | XLauncher | 3 | 3 |
-| XNetworking | 16 | 18 |
+| XNetworking | 18 | 18 |
 | XAccessibility | 19 | 19 |
 | XGameSave | 47 | 47 |
 | XUserDevice | 8 | 8 |
@@ -338,12 +338,6 @@ implementation says so in the log when a title calls it, and fails.
 <details><summary>XGameStreamingExperimental: 4 not implemented</summary>
 
 `EXPERIMENTAL_XGameStreamingGetClientOrientation`, `EXPERIMENTAL_XGameStreamingGetMotionState`, `EXPERIMENTAL_XGameStreamingGetMotionInfo`, `XGameStreamingSendDebugMessageToClient`
-
-</details>
-
-<details><summary>XNetworking: 2 not implemented</summary>
-
-`XNetworkingQueryConfigurationSetting`, `XNetworkingSetConfigurationSetting`
 
 </details>
 
@@ -374,9 +368,9 @@ translated when all of its instructions do, and its resources are followed.
 | program control | 31 | 37 |
 | scalar memory | 10 | 78 |
 | vector, two operands | 47 | 48 |
-| vector, one operand | 63 | 81 |
+| vector, one operand | 66 | 81 |
 | vector compare | 190 | 190 |
-| vector, three operands | 378 | 428 |
+| vector, three operands | 383 | 428 |
 | packed vector | 22 | 22 |
 | interpolation | 3 | 3 |
 | shared memory | 71 | 147 |
@@ -416,15 +410,15 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>vector, one operand: 18 not handled</summary>
+<details><summary>vector, one operand: 15 not handled</summary>
 
-`v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
+`v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_swaprel_b32`
 
 </details>
 
-<details><summary>vector, three operands: 50 not handled</summary>
+<details><summary>vector, three operands: 45 not handled</summary>
 
-`v_mullit_f32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_perm_b32`, `v_interp_p2_f16`, `v_div_fixup_f16`, `v_writelane_b32`, `v_mbcnt_lo_u32_b32`, `v_mbcnt_hi_u32_b32`, `v_permlane16_b32`, `v_permlanex16_b32`
+`v_mullit_f32`, `v_cvt_pk_u8_f32`, `v_div_fixup_f32`, `v_div_fixup_f64`, `v_ldexp_f64`, `v_div_scale_f32`, `v_div_scale_f64`, `v_div_fmas_f32`, `v_div_fmas_f64`, `v_qsad_pk_u16_u8`, `v_mqsad_pk_u16_u8`, `v_trig_preop_f64`, `v_mqsad_u32_u8`, `v_mad_u64_u32`, `v_mad_i64_i32`, `v_trunc_f64`, `v_ceil_f64`, `v_rndne_f64`, `v_floor_f64`, `v_rsq_f64`, `v_sqrt_f64`, `v_frexp_exp_i32_f64`, `v_frexp_mant_f64`, `v_fract_f64`, `v_movreld_b32`, `v_movrels_b32`, `v_movrelsd_b32`, `v_movrelsd_2_b32`, `v_frexp_mant_f16`, `v_frexp_exp_i16_f16`, `v_cvt_norm_i16_f16`, `v_cvt_norm_u16_f16`, `v_interp_p1_f32`, `v_interp_p2_f32`, `v_interp_mov_f32`, `v_lshlrev_b64`, `v_lshrrev_b64`, `v_ashrrev_i64`, `v_cvt_pknorm_i16_f16`, `v_cvt_pknorm_u16_f16`, `v_interp_p1ll_f16`, `v_interp_p1lv_f16`, `v_interp_p2_f16`, `v_div_fixup_f16`, `v_writelane_b32`
 
 </details>
 

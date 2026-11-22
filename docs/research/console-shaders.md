@@ -126,13 +126,55 @@ itself. The instruction table (`console_shader_rdna_ops.inc`) was read off LLVM'
 disassembly of the shaders of two titles, so it has the instructions those use and no others.
 
 State on the first title it was run on (82 shaders up to its title screen):
-46 are translated and all of those compile; the title screen is drawn right. Not done:
+46 are translated and all of those compile; the title screen is drawn right. On a second
+title, 2004 shaders in its first four minutes: 1966 are translated and all of those compile.
+Not done:
 what the host's shader model has no double for (rounding, roots, `frexp`, `ldexp`, the
 division helpers), 64-bit integers other than their comparisons and shifts, 64-bit words of
-a thread group's memory, the instructions that pick a register by
-an index (`*_movrel*`), global memory (`global_*`), typed buffers (`tbuffer_*`), compares
+a thread group's memory, global memory (`global_*`), typed buffers (`tbuffer_*`), compares
 with a bias or gradients, geometry and mesh shaders. A shader with any of these gets the
 stand-in that draws nothing, and `console_shader_source` says which.
+
+### A register with one of several descriptors
+
+Compiled code loads a descriptor in a block that a branch skips when no lane is active,
+and uses the register after it; and it loads different descriptors into one register on the
+two sides of a branch. Where such ways join, the register holds one of several descriptors
+of a table. Each of their loads then sets a variable (`c<n>`), and an instruction that uses
+the register is made once for each descriptor, under `if (c<n> == ...)`. What a descriptor
+is (a `Texture2D`, a comparison sampler) is taken from the uses where only one is possible
+and from the load nearest before a use; a descriptor of another kind than an instruction
+takes was left in the register by a way that also skips the instruction, and gets none.
+
+### Loops
+
+A loop goes from the target of a branch back to the last branch back to it. Where another
+loop starts inside and ends later, the outer one is made to end with it. A branch back to
+an outer loop from inside an inner one sets `back` and leaves the inner loops one by one.
+
+### A wave of one lane
+
+Code that counts or sums over the lanes of a wave is translated for a wave of this one
+lane. `v_mbcnt_*` (the lanes of a mask before this one) is zero, `s_bcnt1_i32_b64` of a mask
+of lanes is one or zero, and in a compute shader the instructions that read another lane's
+register (`*_dpp`, `*_dpp8`, `v_permlane*`, `v_readlane` of another lane) read zero. That is
+exact for what LLVM makes of an atomic counter: one lane adds the wave's sum to the counter
+and each lane takes the old value plus the sum of the lanes before it, which for one lane is
+its own atomic add. Only additions, `or`, `xor` and the unsigned maximum are taken, for
+which the lanes that are not there count as nothing. A real reduction over a wave (the
+largest value of the 64 threads of a tile, seen with `v_max_f32_dpp` in 36 shaders of the
+second title) is not translated: it needs the other threads' values.
+
+### Registers picked by an index
+
+`v_movreld_b32`, `v_movrels_b32` and `v_movrelsd_b32` name a register and add M0 to its
+number: a local array kept in registers. They become a `switch` on M0 over the registers
+from the one named.
+
+### Constant buffers by element
+
+A buffer instruction with an index on a constant buffer reads vector `index` of it: the
+descriptor the console makes for a constant buffer has a stride of 16 bytes.
 
 ### Memory a thread group shares
 
@@ -165,12 +207,39 @@ and conversions. 64-bit integers are compared a word at a time. A 32-bit literal
 upper word of a double, as LLVM's disassembler reads it; a literal where a 64-bit integer
 is expected is not translated.
 
+### The host's compiler
+
+The translation is HLSL as the system's `d3dcompiler_47.dll` takes it, which every Windows
+has. That compiler is slow with it: 200 s for a compute shader of 210 KB of HLSL (48 s
+without optimization), where a title waits 20 s for a shader before it gets a stand-in. Of
+141 shaders of the second title, 18 took longer than 100 s. `dxcompiler.dll` takes 2.6 s
+for the same shader and compiles all 1966 of the larger set, so it is used when it is found
+(next to `xvalkyrie.exe`, or in a Windows SDK) together with the `dxil.dll` that signs what
+it makes; `XV_SHADER_FXC` keeps to the older one. Sources above 200 KB are not optimized.
+The geometry shader of a rectangle list stays with the older compiler.
+
 ### Checking a change
 
 `xvboot shader-probe --compile` translates one compute shader per line of hexadecimal
 words and gives the translation to the host's compiler: what it says against it is the
 answer. `tools/status.py` uses the same command without the flag to count the instructions
-that are handled.
+that are handled. `xvboot shader-corpus FOLDER [--compile]` does the same for every shader
+a run left in a folder with `XV_SHADER_CODE`, and says how many shaders each reason stops
+and where in the first of them (`at`, in bytes from the first instruction after the two
+hash words); `xvboot shader-source FILE` prints the HLSL of one.
+
+### Open on the second title
+
+Without the host's debug layer the host drops the device (0x887a0005) soon after the first
+frame, with a burst of GPU driver errors in the system log. With the layer, which runs the
+queues one after another, the title goes on for minutes. What the layer's GPU validation
+(`XV_D3D_DEBUG=2`) says in that time:
+
+- a vertex shader reads a buffer where the title's descriptor is a 2D texture (the first
+  descriptor of the table of root parameter 1);
+- a compute shader writes through a register whose descriptor is a shader resource view;
+- the copies that bring a placed buffer's contents to the host are made on a list of the
+  title's kind with the buffers in copy states they were not created in.
 
 What had to be right on the host for translated shaders to draw:
 
@@ -182,6 +251,4 @@ What had to be right on the host for translated shaders to draw:
   (`XGCreateTextureComputer` from the description the title gave, then
   `CopyFromSubresource`), since they are stored swizzled.
 
-Tools used, outside the tree: a corpus harness that translates and compiles every shader of
-a folder dumped with `XV_SHADER_CODE` and counts what stopped the others, and
-`XV_SHADER_STAND_INS=<stages>` / `XV_SHADER_SKIP=<text>` to find which shader breaks a run.
+`XV_SHADER_STAND_INS=<stages>` / `XV_SHADER_SKIP=<text>` find which shader breaks a run.

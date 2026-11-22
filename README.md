@@ -43,9 +43,9 @@ through.
   stubs or absent.
 - **Xbox Series X|S.** 37 of the 40 public GDK samples that build for Series draw their
   picture. Retail titles start, create their device and present frames. Their shaders are
-  translated from the GPU's machine code: of the 2055 shaders one retail title creates on the
-  way to its first screen, 1786 translate and compile. The picture of those titles is not
-  right yet.
+  translated from the GPU's machine code: of the 2004 shaders one retail title creates in its
+  first four minutes, 1966 translate and compile. The picture of those titles is not right
+  yet.
 
 <!-- status:begin -->
 [![status map](docs/img/status.svg)](docs/STATUS.md)
@@ -79,6 +79,10 @@ the layers depend on each other and where new code goes.
 
 Windows 10 or 11, 64-bit, with Visual Studio 2022 ("Desktop development with C++"),
 CMake 3.25 or later and Python 3. CMake fetches the dependencies on the first configure.
+
+The shaders made for Series titles are compiled with `dxcompiler.dll` when it and `dxil.dll`
+are next to `xvalkyrie.exe` or in a Windows SDK, and with the system's older compiler
+otherwise, which takes minutes over the largest of them.
 
 ```bat
 build.cmd --test
@@ -127,6 +131,8 @@ The commands that look at a title without running it print JSON:
 | `xvboot inspect-package FILE` | The header of an XVD/XVC package |
 | `xvboot modules durango\|scarlett` | The console modules and functions implemented |
 | `xvboot shader-probe [--compile]` | For each line of machine code words on the input, what stops its translation |
+| `xvboot shader-corpus FOLDER [--compile]` | How many of the shaders a run left in a folder (`XV_SHADER_CODE`) translate, and what stops the rest |
+| `xvboot shader-source FILE` | The HLSL made for one shader of such a folder |
 
 In the window, Options > Input binds the gamepad to keys or to the host's gamepad,
 Options > Graphics picks the backend and what F11 does, Options > Console sets the signed-in
@@ -139,7 +145,7 @@ title.
 
 Development switches are environment variables, described where they are used in
 [docs/research](docs/research): `XV_D3D_TRACE`, `XV_D3D_DEBUG`, `XV_D3D_PROBE`,
-`XV_SHADER_WHY`, `XV_SHADER_CODE` and others.
+`XV_SHADER_WHY`, `XV_SHADER_CODE`, `XV_D3D_DRED` and others.
 
 ## Tools
 
