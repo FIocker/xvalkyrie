@@ -250,6 +250,11 @@ void install_system(Registry &registry) {
     registry.forward("toolhelpx.dll", "kernel32.dll");
     registry.add("toolhelpx.dll", "GetSymbolFromAddress", erase(get_symbol_from_address));
     registry.add("toolhelpx.dll", "GetSourceLineFromAddress", erase(not_implemented));
+    // a title's crash handler writes a dump of itself: none is written, and what it crashed
+    // on is in the log
+    registry.add(
+        "toolhelpx.dll", "MiniDumpWriteDump",
+        erase(+[](HANDLE, DWORD, HANDLE, int, void *, void *, void *) -> BOOL { return FALSE; }));
     registry.add("toolhelpx.dll", "QuerySystemHardwareInfo", erase(query_system_hardware_info));
 }
 } // namespace xv::runtime::durango
