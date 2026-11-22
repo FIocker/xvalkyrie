@@ -181,11 +181,16 @@ HRESULT WINAPI release_shape_contexts() {
     return S_OK;
 }
 
+// A message as PopMessage gives it: its type, then what it is about. For a completed command
+// that is the command's type, its id and the audio frame it completed in. The first
+// development kits end after the id.
 struct Message {
     std::uint32_t type, reserved;
     std::uint64_t value, id;
+    std::uint32_t frame, unused;
 };
-static_assert(sizeof(Message) == 24);
+static_assert(sizeof(Message) == 32);
+constexpr std::size_t early_message_bytes = 24;
 constexpr std::uint32_t audio_frame = 2, command_done = 0x10, disconnected = 0x80;
 constexpr auto frame = std::chrono::microseconds(2667);
 
@@ -206,6 +211,8 @@ struct Hal {
     bool connected = false;
     std::chrono::steady_clock::time_point next_frame;
     std::uint32_t seen[8] = {}; // command types logged
+    std::uint64_t commands = 0; // completed so far
+    std::uint32_t frames = 0;   // audio frames ticked so far
 };
 HRESULT STDMETHODCALLTYPE connect(Hal *self, std::uint32_t commands, std::uint32_t messages) {
     const std::lock_guard lock(self->mutex);
@@ -219,7 +226,7 @@ HRESULT STDMETHODCALLTYPE connect(Hal *self, std::uint32_t commands, std::uint32
 HRESULT STDMETHODCALLTYPE disconnect(Hal *self) {
     const std::lock_guard lock(self->mutex);
     self->connected = false;
-    self->messages.push_back({disconnected, 0, 0, 0});
+    self->messages.push_back({disconnected, 0, 0, 0, 0, 0});
     return S_OK;
 }
 HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id,
@@ -240,14 +247,16 @@ HRESULT STDMETHODCALLTYPE submit(Hal *self, std::uint32_t type, std::uint64_t id
                      words ? words[1] : 0, words ? words[2] : 0, words ? words[3] : 0,
                      detail::guest_location(_ReturnAddress()).c_str());
     }
-    if (id) { // 0: nobody waits for it
-        // the first development kits have the command's id right after its type, with no
-        // time before them
-        Message done{command_done, 0, 0, id};
-        if (early_kit)
-            done.value = std::uint64_t{static_cast<std::uint32_t>(id)} << 32 | type;
-        self->messages.push_back(done);
-    }
+    // Every command is completed. One the title gave no id is known by its place among the
+    // commands, counted from 1: a title that sends its first command without an id waits for
+    // the completion numbered 1 before it sends another.
+    const auto sequence = ++self->commands;
+    Message done{command_done, 0, type, id ? id : sequence, self->frames, 0};
+    // the first development kits have the command's id right after its type, with no time
+    // before them
+    if (early_kit)
+        done.value = std::uint64_t{static_cast<std::uint32_t>(done.id)} << 32 | type;
+    self->messages.push_back(done);
     return S_OK;
 }
 bool STDMETHODCALLTYPE pop(Hal *self, Message *message) {
@@ -261,13 +270,16 @@ bool STDMETHODCALLTYPE pop(Hal *self, Message *message) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= self->next_frame) {
             self->next_frame = std::max(self->next_frame + frame, now - 8 * frame);
-            *message = {audio_frame, 0, 0, 0};
+            ++self->frames;
+            const Message tick{audio_frame, 0, 0, 0, 0, 0};
+            std::memcpy(message, &tick, early_kit ? early_message_bytes : sizeof tick);
             return true;
         }
     }
     if (self->messages.empty())
         return false;
-    *message = self->messages.front();
+    std::memcpy(message, &self->messages.front(),
+                early_kit ? early_message_bytes : sizeof(Message));
     self->messages.pop_front();
     return true;
 }
