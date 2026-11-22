@@ -1,18 +1,25 @@
 name: release
 on:
   push:
-    tags: ["v[0-9]*"]
+    tags: ["[0-9]*", "v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build and publish
+        required: true
 permissions:
   contents: write
 jobs:
   windows:
     runs-on: windows-2022
     env:
+      TAG: ${{ inputs.tag || github.ref_name }}
       PORTABLE: XValkyrie-Win-x86_64-Portable.zip
       INSTALLER: XValkyrie-Win-x86_64.msi
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
       - run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
       - run: cmake --build build --config Release --parallel 3
@@ -27,11 +34,19 @@ jobs:
         shell: pwsh
         run: |
           # Windows Installer versions are three numbers: v1.2.3-rc1 is 1.2.3
-          $version = ($env:GITHUB_REF_NAME -replace '^v', '') -replace '[-+].*$', ''
+          $version = ($env:TAG -replace '^v', '') -replace '[-+].*$', ''
           dotnet tool install --global wix --version 5.0.2
           wix build packaging/windows/installer.wxs -arch x64 -d Version=$version -d Source=stage -o $env:INSTALLER
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME $env:PORTABLE $env:INSTALLER --title "XValkyrie $env:GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          # a release made by hand for the tag gets the files; otherwise one is made
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $env:PORTABLE $env:INSTALLER --clobber
+          } else {
+            $title = "XValkyrie v" + ($env:TAG -replace '^v', '')
+            gh release create $env:TAG $env:PORTABLE $env:INSTALLER --title $title --generate-notes --verify-tag
+          }

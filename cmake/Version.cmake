@@ -6,8 +6,12 @@ find_package(Git QUIET)
 if(GIT_FOUND)
   execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" describe --always --dirty --abbrev=8 --exclude "*"
     OUTPUT_VARIABLE commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" describe --tags --exact-match --match "v[0-9]*"
+  execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" describe --tags --exact-match --match "v[0-9]*" --match "[0-9]*"
     OUTPUT_VARIABLE tag OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  # a tag is the version with or without a v before it; it is shown with one
+  if(tag AND NOT tag MATCHES "^v")
+    set(tag "v${tag}")
+  endif()
 endif()
 if(tag AND commit)
   set(release "${tag}")
