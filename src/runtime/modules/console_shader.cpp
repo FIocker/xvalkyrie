@@ -445,7 +445,8 @@ std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &so
     if (!newer_compiler() || FAILED(newer_compiler()(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler))) ||
         !compiler)
         return {};
-    // the language as the older compiler has it, which the shaders are written in
+    // The language as the older compiler has it, which the shaders are written in. The
+    // largest are not optimized here: that takes several times as long, and a title waits.
     const wchar_t *arguments[] = {L"-E",
                                   L"main",
                                   L"-T",
@@ -453,7 +454,8 @@ std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &so
                                   : stage == ShaderStage::pixel ? L"ps_6_0"
                                                                 : L"cs_6_0",
                                   L"-HV",
-                                  L"2018"};
+                                  L"2018",
+                                  source.size() > 200'000 ? L"-Od" : L"-O3"};
     const DxcBuffer text{source.data(), source.size(), DXC_CP_UTF8};
     IDxcResult *result = nullptr;
     std::vector<std::uint8_t> bytes;

@@ -384,9 +384,21 @@ void console_vtable(void *object, std::size_t host_slots, std::size_t slots,
             return;
     auto &block = blocks[host];
     if (!block) {
-        auto *const memory = new Slot[slots + 1]{};
+        // The host's class has methods of its own after the interface's, which its runtime
+        // calls on the object: they are copied as well, as far as its vtable's memory goes.
+        std::size_t copied = host_slots;
+        if (MEMORY_BASIC_INFORMATION region{}; VirtualQuery(host, &region, sizeof region))
+            copied = std::min<std::size_t>(
+                max_slots, (static_cast<const std::uint8_t *>(region.BaseAddress) +
+                            region.RegionSize - reinterpret_cast<const std::uint8_t *>(host)) /
+                               sizeof(Slot));
+        copied = std::max(copied, host_slots);
+        auto *const memory = new Slot[std::max(slots, copied) + 1]{};
         memory[0] = host;
-        std::copy(host, host + host_slots, memory + 1);
+        std::copy(host, host + copied, memory + 1);
+        // a console method where the host has one of its own: by who calls
+        for (std::size_t index = host_slots; index < slots; ++index)
+            memory[1 + index] = dispatchers<Kind>[index];
         for (const auto &[index, function] : overrides) {
             console_table<Kind>[index] = function;
             memory[1 + index] = dispatchers<Kind>[index];

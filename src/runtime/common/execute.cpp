@@ -512,6 +512,11 @@ void report_unwound_stack(const CONTEXT *fault) {
     CONTEXT context = *fault;
     std::fprintf(stderr, "[Runtime] unwound:");
     __try {
+        // a call through a null pointer: its caller is the first thing on the stack
+        if (!context.Rip) {
+            context.Rip = *reinterpret_cast<DWORD64 *>(context.Rsp);
+            context.Rsp += 8;
+        }
         for (int depth = 0; depth < 24 && context.Rip; ++depth) {
             print_location(context.Rip);
             DWORD64 base = 0;
