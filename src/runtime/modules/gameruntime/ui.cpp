@@ -278,15 +278,15 @@ void install_ui() {
     implement("XGameUiShowMessageDialogAsync", &message_dialog);
     implement("XGameUiShowMessageDialogResult", &message_dialog_result);
     implement("XGameUiShowErrorDialogAsync", &error_dialog);
-    for (const auto *name :
-         {"XGameUiShowAchievementsAsync", "XGameUiShowPlayerProfileCardAsync",
-          "XGameUiShowSendGameInviteAsync", "XGameUiShowMultiplayerActivityGameInviteAsync"})
-        implement(name, &shown);
-    for (const auto *name :
-         {"XGameUiShowErrorDialogResult", "XGameUiShowAchievementsResult",
-          "XGameUiShowPlayerProfileCardResult", "XGameUiShowSendGameInviteResult",
-          "XGameUiShowMultiplayerActivityGameInviteResult"})
-        implement(name, &shown_result);
+    implement("XGameUiShowAchievementsAsync", &shown);
+    implement("XGameUiShowPlayerProfileCardAsync", &shown);
+    implement("XGameUiShowSendGameInviteAsync", &shown);
+    implement("XGameUiShowMultiplayerActivityGameInviteAsync", &shown);
+    implement("XGameUiShowErrorDialogResult", &shown_result);
+    implement("XGameUiShowAchievementsResult", &shown_result);
+    implement("XGameUiShowPlayerProfileCardResult", &shown_result);
+    implement("XGameUiShowSendGameInviteResult", &shown_result);
+    implement("XGameUiShowMultiplayerActivityGameInviteResult", &shown_result);
     implement("XGameUiShowPlayerPickerAsync", &player_picker);
     implement("XGameUiShowPlayerPickerResultCount", &player_picker_count);
     implement("XGameUiShowPlayerPickerResult", &player_picker_result);

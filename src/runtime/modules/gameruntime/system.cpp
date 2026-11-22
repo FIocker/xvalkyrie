@@ -351,13 +351,16 @@ void install_system() {
     implement("XGameStreamingHideTouchControls", &succeeded);
     implement("XGameStreamingShowTouchControlLayout", &succeeded);
     // events and states of clips nobody records
-    for (const auto *name :
-         {"XAppCaptureMetadataAddStringEvent", "XAppCaptureMetadataAddInt32Event",
-          "XAppCaptureMetadataAddDoubleEvent", "XAppCaptureMetadataStartStringState",
-          "XAppCaptureMetadataStartInt32State", "XAppCaptureMetadataStartDoubleState",
-          "XAppCaptureMetadataStopState", "XAppCaptureMetadataStopAllStates",
-          "XAppCaptureEnableRecord", "XAppCaptureDisableRecord"})
-        implement(name, &succeeded);
+    implement("XAppCaptureMetadataAddStringEvent", &succeeded);
+    implement("XAppCaptureMetadataAddInt32Event", &succeeded);
+    implement("XAppCaptureMetadataAddDoubleEvent", &succeeded);
+    implement("XAppCaptureMetadataStartStringState", &succeeded);
+    implement("XAppCaptureMetadataStartInt32State", &succeeded);
+    implement("XAppCaptureMetadataStartDoubleState", &succeeded);
+    implement("XAppCaptureMetadataStopState", &succeeded);
+    implement("XAppCaptureMetadataStopAllStates", &succeeded);
+    implement("XAppCaptureEnableRecord", &succeeded);
+    implement("XAppCaptureDisableRecord", &succeeded);
     implement("XAppCaptureMetadataRemainingStorageBytesAvailable", &metadata_storage);
     implement("XAppCaptureRegisterMetadataPurged", &register_3);
     implement("XAppCaptureUnRegisterMetadataPurged", &unregister);

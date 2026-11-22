@@ -179,11 +179,12 @@ void install_store() {
     implement("XStoreQueryProductForCurrentGameAsync", &query_for_game);
     implement("XStoreQueryProductForPackageAsync", &query_for_package);
     implement("XStoreProductsQueryNextPageAsync", &query_next_page);
-    for (const auto *name :
-         {"XStoreQueryAssociatedProductsResult", "XStoreQueryEntitledProductsResult",
-          "XStoreQueryProductsResult", "XStoreQueryProductForCurrentGameResult",
-          "XStoreQueryProductForPackageResult", "XStoreProductsQueryNextPageResult"})
-        implement(name, &query_products_result);
+    implement("XStoreQueryAssociatedProductsResult", &query_products_result);
+    implement("XStoreQueryEntitledProductsResult", &query_products_result);
+    implement("XStoreQueryProductsResult", &query_products_result);
+    implement("XStoreQueryProductForCurrentGameResult", &query_products_result);
+    implement("XStoreQueryProductForPackageResult", &query_products_result);
+    implement("XStoreProductsQueryNextPageResult", &query_products_result);
     implement("XStoreEnumerateProductsQuery", &enumerate_products);
     implement("XStoreProductsQueryHasMorePages", &has_more_pages);
     implement("XStoreCloseProductsQueryHandle", &close_handle);
@@ -211,21 +212,21 @@ void install_store() {
     implement("XStoreGetUserPurchaseIdAsync", &service_3);
     implement("XStoreQueryLicenseTokenAsync", &service_4);
     implement("XStoreReportConsumableFulfillmentAsync", &service_4);
-    for (const auto *name :
-         {"XStoreGetUserCollectionsIdResultSize", "XStoreGetUserPurchaseIdResultSize",
-          "XStoreQueryLicenseTokenResultSize"})
-        implement(name, &service_result_size);
-    for (const auto *name :
-         {"XStoreGetUserCollectionsIdResult", "XStoreGetUserPurchaseIdResult",
-          "XStoreQueryLicenseTokenResult", "XStoreReportConsumableFulfillmentResult"})
-        implement(name, &service_result);
+    implement("XStoreGetUserCollectionsIdResultSize", &service_result_size);
+    implement("XStoreGetUserPurchaseIdResultSize", &service_result_size);
+    implement("XStoreQueryLicenseTokenResultSize", &service_result_size);
+    implement("XStoreGetUserCollectionsIdResult", &service_result);
+    implement("XStoreGetUserPurchaseIdResult", &service_result);
+    implement("XStoreQueryLicenseTokenResult", &service_result);
+    implement("XStoreReportConsumableFulfillmentResult", &service_result);
     implement("XStoreShowPurchaseUIAsync", &show_purchase_ui);
     implement("XStoreShowRateAndReviewUIAsync", &show_ui_1);
     implement("XStoreShowRedeemTokenUIAsync", &show_redeem_ui);
     implement("XStoreShowProductPageUIAsync", &show_ui_2);
-    for (const auto *name : {"XStoreShowPurchaseUIResult", "XStoreShowRateAndReviewUIResult",
-                             "XStoreShowRedeemTokenUIResult", "XStoreShowProductPageUIResult"})
-        implement(name, &show_ui_result);
+    implement("XStoreShowPurchaseUIResult", &show_ui_result);
+    implement("XStoreShowRateAndReviewUIResult", &show_ui_result);
+    implement("XStoreShowRedeemTokenUIResult", &show_ui_result);
+    implement("XStoreShowProductPageUIResult", &show_ui_result);
     implement("XStoreRegisterGameLicenseChanged", &register_event);
     implement("XStoreUnregisterGameLicenseChanged", &unregister_event);
     implement("XStoreRegisterPackageLicenseLost", &register_event);
