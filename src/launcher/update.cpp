@@ -15,7 +15,7 @@
 namespace xv {
 namespace {
 constexpr wchar_t releases_host[] = L"api.github.com";
-constexpr wchar_t latest_release[] = L"/repos/sammwyy/XScarlet/releases/latest";
+constexpr wchar_t latest_release[] = L"/repos/sammwyy/xvalkyrie/releases/latest";
 constexpr char archive_name[] = "XValkyrie-Win-x86_64-Portable.zip";
 constexpr std::array<const wchar_t *, 2> executables{L"xvalkyrie.exe", L"xvboot.exe"};
 constexpr wchar_t replaced[] = L".replaced";

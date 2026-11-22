@@ -6,7 +6,7 @@
 
 **Xbox One and Xbox Series X|S software on Windows, by translation.**
 
-[![build](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml)
+[![build](https://github.com/sammwyy/xvalkyrie/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xvalkyrie/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-ec3630.svg)](LICENSE)
 [![language](https://img.shields.io/badge/C%2B%2B-20-ec3630.svg)](CMakeLists.txt)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-ec3630.svg)](#building)
