@@ -38,8 +38,13 @@ HWND WINAPI create_window_ex_w(DWORD extended, const wchar_t *class_name, const 
 HWND WINAPI create_window_ex_a(DWORD extended, const char *class_name, const char *name,
                                DWORD style, int x, int y, int width, int height, HWND parent,
                                HMENU menu, HINSTANCE instance, void *parameter) {
-    return remember(CreateWindowExA(extended, class_name, name, console_style(style, parent), x, y,
-                                    width, height, parent, menu, instance, parameter));
+    const auto window = CreateWindowExA(extended, class_name, name, console_style(style, parent),
+                                        x, y, width, height, parent, menu, instance, parameter);
+    if (!window)
+        std::fprintf(stderr, "[Runtime] CreateWindowExA(%s, style 0x%lx, %dx%d): error %lu\n",
+                     IS_INTRESOURCE(class_name) ? "(atom)" : class_name, style, width, height,
+                     GetLastError());
+    return remember(window);
 }
 BOOL WINAPI show_window(HWND window, int command) {
     {

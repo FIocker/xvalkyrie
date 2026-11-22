@@ -97,7 +97,12 @@ ModuleClass classify_module(std::string_view file_name) {
 }
 
 bool is_game_os_api(std::string_view symbol) {
-    return contains(data::game_os_apis, symbol) || contains(data::additional_game_os_apis, symbol);
+    // not in the kits' lists, and imported by titles of both consoles all the same
+    static constexpr std::string_view seen[] = {"RtlAddFunctionTable", "RtlDeleteFunctionTable",
+                                                "VerSetConditionMask", "VerifyVersionInfoW"};
+    return contains(data::game_os_apis, symbol) ||
+           contains(data::additional_game_os_apis, symbol) ||
+           std::find(std::begin(seen), std::end(seen), symbol) != std::end(seen);
 }
 
 json import_profile(const json &pe_report) {
