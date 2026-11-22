@@ -217,6 +217,28 @@ HRESULT STDMETHODCALLTYPE create_depth_stencil_view(void *self, void *resource,
     return result;
 }
 // CreateShaderResourceView, which says what it was given when the host refuses it
+// CreateBuffer (3): the console's own miscellaneous flags (above the desktop's 16 bits) mean
+// nothing to the host, which turns the buffer down for them
+HRESULT STDMETHODCALLTYPE create_buffer(void *self, const D3D11_BUFFER_DESC *desc,
+                                        const D3D11_SUBRESOURCE_DATA *data, ID3D11Buffer **buffer) {
+    if (!desc)
+        return E_INVALIDARG;
+    auto host = *desc;
+    host.MiscFlags &= 0xffff;
+    ID3D11Buffer *created = nullptr;
+    const auto result = static_cast<ID3D11Device *>(unwrap(self))
+                            ->CreateBuffer(&host, data, buffer ? &created : nullptr);
+    if (FAILED(result))
+        std::fprintf(stderr,
+                     "[Runtime] CreateBuffer of %u bytes, usage %u bind 0x%x access 0x%x misc "
+                     "0x%x stride %u: 0x%08lx\n",
+                     desc->ByteWidth, desc->Usage, desc->BindFlags, desc->CPUAccessFlags,
+                     desc->MiscFlags, desc->StructureByteStride,
+                     static_cast<unsigned long>(result));
+    else if (buffer)
+        *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
+    return result;
+}
 HRESULT STDMETHODCALLTYPE create_shader_resource_view(void *self, void *resource,
                                                       const D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
                                                       ID3D11ShaderResourceView **view) {
@@ -613,7 +635,7 @@ Layout device() {
     };
     for (std::size_t slot = 3; slot <= 49; ++slot)
         set(slot);
-    set(3, {created(3, Kind::buffer)});
+    result.vtable[3] = custom(&create_buffer);
     set(4, {created(3, Kind::texture1d)});
     result.vtable[5] = custom(&create_texture2d);
     set(6, {created(3, Kind::texture3d)});
