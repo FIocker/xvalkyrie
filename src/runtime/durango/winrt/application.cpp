@@ -237,7 +237,7 @@ class Window final : public IConsoleWindow {
     XV_UNKNOWN(8) XV_UNKNOWN(9) XV_UNKNOWN(10)
     XV_UNKNOWN(12) XV_UNKNOWN(13) XV_UNKNOWN(14) XV_UNKNOWN(16) XV_UNKNOWN(18)
     XV_UNKNOWN(20) XV_UNKNOWN(21) XV_UNKNOWN(22) XV_UNKNOWN(24) XV_UNKNOWN(26)
-    XV_UNKNOWN(28) XV_UNKNOWN(29) XV_UNKNOWN(30) XV_UNKNOWN(32) XV_UNKNOWN(33)
+    XV_UNKNOWN(28) XV_UNKNOWN(29) XV_UNKNOWN(30) XV_UNKNOWN(32)
     XV_UNKNOWN(34) XV_UNKNOWN(36) XV_UNKNOWN(38) XV_UNKNOWN(39)
     XV_UNKNOWN(41) XV_UNKNOWN(43) XV_UNKNOWN(44) XV_UNKNOWN(45)
     XV_UNKNOWN(46) XV_UNKNOWN(47)
@@ -249,7 +249,7 @@ class Window final : public IConsoleWindow {
         *static_cast<std::int64_t *>(token) = ++tokens_;                                           \
         return S_OK;                                                                               \
     }
-    XV_EVENT(17) XV_EVENT(19) XV_EVENT(23) XV_EVENT(25) XV_EVENT(27) XV_EVENT(31) XV_EVENT(37)
+    XV_EVENT(17) XV_EVENT(19) XV_EVENT(23) XV_EVENT(25) XV_EVENT(27) XV_EVENT(31) XV_EVENT(33) XV_EVENT(37)
     XV_EVENT(40) XV_EVENT(42)
 #undef XV_EVENT
         // clang-format on

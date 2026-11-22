@@ -113,6 +113,7 @@ constexpr Row rows[] = {
     {user, user_statics, 26, {Inert::event_add}},
 
     // public interface INetworkInformationStatics
+    {network, network_statics, 6, {Inert::empty_list}}, // GetConnectionProfiles: none
     {network, network_statics, 7, {Inert::zero64}},     // GetInternetConnectionProfile: none
     {network, network_statics, 12, {Inert::event_add}}, // NetworkStatusChanged
 
@@ -692,6 +693,7 @@ constexpr Row rows[] = {
      6,
      {Inert::shared, transfer_manager}},
     {transfer_manager, direct, 8, {Inert::event_add}},
+    {transfer_manager, direct, 10, {Inert::zero32}}, // read as 4 bytes; zero: nothing in transfer
     // ISpeechRecognizerFactory::Create(language, SpeechRecognizer **)
     {L"Windows.Xbox.Speech.Recognition.SpeechRecognizerFactory",
      guid("9d99295c-ecd0-44e5-9f3d-6130acff3a18"),
