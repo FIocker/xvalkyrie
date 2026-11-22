@@ -238,9 +238,31 @@ GamepadState scripted() {
     }
     return from_keys(held, [](int key) { return key == 1; });
 }
+std::array<std::chrono::steady_clock::time_point, control_count> held_until{};
+GamepadState pressed() {
+    Settings held;
+    {
+        const std::lock_guard lock(mutex);
+        const auto now = std::chrono::steady_clock::now();
+        for (std::size_t index = 0; index < control_count; ++index)
+            held.keys[index] = now < held_until[index];
+    }
+    return from_keys(held, [](int key) { return key == 1; });
+}
 } // namespace
 
-GamepadState poll() { return merge(scripted(), read()); }
+bool press(std::string_view id, double seconds) {
+    for (std::size_t index = 0; index < control_count; ++index)
+        if (id == controls[index].id) {
+            const std::lock_guard lock(mutex);
+            held_until[index] = std::chrono::steady_clock::now() +
+                                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                    std::chrono::duration<double>(seconds));
+            return true;
+        }
+    return false;
+}
+GamepadState poll() { return merge(merge(scripted(), pressed()), read()); }
 
 namespace {
 GamepadState read() {

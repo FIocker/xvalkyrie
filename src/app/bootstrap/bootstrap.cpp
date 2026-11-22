@@ -2,6 +2,7 @@
 #include "app/session.hpp"
 #include "app/version.hpp"
 #include "backends/graphics/backend.hpp"
+#include "backends/input/input.hpp"
 #include "backends/surface/surface.hpp"
 #include "host/files.hpp"
 #include "launcher/config.hpp"
@@ -10,6 +11,7 @@
 #include "runtime/console.hpp"
 #include <chrono>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -51,6 +53,36 @@ struct Caption {
         return text;
     }
 };
+// Commands on standard input, one a line, for driving a title without a person:
+//   screenshot_temp                        the window's picture to xvboot_screenshot.bmp in
+//                                          the temporary folder
+//   joypad_press_key <control> [<ms>]      holds a control (a, b, dpad_down... as in
+//                                          config.ini) for 150 ms or as long as said
+void read_commands() {
+    std::thread([] {
+        for (std::string line; std::getline(std::cin, line);) {
+            std::istringstream words(line);
+            std::string command;
+            if (!(words >> command))
+                continue;
+            if (command == "screenshot_temp") {
+                const auto file = std::filesystem::temp_directory_path() / "xvboot_screenshot.bmp";
+                std::cerr << "[Boot] screenshot_temp: "
+                          << (surface::save_title_picture(file) ? app::text(file) : "failed")
+                          << std::endl;
+            } else if (command == "joypad_press_key") {
+                std::string control;
+                double milliseconds = 150;
+                words >> control >> milliseconds;
+                std::cerr << "[Boot] joypad_press_key " << control << ": "
+                          << (input::press(control, milliseconds / 1000) ? "ok" : "unknown control")
+                          << std::endl;
+            } else {
+                std::cerr << "[Boot] unknown command: " << command << std::endl;
+            }
+        }
+    }).detach();
+}
 } // namespace
 
 std::uint32_t run(const std::filesystem::path &path, runtime::ExecuteOptions options) {
@@ -76,6 +108,7 @@ std::uint32_t run(const std::filesystem::path &path, runtime::ExecuteOptions opt
             host::end_now(0);
         }).detach();
     });
+    read_commands();
     std::cerr << "[Boot] " << name << std::endl;
     std::cerr << "[Boot] starting " << app::text(file) << ", saves in "
               << app::text(options.save_directory) << std::endl;

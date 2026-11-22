@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 
 // What the emulated gamepad reads, wherever it comes from. Console runtimes ask poll();
 // the window and the system feed it, depending on the capture method chosen.
@@ -89,4 +90,6 @@ Settings settings();
 void window_key(int key, bool pressed);
 void window_focus_lost();
 GamepadState poll();
+// Holds a control, named as in the settings file, for that long. False for an unknown name.
+bool press(std::string_view id, double seconds);
 } // namespace xv::input

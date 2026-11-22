@@ -375,7 +375,7 @@ HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD c
     // a console title's threads have COM without asking for it
     if (result == CO_E_NOTINITIALIZED && SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
         result = CoCreateInstance(*class_id, outer, context, *iid, object);
-    if (FAILED(result)) {
+    if (FAILED(result) || std::getenv("XV_COM_TRACE")) {
         wchar_t text[64] = L"";
         StringFromGUID2(*class_id, text, 64);
         std::fprintf(stderr, "[Runtime] CoCreateInstance(%ls): 0x%08lx\n", text,

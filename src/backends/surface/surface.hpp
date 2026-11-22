@@ -15,6 +15,8 @@ void ask_text(TextRequest request, std::function<void(std::optional<std::wstring
 // What the caption of a title's window says instead of the name the window was made with.
 // Asked again about once a second, on the window's thread, so it can say what changes
 // (the frame rate). Call before a title starts.
+// What the title's window shows, as a BMP file. False if there is no window or no picture.
+bool save_title_picture(const std::filesystem::path &file);
 void set_title_caption(std::function<std::wstring()> caption);
 // The icon of a title's window and of its button on the taskbar, from a picture file (PNG,
 // JPEG, BMP). Call before a title starts; the window keeps the host's own icon if the file
