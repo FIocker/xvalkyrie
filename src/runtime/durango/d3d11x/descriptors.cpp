@@ -146,6 +146,16 @@ void constants(ID3D11DeviceContext *context, const Stream &stream, std::uint32_t
 }
 } // namespace
 
+ID3D11ShaderResourceView *described_view(const std::uint32_t *descriptor) {
+    return object_of<ID3D11ShaderResourceView>(descriptor);
+}
+ID3D11SamplerState *described_sampler(const std::uint32_t *descriptor) {
+    return object_of<ID3D11SamplerState>(descriptor);
+}
+ID3D11Buffer *described_buffer(const std::uint32_t *descriptor, UINT &offset) {
+    return buffer_at(descriptor, offset);
+}
+
 void describe(void *object, IUnknown *host) {
     if (ID3D11ShaderResourceView *view = nullptr; SUCCEEDED(host->QueryInterface(&view))) {
         put_id(object, 0x30, view);

@@ -1151,6 +1151,113 @@ void STDMETHODCALLTYPE set_fast_resources(void *self, const UINT *table, const U
         }
     }
 }
+// SetFastResourcesFromBatch_Debug (213): resources as the packets the title would have put
+// in the console's ring itself. Each is a word that says how many words follow and where in
+// the GPU's table of bindings they go, then the descriptors of the objects, which here name
+// our objects (descriptors.cpp). The table has a part per stage: 20 constant buffers of 16
+// bytes, 128 views of 32 and 16 samplers of 16; the vertex buffers come after the stages.
+void STDMETHODCALLTYPE set_fast_resources_from_batch(void *self, const UINT *batch, UINT bytes) {
+    auto *const context = static_cast<ID3D11DeviceContext *>(unwrap(self));
+    using View = ID3D11ShaderResourceView;
+    using Buffer = ID3D11Buffer;
+    using Sampler = ID3D11SamplerState;
+    using Context = ID3D11DeviceContext;
+    using Latest = ID3D11DeviceContext1;
+    using SetViews = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, View *const *);
+    using SetBuffers = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, Buffer *const *);
+    using SetBuffers1 =
+        void (STDMETHODCALLTYPE Latest::*)(UINT, UINT, Buffer *const *, const UINT *, const UINT *);
+    using SetSamplers = void (STDMETHODCALLTYPE Context::*)(UINT, UINT, Sampler *const *);
+    struct Stage {
+        UINT base;
+        SetViews views;
+        SetBuffers constants;
+        SetBuffers1 constants1;
+        SetSamplers samplers;
+        bool pixel;
+    };
+    // by where their part of the table starts
+    static const Stage stages[] = {
+        {0x0, &Context::CSSetShaderResources, &Context::CSSetConstantBuffers,
+         &Latest::CSSetConstantBuffers1, &Context::CSSetSamplers, false},
+        {0x1c40, &Context::VSSetShaderResources, &Context::VSSetConstantBuffers,
+         &Latest::VSSetConstantBuffers1, &Context::VSSetSamplers, false},
+        {0x2fb0, &Context::HSSetShaderResources, &Context::HSSetConstantBuffers,
+         &Latest::HSSetConstantBuffers1, &Context::HSSetSamplers, false},
+        {0x4320, &Context::DSSetShaderResources, &Context::DSSetConstantBuffers,
+         &Latest::DSSetConstantBuffers1, &Context::DSSetSamplers, false},
+        {0x5690, &Context::GSSetShaderResources, &Context::GSSetConstantBuffers,
+         &Latest::GSSetConstantBuffers1, &Context::GSSetSamplers, false},
+        {0x6a00, &Context::PSSetShaderResources, &Context::PSSetConstantBuffers,
+         &Latest::PSSetConstantBuffers1, &Context::PSSetSamplers, true}};
+    constexpr UINT vertex_buffers = 0x7d70, views_at = 0x140, samplers_at = 0x1140,
+                   samplers_end = 0x1240;
+    Latest *latest = nullptr;
+    context->QueryInterface(&latest);
+    const auto *at = batch;
+    const auto *const end = batch + bytes / 4;
+    while (at && at < end) {
+        const UINT header = *at++, count = (header >> 16) + 1, place = header & 0xffff;
+        if (count > static_cast<UINT>(end - at))
+            break;
+        const auto *const words = at;
+        at += count;
+        if (place >= vertex_buffers) {
+            for (UINT i = 0; i + 4 <= count; i += 4) {
+                UINT offset = 0;
+                auto *const buffer = described_buffer(words + i, offset);
+                const UINT stride = (words[i + 1] >> 16) & 0x3fff;
+                if (buffer)
+                    context->IASetVertexBuffers((place - vertex_buffers + i * 4) / 16, 1, &buffer,
+                                                &stride, &offset);
+            }
+            continue;
+        }
+        const Stage *stage = &stages[0];
+        for (const auto &candidate : stages)
+            if (place >= candidate.base)
+                stage = &candidate;
+        const UINT within = place - stage->base;
+        if (within < views_at) {
+            for (UINT i = 0; i + 4 <= count; i += 4) {
+                const UINT slot = (within + i * 4) / 16;
+                UINT offset = 0;
+                auto *const buffer = described_buffer(words + i, offset);
+                if (!buffer)
+                    continue;
+                if (offset && latest) {
+                    // constants from where the descriptor points, in 256-byte steps
+                    D3D11_BUFFER_DESC desc;
+                    buffer->GetDesc(&desc);
+                    const UINT first = offset / 256 * 16,
+                               constants =
+                                   std::min(4096u, (desc.ByteWidth / 16 - first + 15) / 16 * 16);
+                    (latest->*stage->constants1)(slot, 1, &buffer, &first, &constants);
+                } else {
+                    (context->*stage->constants)(slot, 1, &buffer);
+                }
+            }
+        } else if (within < samplers_at) {
+            for (UINT i = 0; i + 8 <= count; i += 8) {
+                const UINT slot = (within - views_at + i * 4) / 32;
+                auto *view = described_view(words + i);
+                if (!view)
+                    continue;
+                if (stage->pixel)
+                    keep_pixel_view(self, slot, view);
+                (context->*stage->views)(slot, 1, &view);
+            }
+        } else if (within < samplers_end) {
+            for (UINT i = 0; i + 4 <= count; i += 4) {
+                auto *sampler = described_sampler(words + i);
+                if (sampler)
+                    (context->*stage->samplers)((within - samplers_at + i * 4) / 16, 1, &sampler);
+            }
+        }
+    }
+    if (latest)
+        latest->Release();
+}
 
 // The context's command buffer, which titles write GPU packets into themselves: the write
 // pointer at 0x50 and its end at 0x58. There is no GPU to read them here, so they go to a
@@ -1313,6 +1420,10 @@ Layout context() {
         console(slot, {Method::ignore});
     console(155, custom(&insert_fence));
     console(156, {Method::ignore}); // InsertWaitOnFence
+    // Remap...Inheritance: which bindings a command list takes over from the context that
+    // runs it. Lists take over nothing here, so there is nothing to remap.
+    for (std::size_t slot = 157; slot <= 160; ++slot)
+        console(slot, {Method::ignore});
     // Set{Fast,Placement}{ConstantBuffer,ShaderResource,Sampler} per stage from 161, in the
     // order PS, VS, GS, CS, HS, DS
     using Buffer = ID3D11Buffer;
@@ -1359,6 +1470,7 @@ Layout context() {
         console(slot, {Method::ignore});
     console(209, custom(&make_ce_space));
     console(210, custom(&set_fast_resources));
+    console(213, custom(&set_fast_resources_from_batch));
     console(214, {Method::ignore}); // CSPlaceUnorderedAccessView
     console(215, custom(&write_value_end_of_pipe));
     console(216, custom(&context_copy_memory));

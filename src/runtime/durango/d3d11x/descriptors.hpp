@@ -10,6 +10,11 @@
 namespace xv::runtime::durango::d3d11x {
 // fills the descriptor fields of our object for `host`, whatever kind it is
 void describe(void *object, IUnknown *host);
+// The host object a descriptor stands for, when it was copied out of one of our objects;
+// for a buffer also how far into it the descriptor points. Null if it is none of ours.
+ID3D11ShaderResourceView *described_view(const std::uint32_t *descriptor);
+ID3D11SamplerState *described_sampler(const std::uint32_t *descriptor);
+ID3D11Buffer *described_buffer(const std::uint32_t *descriptor, UINT &offset);
 // a buffer at the title's memory `address` (a placement buffer)
 void describe_buffer(void *object, ID3D11Buffer *host, const void *address);
 // how far into `host` the GPU address `address` is, if it is in it
