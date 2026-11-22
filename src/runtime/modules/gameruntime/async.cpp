@@ -34,7 +34,7 @@ struct State {
     std::condition_variable changed;
     HRESULT status = e_pending;
     std::size_t result_size = 0;
-    bool completed = false, cleaned = false;
+    bool finishing = false, completed = false, cleaned = false;
 };
 std::mutex blocks; // guards the `internal` words of every block
 
@@ -94,15 +94,27 @@ void CALLBACK completed(void *context, bool) {
 void complete(State *state, HRESULT result, std::size_t size) {
     if (result == e_pending)
         return;
+    // A block without a callback is the title's to let go of the moment it sees the
+    // operation done (XAsyncGetStatus with wait, on a block of its stack): nothing reads or
+    // writes it after that.
+    const bool notified = state->block->callback != nullptr;
     {
         const std::lock_guard lock(state->mutex);
-        if (state->completed)
+        if (state->finishing)
             return;
-        state->completed = true;
+        state->finishing = true;
         state->status = result;
         state->result_size = SUCCEEDED(result) ? size : 0;
     }
+    if (!notified && !state->result_size)
+        cleanup(state);
+    {
+        const std::lock_guard lock(state->mutex);
+        state->completed = true;
+    }
     state->changed.notify_all();
+    if (!notified)
+        return;
     ++state->references;
     if (FAILED(submit(state->queue, Port::completion, 0, state, &completed)))
         completed(state, true);
