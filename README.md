@@ -1,7 +1,19 @@
+<div align="center">
+
+<img src="docs/img/logo.svg" alt="XValkyrie" width="380">
+
 # XValkyrie
 
+**Xbox One and Xbox Series X|S software on Windows, by translation.**
+
 [![build](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml/badge.svg)](https://github.com/sammwyy/xscarlet/actions/workflows/build.yml)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-ec3630.svg)](LICENSE)
+[![language](https://img.shields.io/badge/C%2B%2B-20-ec3630.svg)](CMakeLists.txt)
+[![platform](https://img.shields.io/badge/platform-Windows%20x64-ec3630.svg)](#building)
+
+[Status](#status) · [How it works](#how-it-works) · [Building](#building) · [Usage](#usage) · [Roadmap](ROADMAP.md)
+
+</div>
 
 XValkyrie runs Xbox One and Xbox Series X|S software on 64-bit Windows. It is written in
 C++20.
