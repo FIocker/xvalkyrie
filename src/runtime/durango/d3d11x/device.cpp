@@ -71,6 +71,11 @@ HRESULT make_swap_chain(IDXGIFactory2 *factory, IUnknown *device,
         host.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     else if (host.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS)
         host.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    // nor sRGB ones: the buffers are made without, and a view of them may still be sRGB
+    else if (host.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+        host.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    else if (host.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+        host.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     if (host.Scaling == DXGI_SCALING_ASPECT_RATIO_STRETCH)
         host.Scaling = DXGI_SCALING_STRETCH;
     if (host.AlphaMode != DXGI_ALPHA_MODE_UNSPECIFIED && host.AlphaMode != DXGI_ALPHA_MODE_IGNORE)

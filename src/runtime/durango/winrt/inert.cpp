@@ -692,6 +692,8 @@ constexpr Row rows[] = {
      guid("d6cf4cae-9eb1-4cbe-b426-7e75d429f846"),
      6,
      {Inert::shared, transfer_manager}},
+    // IsChunkInstalled(chunk, bool *): the whole package is there
+    {transfer_manager, direct, 7, {Inert::true8_at, nullptr, 2}},
     {transfer_manager, direct, 8, {Inert::event_add}},
     {transfer_manager, direct, 10, {Inert::zero32}}, // read as 4 bytes; zero: nothing in transfer
     // ISpeechRecognizerFactory::Create(language, SpeechRecognizer **)

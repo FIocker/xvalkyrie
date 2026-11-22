@@ -109,6 +109,10 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         case Inert::zero8:
             *static_cast<std::uint8_t *>(first) = 0;
             break;
+        case Inert::true8_at:
+            if (at)
+                *reinterpret_cast<std::uint8_t *>(at) = 1;
+            break;
         case Inert::true8:
             *static_cast<std::uint8_t *>(first) = 1;
             break;
