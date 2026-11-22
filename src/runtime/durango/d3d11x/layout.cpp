@@ -105,18 +105,27 @@ HRESULT STDMETHODCALLTYPE create_texture2d(void *self, const D3D11_TEXTURE2D_DES
     host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
     if (host.SampleDesc.Count <= 1)
         host.SampleDesc = {1, 0};
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+    // The quality of a multisampled texture is the console's own count of fragments and
+    // their layout: where the host has no such level, its first one stands for it
+    if (host.SampleDesc.Count > 1 && host.SampleDesc.Quality < 0xfffffffe) {
+        UINT levels = 0;
+        device->CheckMultisampleQualityLevels(host.Format, host.SampleDesc.Count, &levels);
+        if (host.SampleDesc.Quality >= levels)
+            host.SampleDesc.Quality = 0;
+    }
     // the console lets the CPU read a dynamic texture too
     if (host.Usage == D3D11_USAGE_DYNAMIC)
         host.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Texture2D *created = nullptr;
-    const auto result = static_cast<ID3D11Device *>(unwrap(self))
-                            ->CreateTexture2D(&host, initial, texture ? &created : nullptr);
+    const auto result = device->CreateTexture2D(&host, initial, texture ? &created : nullptr);
     if (FAILED(result)) {
         std::fprintf(stderr,
-                     "[Runtime] CreateTexture2D %ux%u mips %u array %u format %u usage %u bind "
-                     "0x%x cpu 0x%x misc 0x%x: 0x%08lx\n",
+                     "[Runtime] CreateTexture2D %ux%u mips %u array %u format %u samples %u/%u "
+                     "usage %u bind 0x%x cpu 0x%x misc 0x%x: 0x%08lx\n",
                      host.Width, host.Height, host.MipLevels, host.ArraySize,
-                     static_cast<unsigned>(host.Format), static_cast<unsigned>(host.Usage),
+                     static_cast<unsigned>(host.Format), description->SampleDesc.Count,
+                     description->SampleDesc.Quality, static_cast<unsigned>(host.Usage),
                      host.BindFlags, host.CPUAccessFlags, description->MiscFlags,
                      static_cast<unsigned long>(result));
         std::fflush(stderr);
