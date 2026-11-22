@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <weakreference.h>
 #include <windows.applicationmodel.activation.h>
 #include <windows.applicationmodel.core.h>
 #include <windows.foundation.h>
@@ -198,6 +199,8 @@ class Window final : public IConsoleWindow {
             AddRef();
             return S_OK;
         }
+        if (iid == __uuidof(IWeakReferenceSource))
+            return weak_reference_source(static_cast<IConsoleWindow *>(this), object);
         return placeholder_interface(name, iid, object);
     }
     STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }

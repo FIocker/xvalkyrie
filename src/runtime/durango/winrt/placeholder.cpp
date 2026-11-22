@@ -19,6 +19,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <weakreference.h>
 #include <windows.h>
 #include <winstring.h>
 
@@ -52,6 +53,65 @@ constexpr GUID reference_tracker{
 
 std::atomic<std::int64_t> tokens{0};
 
+class Weak final : public IWeakReference {
+  public:
+    explicit Weak(IUnknown *target) : target_(target) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        *object = nullptr;
+        if (iid != __uuidof(IUnknown) && iid != __uuidof(IWeakReference))
+            return E_NOINTERFACE;
+        *object = this;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left)
+            delete this;
+        return left;
+    }
+    STDMETHODIMP Resolve(REFIID iid, IInspectable **object) override {
+        return target_->QueryInterface(iid, reinterpret_cast<void **>(object));
+    }
+
+  private:
+    std::atomic<ULONG> references_{1};
+    IUnknown *target_;
+};
+class WeakSource final : public IWeakReferenceSource {
+  public:
+    explicit WeakSource(IUnknown *target) : target_(target) {}
+    STDMETHODIMP QueryInterface(REFIID iid, void **object) override {
+        if (!object)
+            return E_POINTER;
+        if (iid != __uuidof(IWeakReferenceSource))
+            return target_->QueryInterface(iid, object);
+        *object = this;
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++references_; }
+    STDMETHODIMP_(ULONG) Release() override {
+        const auto left = --references_;
+        if (!left)
+            delete this;
+        return left;
+    }
+    STDMETHODIMP GetWeakReference(IWeakReference **reference) override {
+        if (!reference)
+            return E_POINTER;
+        *reference = new Weak(target_);
+        return S_OK;
+    }
+
+  private:
+    std::atomic<ULONG> references_{1};
+    IUnknown *target_;
+};
+
 HRESULT STDMETHODCALLTYPE query(Placeholder *self, const GUID &iid, void **object) {
     if (!object)
         return E_POINTER;
@@ -64,6 +124,8 @@ HRESULT STDMETHODCALLTYPE query(Placeholder *self, const GUID &iid, void **objec
         *object = self;
         return S_OK;
     }
+    if (iid == __uuidof(IWeakReferenceSource))
+        return weak_reference_source(self, object);
     // another interface of the same object: its methods are told apart by the IID
     return placeholder_interface(self->name.c_str(), iid, object);
 }
@@ -331,6 +393,11 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
         return E_NOINTERFACE;
     if (long result; gamepad_interface(name, iid, object, result))
         return result;
+    if (iid == __uuidof(IWeakReferenceSource)) {
+        void *target = nullptr;
+        placeholder_interface(name, inspectable, &target);
+        return weak_reference_source(target, object);
+    }
     // A facet is only its class and interface: titles that ask every frame get the same one.
     static std::mutex mutex;
     static std::map<std::pair<std::wstring, std::string>, Placeholder *> facets;
@@ -340,6 +407,13 @@ long placeholder_interface(const wchar_t *name, const GUID &iid, void **object) 
         facet = static_cast<Placeholder *>(make_placeholder(name, iid));
     ++facet->references;
     *object = facet;
+    return S_OK;
+}
+
+long weak_reference_source(void *target, void **object) {
+    if (!target || !object)
+        return E_POINTER;
+    *object = new WeakSource(static_cast<IUnknown *>(target));
     return S_OK;
 }
 
