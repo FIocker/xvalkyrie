@@ -41,7 +41,7 @@ through.
 | Area | Covered | |
 |---|---|---|
 | Console modules, Xbox One | 22 modules, 225 functions; 12 more answered by the host |  |
-| Console modules, Xbox Series X|S | 15 modules, 93 functions; 7 more answered by the host |  |
+| Console modules, Xbox Series X&#124;S | 15 modules, 93 functions; 7 more answered by the host |  |
 | Gaming Runtime | 152 of 422 functions | `███████░░░░░░░░░░░░░` 36% |
 | Console shader code | 661 of 1440 instructions | `█████████░░░░░░░░░░░` 46% |
 | Roadmap: Phase 1: PE loader | 12 of 14 items | `█████████████████░░░` 86% |

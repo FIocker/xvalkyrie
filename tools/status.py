@@ -148,7 +148,8 @@ def summary(data):
         rows.append((f"Roadmap: {heading}", f"{done} of {total} items",
                      f"`{bar(done, total)}` {percent(done, total)}"))
     text = "| Area | Covered | |\n|---|---|---|\n"
-    return text + "".join(f"| {area} | {covered} | {progress} |\n" for area, covered, progress in rows)
+    return text + "".join(f"| {area.replace('|', '&#124;')} | {covered} | {progress} |\n"
+                          for area, covered, progress in rows)
 
 
 def report(data):
