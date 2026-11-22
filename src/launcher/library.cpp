@@ -192,7 +192,7 @@ std::optional<LibraryTitle> inspect(const std::filesystem::path &path) {
     }
 }
 
-// ---- the cache: what a scan found, and the size and time of the files it was read from
+// the cache: what a scan found, and the size and time of the files it was read from
 constexpr int cache_format = 4;
 using Stamp = std::array<std::int64_t, 4>; // manifest or package size and time, executable's
 void stamp_file(const std::filesystem::path &path, std::int64_t *into) {

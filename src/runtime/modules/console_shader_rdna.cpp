@@ -209,7 +209,6 @@ class Translator {
     }
 
   private:
-    // ---- the file ----
     void read_file() {
         const auto file = shader_.file;
         if (file.size() < 0x140 || std::memcmp(file.data(), "FSSM", 4))
@@ -261,7 +260,6 @@ class Translator {
                 attributes_[file[entry + 3]] = file[entry + 1];
     }
 
-    // ---- decoding ----
     // What is decoded is what the first instruction leads to: constants a shader reads
     // through its program counter lie between and after its instructions, and are not code.
     void decode() {
@@ -383,7 +381,6 @@ class Translator {
         }
     }
 
-    // ---- control flow ----
     struct Block {
         std::size_t first, end; // instructions [first, end)
         bool guarded = false;   // a branch forward may jump over it
@@ -447,7 +444,6 @@ class Translator {
             blocks_[header].opens = 1;
     }
 
-    // ---- registers ----
     std::string s(std::uint32_t reg) {
         used_s_.insert(reg);
         return "s" + std::to_string(reg);
@@ -570,7 +566,6 @@ class Translator {
         return "(" + id + "d - 1u)";
     }
 
-    // ---- what is known of the registers at each block ----
     // The blocks are not laid out in the order they run in, so what a register holds where
     // a block starts is what its predecessors leave, joined.
     void analyse() {
@@ -792,7 +787,6 @@ class Translator {
         }
     }
 
-    // ---- emitting ----
     void emit_block(std::size_t index) {
         auto &block = blocks_[index];
         known_ = entry_[index];
@@ -1115,7 +1109,6 @@ class Translator {
         }
     }
 
-    // ---- what a shader is given ----
     // The descriptors of a table are 32 bytes each, but for samplers, which are 16.
     std::uint32_t descriptor_size(std::uint32_t parameter) const {
         const auto &ranges = parameters_[parameter].ranges;
@@ -1423,7 +1416,6 @@ class Translator {
         set_v(destination, input_channel(reg, channel));
     }
 
-    // ---- vector instructions ----
     // The instructions with one or two sources in one word. A second word may say which
     // byte or half of each source is meant, and which of the destination is written.
     void emit_short(const Ins &ins) {
@@ -1874,7 +1866,6 @@ class Translator {
         set_v(destination, "(f32tof16(" + each(false) + ") | (f32tof16(" + each(true) + ") << 16))");
     }
 
-    // ---- textures and buffers ----
     void emit_image(const Ins &ins) {
         const auto name = ins.name;
         const auto dimension = (ins.w0 >> 3) & 7, mask = (ins.w0 >> 8) & 0xf;
@@ -2262,7 +2253,6 @@ class Translator {
         exported_ = true;
     }
 
-    // ---- the whole shader ----
     static std::string field_type(const Element &element) {
         return std::string(element.type == 1 ? "uint" : element.type == 2 ? "int" : "float") +
                (element.width > 1 ? std::to_string(element.width) : "");

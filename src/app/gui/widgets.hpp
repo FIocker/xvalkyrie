@@ -47,7 +47,6 @@ void spinner(ImDrawList *list, ImVec2 center, float radius, float thickness = 2)
 // window; starts at the target.
 float animate(ImGuiID id, float target, float rate = 16);
 
-// ---- settings pages
 // the heading of a group of settings
 void section(const Fonts &fonts, const char *title);
 // A group of settings, one per line: what it is on the left, its control on the right.

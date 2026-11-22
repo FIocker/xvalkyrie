@@ -421,7 +421,6 @@ class Desktop {
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
     }
-    // ---- the library
     static const ui::Badge &platform(const LibraryTitle &title) {
         return title.target == Target::durango    ? ui::badges::xbox_one
                : title.target == Target::scarlett ? ui::badges::series
