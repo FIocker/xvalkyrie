@@ -21,7 +21,7 @@ everything else.
 | `chad.dll` | 5 | 0 |  |
 | `combase.dll` | 2 | 0 | combase.dll |
 | `crypt32.dll` | 0 | 0 | crypt32.dll |
-| `d3d11_x.dll` | 9 | 0 |  |
+| `d3d11_x.dll` | 10 | 0 |  |
 | `d3d12_x.dll` | 21 | 32 |  |
 | `d3dcompiler_47.dll` | 0 | 0 | d3dcompiler_47.dll |
 | `dxcompiler_x.dll` | 1 | 0 |  |
@@ -67,9 +67,9 @@ everything else.
 
 </details>
 
-<details><summary><code>d3d11_x.dll</code>: 9 functions</summary>
+<details><summary><code>d3d11_x.dll</code>: 10 functions</summary>
 
-`D3D11CreateDevice`, `D3D11XCreateDeviceX`, `D3DAllocateGraphicsMemory`, `D3DFreeGraphicsMemory`, `D3DMapEsramMemory`, `DXGIXGetFrameStatistics`, `DXGIXPresentArray`, `DXGIXSetFrameNotification`, `DXGIXSetVLineNotification`
+`D3D11CreateDevice`, `D3D11XCreateDeviceX`, `D3D11XCreateDeviceXAndSwapChain1`, `D3DAllocateGraphicsMemory`, `D3DFreeGraphicsMemory`, `D3DMapEsramMemory`, `DXGIXGetFrameStatistics`, `DXGIXPresentArray`, `DXGIXSetFrameNotification`, `DXGIXSetVLineNotification`
 
 </details>
 
@@ -313,10 +313,10 @@ implementation says so in the log when a title calls it, and fails.
 | XDisplay | 1 | 1 |
 | XGameInvite | 4 | 5 |
 | XAsync | 28 | 28 |
-| XGameStreaming | 7 | 32 |
+| XGameStreaming | 32 | 32 |
 | XGameStreamingExperimental | 0 | 4 |
 | XStore | 61 | 78 |
-| XAppBroadcast | 14 | 16 |
+| XAppBroadcast | 16 | 16 |
 | XLauncher | 3 | 3 |
 | XNetworking | 16 | 18 |
 | XAccessibility | 19 | 19 |
@@ -327,7 +327,7 @@ implementation says so in the log when a title calls it, and fails.
 | XError | 3 | 3 |
 | XGameProtocol | 2 | 2 |
 | XGame | 3 | 3 |
-| XAppCapture | 2 | 15 |
+| XAppCapture | 15 | 15 |
 | XPackage | 25 | 35 |
 | XSystemAnalytics | 1 | 1 |
 | XGameEvent | 1 | 1 |
@@ -347,12 +347,6 @@ implementation says so in the log when a title calls it, and fails.
 
 </details>
 
-<details><summary>XGameStreaming: 25 not implemented</summary>
-
-`XGameStreamingRegisterClientPropertiesChanged`, `XGameStreamingUnregisterClientPropertiesChanged`, `XGameStreamingGetStreamPhysicalDimensions`, `XGameStreamingGetConnectionState`, `XGameStreamingRegisterConnectionStateChanged`, `XGameStreamingUnregisterConnectionStateChanged`, `XGameStreamingGetStreamAddedLatency`, `XGameStreamingGetServerLocationNameSize`, `XGameStreamingGetServerLocationName`, `XGameStreamingHideTouchControlsOnClient`, `XGameStreamingShowTouchControlLayoutOnClient`, `XGameStreamingIsTouchInputEnabled`, `XGameStreamingGetLastFrameDisplayed`, `XGameStreamingGetAssociatedFrame`, `XGameStreamingGetGamepadPhysicality`, `XGameStreamingUpdateTouchControlsState`, `XGameStreamingUpdateTouchControlsStateOnClient`, `XGameStreamingShowTouchControlsWithStateUpdate`, `XGameStreamingShowTouchControlsWithStateUpdateOnClient`, `XGameStreamingGetTouchBundleVersionNameSize`, `XGameStreamingGetTouchBundleVersion`, `XGameStreamingGetClientIPAddress`, `XGameStreamingGetSessionId`, `XGameStreamingGetDisplayDetails`, `XGameStreamingSetResolution`
-
-</details>
-
 <details><summary>XGameStreamingExperimental: 4 not implemented</summary>
 
 `EXPERIMENTAL_XGameStreamingGetClientOrientation`, `EXPERIMENTAL_XGameStreamingGetMotionState`, `EXPERIMENTAL_XGameStreamingGetMotionInfo`, `XGameStreamingSendDebugMessageToClient`
@@ -362,12 +356,6 @@ implementation says so in the log when a title calls it, and fails.
 <details><summary>XStore: 17 not implemented</summary>
 
 `XStoreDownloadPackageUpdatesAsync`, `XStoreDownloadPackageUpdatesResult`, `XStoreDownloadAndInstallPackageUpdatesAsync`, `XStoreDownloadAndInstallPackageUpdatesResult`, `XStoreDownloadAndInstallPackagesAsync`, `XStoreDownloadAndInstallPackagesResultCount`, `XStoreDownloadAndInstallPackagesResult`, `XStoreQueryPackageIdentifier`, `XStoreShowAssociatedProductsUIAsync`, `XStoreShowAssociatedProductsUIResult`, `XStoreQueryAssociatedProductsForStoreIdAsync`, `XStoreQueryAssociatedProductsForStoreIdResult`, `XStoreQueryPackageUpdatesAsync`, `XStoreQueryPackageUpdatesResultCount`, `XStoreQueryPackageUpdatesResult`, `XStoreShowGiftingUIAsync`, `XStoreShowGiftingUIResult`
-
-</details>
-
-<details><summary>XAppBroadcast: 2 not implemented</summary>
-
-`XAppBroadcastShowUI`, `XAppBroadcastGetStatus`
 
 </details>
 
@@ -392,12 +380,6 @@ implementation says so in the log when a title calls it, and fails.
 <details><summary>XGameActivation: 1 not implemented</summary>
 
 `XGameActivationAcceptPendingInvite`
-
-</details>
-
-<details><summary>XAppCapture: 13 not implemented</summary>
-
-`XAppCaptureTakeDiagnosticScreenshot`, `XAppCaptureRecordDiagnosticClip`, `XAppCaptureTakeScreenshot`, `XAppCaptureOpenScreenshotStream`, `XAppCaptureReadScreenshotStream`, `XAppCaptureCloseScreenshotStream`, `XAppCaptureGetVideoCaptureSettings`, `XAppCaptureRecordTimespan`, `XAppCaptureReadLocalStream`, `XAppCaptureCloseLocalStream`, `XAppCaptureStartUserRecord`, `XAppCaptureStopUserRecord`, `XAppCaptureCancelUserRecord`
 
 </details>
 

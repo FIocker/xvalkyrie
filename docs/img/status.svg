@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="1455" viewBox="0 0 920 1455" role="img" aria-label="XValkyrie status">
 <style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}.t{font-size:18px;font-weight:700;fill:#8b949e}.h{font-size:15px;font-weight:600;fill:#8b949e}.k{font-size:12px;font-weight:600;fill:#8b949e}.n{font-size:11px;fill:#6e7681}</style>
 <text x="16" y="30" class="t" text-anchor="start">XValkyrie</text>
-<text x="120" y="30" class="h" text-anchor="start">65% covered</text>
-<text x="904" y="30" class="k" text-anchor="end">318 console functions implemented</text>
+<text x="120" y="30" class="h" text-anchor="start">67% covered</text>
+<text x="904" y="30" class="k" text-anchor="end">319 console functions implemented</text>
 <rect x="16" y="42" width="189" height="10" rx="3" fill="#8c959f" opacity=".28"/>
-<rect x="16" y="42" width="136" height="10" rx="3" fill="#2da44e"/>
-<text x="16" y="68" class="n" text-anchor="start">Gaming Runtime 72%</text>
+<rect x="16" y="42" width="153" height="10" rx="3" fill="#2da44e"/>
+<text x="16" y="68" class="n" text-anchor="start">Gaming Runtime 81%</text>
 <rect x="209" y="42" width="646" height="10" rx="3" fill="#8c959f" opacity=".28"/>
 <rect x="209" y="42" width="402" height="10" rx="3" fill="#2da44e"/>
 <text x="209" y="68" class="n" text-anchor="start">Shader code 62%</text>
@@ -14,7 +14,7 @@
 <text x="904" y="68" class="n" text-anchor="end">Roadmap 73%</text>
 <rect x="0.5" y="0.5" width="919" height="83" rx="10" fill="none" stroke="#8c959f" stroke-opacity=".35"/>
 <text x="16" y="124" class="h" text-anchor="start">Xbox One</text>
-<text x="437" y="124" class="k" text-anchor="end">225 functions</text>
+<text x="437" y="124" class="k" text-anchor="end">226 functions</text>
 <text x="16" y="151" class="n" text-anchor="start">kernelx.dll</text>
 <rect x="16" y="157" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="27" y="157" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -191,6 +191,7 @@
 <rect x="191" y="260" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="202" y="260" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="213" y="260" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="224" y="260" width="9" height="9" rx="2" fill="#2da44e"/>
 <text x="274" y="243" class="n" text-anchor="start">xfrontpaneldisplay.dll</text>
 <rect x="274" y="249" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="285" y="249" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -413,7 +414,7 @@
 <rect x="0.5" y="98.5" width="452" height="392" rx="10" fill="none" stroke="#8c959f" stroke-opacity=".35"/>
 <rect x="467.5" y="98.5" width="452" height="392" rx="10" fill="none" stroke="#8c959f" stroke-opacity=".35"/>
 <text x="16" y="531" class="h" text-anchor="start">Gaming Runtime</text>
-<text x="904" y="531" class="k" text-anchor="end">302 / 422 functions</text>
+<text x="904" y="531" class="k" text-anchor="end">342 / 422 functions</text>
 <text x="16" y="558" class="n" text-anchor="start">XStore</text>
 <rect x="16" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="27" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -669,35 +670,35 @@
 <rect x="680" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="691" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="702" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
-<rect x="713" y="564" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="724" y="564" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="735" y="564" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="713" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="724" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="735" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="746" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="757" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
-<rect x="768" y="564" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="680" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="691" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="702" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="713" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="724" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="768" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="680" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="691" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="702" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="713" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="724" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="735" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="746" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
-<rect x="757" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="768" y="575" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="680" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="691" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="702" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="713" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="724" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="735" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="746" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="757" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="768" y="586" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="680" y="597" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="691" y="597" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="702" y="597" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="713" y="597" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="724" y="597" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="757" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="768" y="575" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="680" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="691" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="702" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="713" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="724" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="735" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="746" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="757" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="768" y="586" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="680" y="597" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="691" y="597" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="702" y="597" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="713" y="597" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="724" y="597" width="9" height="9" rx="2" fill="#2da44e"/>
 <text x="793" y="558" class="n" text-anchor="start">XAsync</text>
 <rect x="793" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="804" y="564" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -768,8 +769,8 @@
 <rect x="150" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
 <text x="208" y="650" class="n" text-anchor="start">XAppBroadcast</text>
 <rect x="208" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
-<rect x="219" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="230" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="219" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="230" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="241" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="252" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="263" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -784,21 +785,21 @@
 <rect x="208" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="219" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
 <text x="304" y="650" class="n" text-anchor="start">XAppCapture</text>
-<rect x="304" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="315" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="326" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="337" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="348" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="359" y="656" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="304" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="315" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="326" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="337" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="348" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="359" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="304" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="315" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
-<rect x="326" y="667" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="337" y="667" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="348" y="667" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="359" y="667" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="304" y="678" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="315" y="678" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
-<rect x="326" y="678" width="9" height="9" rx="2" fill="#8c959f" opacity=".28"/>
+<rect x="326" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="337" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="348" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="359" y="667" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="304" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="315" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
+<rect x="326" y="678" width="9" height="9" rx="2" fill="#2da44e"/>
 <text x="387" y="650" class="n" text-anchor="start">XUserDevice</text>
 <rect x="387" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="398" y="656" width="9" height="9" rx="2" fill="#2da44e"/>
@@ -863,7 +864,7 @@
 <text x="16" y="746" class="n" text-anchor="start">XUserGamertag</text>
 <rect x="16" y="752" width="9" height="9" rx="2" fill="#2da44e"/>
 <rect x="16" y="538" width="888" height="3" rx="1.5" fill="#8c959f" opacity=".28"/>
-<rect x="16" y="538" width="635" height="3" rx="1.5" fill="#2da44e"/>
+<rect x="16" y="538" width="720" height="3" rx="1.5" fill="#2da44e"/>
 <rect x="0.5" y="505.5" width="919" height="274" rx="10" fill="none" stroke="#8c959f" stroke-opacity=".35"/>
 <text x="16" y="820" class="h" text-anchor="start">Console shader code</text>
 <text x="904" y="820" class="k" text-anchor="end">895 / 1440 instructions</text>

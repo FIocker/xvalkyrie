@@ -74,4 +74,5 @@ void install_save();
 void install_system();
 void install_store();
 void install_ui();
+void install_streaming();
 } // namespace xv::runtime::modules::gameruntime

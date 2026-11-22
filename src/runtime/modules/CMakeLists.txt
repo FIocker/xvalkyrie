@@ -4,7 +4,7 @@ add_library(xv_runtime_modules xg.cpp kernel.cpp memory.cpp dstorage.cpp console
   d3d12x/device.cpp d3d12x/present.cpp
   gameruntime/runtime.cpp gameruntime/slots.cpp gameruntime/task_queue.cpp gameruntime/async.cpp
   gameruntime/user.cpp gameruntime/save.cpp gameruntime/system.cpp gameruntime/store.cpp
-  gameruntime/ui.cpp)
+  gameruntime/ui.cpp gameruntime/streaming.cpp)
 target_include_directories(xv_runtime_modules PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(xv_runtime_modules PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(xv_runtime_modules PRIVATE xv_options xv_core xv_host xv_game_config xv_runtime_common

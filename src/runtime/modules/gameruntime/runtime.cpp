@@ -75,6 +75,7 @@ void build_tables() {
         install_system();
         install_store();
         install_ui();
+        install_streaming();
     });
 }
 

@@ -159,6 +159,47 @@ TEST_CASE("speech is a WAV file") {
           S_OK);
 }
 
+TEST_CASE("no client streams the title and games may not capture") {
+    constexpr HRESULT not_connected = static_cast<HRESULT>(0x89245401);
+    CHECK(call<std::uint32_t, std::uint64_t>("XGameStreaming", "XGameStreamingGetConnectionState",
+                                             1) == 0);
+    bool touch = true;
+    CHECK(call<HRESULT, std::uint64_t, bool *>("XGameStreaming",
+                                               "XGameStreamingIsTouchInputEnabled", 1,
+                                               &touch) == not_connected);
+    CHECK_FALSE(touch);
+    struct Details {
+        std::uint32_t words[11];
+    } details;
+    std::memset(&details, 0xff, sizeof details);
+    CHECK(call<HRESULT, std::uint64_t, std::uint32_t, float, float, Details *>(
+              "XGameStreaming", "XGameStreamingGetDisplayDetails", 1, 1920 * 1080, 2.0f, 0.5f,
+              &details) == not_connected);
+    CHECK(details.words[10] == 0);
+    char session[8] = "session";
+    std::size_t used = 9;
+    CHECK(call<HRESULT, std::uint64_t, std::size_t, char *, std::size_t *>(
+              "XGameStreaming", "XGameStreamingGetSessionId", 1, sizeof session, session, &used) ==
+          not_connected);
+    CHECK(used == 0);
+    CHECK(session[0] == '\0');
+
+    struct Settings {
+        std::uint32_t width, height;
+        std::uint64_t max_record_timespan_ms;
+        std::uint8_t encoding, color_format;
+        bool capture_by_games_allowed;
+    } settings{0, 0, 0, 0, 0, true};
+    REQUIRE(call<HRESULT, Settings *>("XAppCapture", "XAppCaptureGetVideoCaptureSettings",
+                                      &settings) == S_OK);
+    CHECK_FALSE(settings.capture_by_games_allowed);
+    char local_id[250] = "clip";
+    CHECK(call<HRESULT, void *, std::uint32_t, char *>("XAppCapture", "XAppCaptureStartUserRecord",
+                                                       nullptr, sizeof local_id,
+                                                       local_id) == E_ACCESSDENIED);
+    CHECK(local_id[0] == '\0');
+}
+
 TEST_CASE("every chunk of the package is installed") {
     void *monitor = nullptr;
     REQUIRE(
