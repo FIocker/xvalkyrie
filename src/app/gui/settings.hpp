@@ -2,6 +2,7 @@
 #include "app/gui/theme.hpp"
 #include "launcher/config.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -11,7 +12,7 @@ namespace xv::ui {
 // page is an entry in `pages` (settings.cpp) and a function that draws it.
 class Settings {
   public:
-    enum class Page { input, graphics, console, libraries, about };
+    enum class Page { input, graphics, profiles, console, libraries, about };
     // What the settings need done by whoever owns the window. All of them are called
     // from draw().
     // what the about page shows of updates
@@ -44,7 +45,7 @@ class Settings {
         page_ = page;
         open_ = true;
         raise_ = true;
-        console_loaded_ = false;
+        profile_loaded_ = false;
     }
     bool shown() const { return open_; }
     // While the input page is up the keyboard is for choosing keys, not for the title.
@@ -57,6 +58,8 @@ class Settings {
   private:
     void input(const Fonts &fonts, const Host &host);
     void graphics(const Fonts &fonts, const Host &host);
+    void profiles(const Fonts &fonts, const Host &host, ConsoleSettings &settings);
+    void new_profile(const Fonts &fonts, const Host &host, ConsoleSettings &settings);
     void console(const Fonts &fonts, const Host &host, ConsoleSettings &settings);
     void libraries(const Fonts &fonts, const Host &host, Library library);
     void about(const Fonts &fonts, const Host &host);
@@ -65,9 +68,14 @@ class Settings {
     Page page_ = Page::input;
     std::optional<std::size_t> binding_; // control waiting for a key
     int pressed_ = 0;                    // the key it got
-    std::string input_notice_, graphics_notice_, console_notice_;
-    bool console_loaded_ = false;
-    char gamertag_[64] = "", user_id_[32] = "", profile_name_[40] = "";
-    bool confirm_delete_ = false;
+    std::string input_notice_, graphics_notice_, console_notice_, profile_notice_, new_notice_;
+    // what is typed of a profile: the one in use, and the one being made
+    struct ProfileForm {
+        char name[40] = "", gamertag[64] = "", user_id[32] = "";
+        std::uint32_t gamerscore = 0;
+        int age = 3;
+    };
+    ProfileForm profile_, new_;
+    bool profile_loaded_ = false; // profile_ is of the profile in use
 };
 } // namespace xv::ui

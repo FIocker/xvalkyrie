@@ -17,6 +17,8 @@ struct ConsoleSettings {
     std::string xbox_user_id = "2814600000000001";
     std::uint32_t gamerscore = 0;
     std::uint32_t age_group = 3; // unknown, child, teen, adult
+    // the console's language and region as a locale name ("es-AR"); empty for the host's
+    std::string language;
     bool headset = false;
     bool keyboard_dialog = true;
     // The folder with the console's own apps, each unpacked in a folder of its own (the
@@ -34,12 +36,28 @@ bool valid_xbox_user_id(const std::string &id);
 std::filesystem::path profiles_directory();
 bool valid_profile_name(const std::string &name);
 std::vector<std::string> profile_names();
-// a new profile with a user ID of its own; throws if the name is taken or not valid
-void create_profile(const std::string &name);
+std::filesystem::path profile_directory(const std::string &name);
+// The name of the profile made when there is none: the host user's, as far as a profile
+// name can spell it.
+std::string default_profile_name();
+// 2814 and twelve digits, as the IDs of Xbox Live users are
+std::string new_xbox_user_id();
+// A new profile with the name, gamertag, user ID, gamerscore and age group of `profile`;
+// throws if one of them is not valid or the name is taken.
+void create_profile(const ConsoleSettings &profile);
 // makes `name` the profile of `settings`; false if there is no such profile
 bool use_profile(ConsoleSettings &settings, const std::string &name);
+// Gives the profile of `settings` and its folder another name; throws if it is taken or
+// not valid.
+void rename_profile(ConsoleSettings &settings, const std::string &name);
 // with its saves
 void delete_profile(const std::string &name);
+// a locale name such as "en-US"
+bool valid_language(const std::string &language);
+// the host user's locale name
+std::string host_language();
+// opens the folder in the host's file manager, making it first if it is not there
+void show_folder(const std::filesystem::path &folder);
 // config.ini, logs/, profiles/ and cache/ live in the per-user configuration folder.
 std::filesystem::path config_directory();
 std::filesystem::path config_file();

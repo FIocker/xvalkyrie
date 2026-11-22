@@ -10,7 +10,7 @@
 #include <objbase.h>
 #include <thread>
 
-// XUser: one user, signed in, who never signs out: the one of Options > Console. Its handle
+// XUser: one user, signed in, who never signs out: the one of Options > Profiles. Its handle
 // is the same object whoever asks, and nothing of it comes from Xbox Live.
 namespace xv::runtime::modules::gameruntime {
 namespace {

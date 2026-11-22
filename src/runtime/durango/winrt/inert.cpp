@@ -259,7 +259,7 @@ constexpr Row rows[] = {
      9,
      {Inert::shared, L"Windows.Xbox.System.UserDisplayInfo"}},
     // IUserDisplayInfo: Gamertag, GamerScore, ApplicationDisplayName, GameDisplayName,
-    // Reputation, AgeGroup, all from Options > Console
+    // Reputation, AgeGroup, all from Options > Profiles
     {display_info, direct, 6, {Inert::console_string, L"gamertag"}},
     {display_info, direct, 7, {Inert::console32, L"gamerscore"}},
     {display_info, direct, 8, {Inert::console_string, L"gamertag"}},

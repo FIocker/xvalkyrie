@@ -60,6 +60,8 @@ struct ConsoleSettings {
     std::uint32_t age_group = 3; // UserAgeGroup: unknown, child, teen, adult
     bool headset = false;
     bool keyboard_dialog = true; // otherwise the keyboard returns the default text
+    // the console's language and region as a locale name; empty for the host user's
+    std::wstring language{};
     // The console's system apps, each unpacked in a folder of its own; empty if there are
     // none. The packages a title depends on are looked for there as well as next to it.
     std::filesystem::path system_storage{};

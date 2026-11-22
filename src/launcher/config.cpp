@@ -13,6 +13,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <shellapi.h> // after windows.h
+
 namespace xv {
 std::filesystem::path config_directory() {
     const auto *const base = _wgetenv(L"APPDATA");
@@ -107,12 +109,19 @@ void write_profile(const ConsoleSettings &console) {
     if (!file)
         throw std::runtime_error("Cannot write " + path.string());
 }
-// the profile config.ini names, made with the defaults if it is not there
+// The profile config.ini names. If it is not there, the one named after the host user,
+// which is made if it is not there either.
 void adopt_profile(ConsoleSettings &console) {
-    if (!valid_profile_name(console.profile))
-        console.profile = ConsoleSettings{}.profile;
-    if (read_profile(console.profile, console))
+    if (valid_profile_name(console.profile) && read_profile(console.profile, console))
         return;
+    const auto name = default_profile_name();
+    if (read_profile(name, console))
+        return;
+    console.profile = name;
+    console.gamertag = name.substr(0, 15);
+    console.xbox_user_id = new_xbox_user_id();
+    console.gamerscore = 0;
+    console.age_group = ConsoleSettings{}.age_group;
     try {
         write_profile(console);
     } catch (const std::exception &) {
@@ -166,6 +175,8 @@ Settings read() {
             auto &console = result.console;
             if (key == "profile")
                 console.profile = json_string(value);
+            else if (key == "language" && valid_language(json_string(value)))
+                console.language = json_string(value);
             else if (key == "headset")
                 console.headset = value == "true";
             else if (key == "keyboard")
@@ -210,6 +221,8 @@ void write(const Settings &settings) {
         file << "\n[console]\nprofile = " << nlohmann::json(console.profile).dump()
              << "\nheadset = " << (console.headset ? "true" : "false")
              << "\nkeyboard = " << (console.keyboard_dialog ? "dialog" : "default_text") << '\n';
+        if (!console.language.empty())
+            file << "language = " << nlohmann::json(console.language).dump() << '\n';
         if (!console.system_storage.empty())
             file << "system_storage = " << nlohmann::json(utf8(console.system_storage)).dump()
                  << '\n';
@@ -283,25 +296,81 @@ std::vector<std::string> profile_names() {
     std::sort(names.begin(), names.end());
     return names;
 }
-void create_profile(const std::string &name) {
+std::filesystem::path profile_directory(const std::string &name) {
+    return profiles_directory() / name;
+}
+std::string default_profile_name() {
+    wchar_t user[257] = L"";
+    DWORD size = 257;
+    GetUserNameW(user, &size);
+    std::string name;
+    for (const wchar_t *c = user; *c && name.size() < 32; ++c)
+        if (*c < 0x80 && (std::isalnum(*c) || *c == ' ' || *c == '-' || *c == '_'))
+            name += static_cast<char>(*c);
+    name = trim(name);
+    return valid_profile_name(name) ? name : ConsoleSettings{}.profile;
+}
+std::string new_xbox_user_id() {
+    std::random_device device;
+    std::uniform_int_distribution<int> digit(0, 9);
+    std::string id = "2814";
+    for (int n = 0; n < 12; ++n)
+        id += static_cast<char>('0' + digit(device));
+    return id;
+}
+namespace {
+void check_new_name(const std::string &name) {
     std::error_code error;
     if (!valid_profile_name(name))
         throw std::invalid_argument("A profile name has 1 to 32 letters, digits, spaces, - or _.");
-    if (std::filesystem::exists(profiles_directory() / name, error))
+    if (std::filesystem::exists(profile_directory(name), error))
         throw std::invalid_argument("There is a profile with that name.");
-    ConsoleSettings console;
-    console.profile = name;
-    console.gamertag = name.substr(0, 15);
-    // 2814 and twelve digits, as the IDs of Xbox Live users are
-    std::random_device device;
-    std::uniform_int_distribution<int> digit(0, 9);
-    console.xbox_user_id = "2814";
-    for (int n = 0; n < 12; ++n)
-        console.xbox_user_id += static_cast<char>('0' + digit(device));
-    write_profile(console);
+}
+} // namespace
+void create_profile(const ConsoleSettings &profile) {
+    check_new_name(profile.profile);
+    if (!valid_gamertag(profile.gamertag))
+        throw std::invalid_argument("A gamertag has 1 to 15 characters.");
+    if (!valid_xbox_user_id(profile.xbox_user_id))
+        throw std::invalid_argument("A user ID has 1 to 20 digits.");
+    if (profile.age_group > 3)
+        throw std::invalid_argument("There is no such age group.");
+    write_profile(profile);
 }
 bool use_profile(ConsoleSettings &settings, const std::string &name) {
     return valid_profile_name(name) && read_profile(name, settings);
+}
+void rename_profile(ConsoleSettings &settings, const std::string &name) {
+    check_new_name(name);
+    std::error_code error;
+    std::filesystem::rename(profile_directory(settings.profile), profile_directory(name), error);
+    if (error)
+        throw std::runtime_error("Cannot rename the profile's folder: " + error.message());
+    settings.profile = name;
+}
+bool valid_language(const std::string &language) {
+    const auto dash = language.find('-');
+    const auto primary = language.substr(0, dash);
+    return language.size() <= 35 && primary.size() >= 2 && primary.size() <= 3 &&
+           language.back() != '-' && language.find("--") == std::string::npos &&
+           std::all_of(primary.begin(), primary.end(),
+                       [](char c) { return std::isalpha(static_cast<unsigned char>(c)); }) &&
+           std::all_of(language.begin(), language.end(), [](char c) {
+               return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
+           });
+}
+std::string host_language() {
+    wchar_t wide[LOCALE_NAME_MAX_LENGTH] = L"";
+    GetUserDefaultLocaleName(wide, LOCALE_NAME_MAX_LENGTH);
+    std::string name;
+    for (const wchar_t *c = wide; *c; ++c)
+        name += static_cast<char>(*c);
+    return valid_language(name) ? name : "en-US";
+}
+void show_folder(const std::filesystem::path &folder) {
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 void delete_profile(const std::string &name) {
     std::error_code error;

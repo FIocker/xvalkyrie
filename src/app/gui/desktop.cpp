@@ -414,6 +414,8 @@ class Desktop {
                 settings_.show(ui::Settings::Page::input);
             if (ImGui::MenuItem("Graphics..."))
                 settings_.show(ui::Settings::Page::graphics);
+            if (ImGui::MenuItem("Profiles..."))
+                settings_.show(ui::Settings::Page::profiles);
             if (ImGui::MenuItem("Console..."))
                 settings_.show(ui::Settings::Page::console);
             if (ImGui::MenuItem("Game Libraries..."))

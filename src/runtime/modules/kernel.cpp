@@ -1,5 +1,6 @@
 #include "runtime/modules/kernel.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/modules/locale.hpp"
 #include "runtime/modules/placement.hpp"
 #include <algorithm>
 #include <atomic>
@@ -490,6 +491,7 @@ void install_kernel(Registry &registry, Target target) {
     console = target;
     for (const auto &[name, function] : functions)
         registry.add_api(name, function);
+    install_locale(registry);
     registry.add_api("RegOpenKeyExW", erase(reg_open_key_ex_w));
     registry.add_api("RegOpenKeyW", erase(reg_open_key_w));
     registry.add_api("RegQueryValueExW", erase(reg_query_value_ex_w));

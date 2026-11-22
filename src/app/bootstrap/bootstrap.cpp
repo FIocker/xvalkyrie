@@ -23,8 +23,9 @@ std::wstring wide(const std::string &utf8) {
 // what config.ini says, the way the runtime takes it
 runtime::ConsoleSettings console_settings() {
     const auto saved = load_console_settings();
-    return {wide(saved.gamertag), wide(saved.xbox_user_id), saved.gamerscore,    saved.age_group,
-            saved.headset,        saved.keyboard_dialog,    saved.system_storage};
+    return {
+        wide(saved.gamertag), wide(saved.xbox_user_id), saved.gamerscore,     saved.age_group,
+        saved.headset,        saved.keyboard_dialog,    wide(saved.language), saved.system_storage};
 }
 // "<title> [<title ID>] | <video driver> | <n> FPS | XValkyrie <version> <commit>", with the frame
 // rate over the time since it was last asked for. The driver is what the title's device was made

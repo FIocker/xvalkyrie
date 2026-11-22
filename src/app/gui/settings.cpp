@@ -5,6 +5,8 @@
 #include "backends/input/input.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <cfloat>
 #include <cstdio>
 #include <exception>
 
@@ -14,10 +16,12 @@ struct PageEntry {
     Settings::Page page;
     const char *name;
 };
-constexpr std::array pages{
-    PageEntry{Settings::Page::input, "Input"}, PageEntry{Settings::Page::graphics, "Graphics"},
-    PageEntry{Settings::Page::console, "Console"}, PageEntry{Settings::Page::libraries, "Library"},
-    PageEntry{Settings::Page::about, "About"}};
+constexpr std::array pages{PageEntry{Settings::Page::input, "Input"},
+                           PageEntry{Settings::Page::graphics, "Graphics"},
+                           PageEntry{Settings::Page::profiles, "Profiles"},
+                           PageEntry{Settings::Page::console, "Console"},
+                           PageEntry{Settings::Page::libraries, "Library"},
+                           PageEntry{Settings::Page::about, "About"}};
 
 std::string utf8(const std::filesystem::path &path) {
     const auto text = path.u8string();
@@ -50,6 +54,92 @@ constexpr std::array control_groups{
     ControlGroup{"Left stick", input::Control::left_stick_up, input::Control::right_stick_up},
     ControlGroup{"Right stick", input::Control::right_stick_up, input::Control::count},
 };
+
+// The languages and regions a console can be set to, by their locale names.
+struct LanguageEntry {
+    const char *tag, *name;
+};
+constexpr LanguageEntry languages[] = {
+    {"ar-SA", "Arabic (Saudi Arabia)"},
+    {"zh-CN", "Chinese (Simplified, China)"},
+    {"zh-HK", "Chinese (Traditional, Hong Kong)"},
+    {"zh-TW", "Chinese (Traditional, Taiwan)"},
+    {"cs-CZ", "Czech (Czechia)"},
+    {"da-DK", "Danish (Denmark)"},
+    {"nl-NL", "Dutch (Netherlands)"},
+    {"en-AU", "English (Australia)"},
+    {"en-CA", "English (Canada)"},
+    {"en-GB", "English (United Kingdom)"},
+    {"en-US", "English (United States)"},
+    {"fi-FI", "Finnish (Finland)"},
+    {"fr-CA", "French (Canada)"},
+    {"fr-FR", "French (France)"},
+    {"de-DE", "German (Germany)"},
+    {"el-GR", "Greek (Greece)"},
+    {"he-IL", "Hebrew (Israel)"},
+    {"hu-HU", "Hungarian (Hungary)"},
+    {"it-IT", "Italian (Italy)"},
+    {"ja-JP", "Japanese (Japan)"},
+    {"ko-KR", "Korean (Korea)"},
+    {"nb-NO", "Norwegian (Norway)"},
+    {"pl-PL", "Polish (Poland)"},
+    {"pt-BR", "Portuguese (Brazil)"},
+    {"pt-PT", "Portuguese (Portugal)"},
+    {"ru-RU", "Russian (Russia)"},
+    {"sk-SK", "Slovak (Slovakia)"},
+    {"es-AR", "Spanish (Argentina)"},
+    {"es-CL", "Spanish (Chile)"},
+    {"es-CO", "Spanish (Colombia)"},
+    {"es-MX", "Spanish (Mexico)"},
+    {"es-ES", "Spanish (Spain)"},
+    {"sv-SE", "Swedish (Sweden)"},
+    {"tr-TR", "Turkish (Turkey)"},
+};
+
+constexpr const char *age_groups[] = {"Unknown", "Child", "Teen", "Adult"};
+constexpr float profile_field = 240;
+// The profile in use at a glance: its initial on a disc, the gamertag, what tells it from
+// the others and its gamerscore.
+void profile_card(const Fonts &fonts, const ConsoleSettings &profile) {
+    constexpr float height = 84, radius = 26;
+    auto *const list = ImGui::GetWindowDrawList();
+    const auto min = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    ImGui::Dummy({width, height});
+    list->AddRectFilled(min, {min.x + width, min.y + height}, IM_COL32(255, 255, 255, 14), 8);
+    list->AddRect(min, {min.x + width, min.y + height}, IM_COL32(255, 255, 255, 26), 8);
+    const ImVec2 center{min.x + 18 + radius, min.y + height / 2};
+    list->AddCircleFilled(center, radius, color::fade(color::scarlet, .9f), 48);
+    // the first character of the gamertag, all the bytes of it
+    std::size_t bytes = profile.gamertag.empty() ? 0 : 1;
+    while (bytes < profile.gamertag.size() &&
+           (static_cast<unsigned char>(profile.gamertag[bytes]) & 0xc0) == 0x80)
+        ++bytes;
+    auto initial = profile.gamertag.substr(0, bytes);
+    if (bytes == 1)
+        initial[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(initial[0])));
+    auto *const heading = fonts.heading;
+    const auto letter = heading->CalcTextSizeA(heading->FontSize, FLT_MAX, 0, initial.c_str());
+    list->AddText(heading, heading->FontSize, {center.x - letter.x / 2, center.y - letter.y / 2},
+                  IM_COL32_WHITE, initial.c_str());
+    const auto score = "G  " + std::to_string(profile.gamerscore);
+    const float pill =
+        fonts.small->CalcTextSizeA(fonts.small->FontSize, FLT_MAX, 0, score.c_str()).x + 14;
+    badge(list, fonts, {min.x + width - pill - 18, min.y + (height - badge_height) / 2},
+          {score.c_str(), IM_COL32(255, 255, 255, 22), color::text});
+    const float left = center.x + radius + 16, room = width - (left - min.x) - pill - 30;
+    ImGui::PushFont(heading);
+    const auto gamertag = fitted(profile.gamertag, room);
+    ImGui::PopFont();
+    list->AddText(heading, heading->FontSize, {left, min.y + 16}, color::text, gamertag.c_str());
+    ImGui::PushFont(fonts.small);
+    const auto line = fitted(profile.profile + "  \xc2\xb7  XUID " + profile.xbox_user_id +
+                                 "  \xc2\xb7  " + age_groups[std::min(profile.age_group, 3u)],
+                             room);
+    ImGui::PopFont();
+    list->AddText(fonts.small, fonts.small->FontSize, {left, min.y + 16 + heading->FontSize + 4},
+                  color::muted, line.c_str());
+}
 } // namespace
 
 void Settings::draw(const Fonts &fonts, const Host &host, Library library,
@@ -90,6 +180,9 @@ void Settings::draw(const Fonts &fonts, const Host &host, Library library,
             break;
         case Page::graphics:
             graphics(fonts, host);
+            break;
+        case Page::profiles:
+            profiles(fonts, host, profile);
             break;
         case Page::console:
             console(fonts, host, profile);
@@ -253,12 +346,230 @@ void Settings::graphics(const Fonts &fonts, const Host &host) {
         ImGui::TextWrapped("%s", graphics_notice_.c_str());
 }
 
-void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
-    if (!console_loaded_) {
-        std::snprintf(gamertag_, sizeof gamertag_, "%s", settings.gamertag.c_str());
-        std::snprintf(user_id_, sizeof user_id_, "%s", settings.xbox_user_id.c_str());
-        console_loaded_ = true;
+// The profiles, each a user of the console: which one is in use, what it says of itself,
+// its folder, and making and deleting them. Changes apply at once.
+void Settings::profiles(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
+    if (!profile_loaded_) {
+        profile_ = {};
+        std::snprintf(profile_.name, sizeof profile_.name, "%s", settings.profile.c_str());
+        std::snprintf(profile_.gamertag, sizeof profile_.gamertag, "%s", settings.gamertag.c_str());
+        std::snprintf(profile_.user_id, sizeof profile_.user_id, "%s",
+                      settings.xbox_user_id.c_str());
+        profile_loaded_ = true;
     }
+    const auto changed = [&] {
+        profile_notice_.clear();
+        try {
+            if (host.console_saved)
+                host.console_saved();
+        } catch (const std::exception &e) {
+            profile_notice_ = std::string("Not saved: ") + e.what();
+        }
+    };
+    ImGui::Dummy({0, 6});
+    profile_card(fonts, settings);
+    ImGui::Dummy({0, 10});
+    const auto names = profile_names();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Profile in use");
+    ImGui::SameLine(0, 14);
+    ImGui::SetNextItemWidth(profile_field);
+    if (ImGui::BeginCombo("##profile", settings.profile.c_str())) {
+        for (const auto &name : names)
+            if (ImGui::Selectable(name.c_str(), name == settings.profile) &&
+                name != settings.profile && use_profile(settings, name)) {
+                profile_loaded_ = false;
+                changed();
+            }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (primary_button("New profile...")) {
+        new_ = {};
+        std::snprintf(new_.user_id, sizeof new_.user_id, "%s", new_xbox_user_id().c_str());
+        new_notice_.clear();
+        ImGui::OpenPopup("New profile");
+    }
+    new_profile(fonts, host, settings);
+
+    section(fonts, "Identity");
+    if (begin_settings("identity")) {
+        setting(fonts, "Name",
+                "Of the profile and its folder. 1 to 32 letters, digits, spaces, - or _.");
+        ImGui::SetNextItemWidth(profile_field);
+        ImGui::InputText("##name", profile_.name, sizeof profile_.name);
+        if (ImGui::IsItemDeactivatedAfterEdit() && settings.profile != profile_.name) {
+            try {
+                rename_profile(settings, profile_.name);
+                changed();
+            } catch (const std::exception &e) {
+                profile_notice_ = e.what();
+                profile_loaded_ = false;
+            }
+        }
+        setting(fonts, "Gamertag", "1 to 15 characters, shown by titles as the player's name.");
+        ImGui::SetNextItemWidth(profile_field);
+        ImGui::InputText("##gamertag", profile_.gamertag, sizeof profile_.gamertag);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (valid_gamertag(profile_.gamertag)) {
+                settings.gamertag = profile_.gamertag;
+                changed();
+            } else {
+                profile_notice_ = "A gamertag has 1 to 15 characters.";
+                profile_loaded_ = false;
+            }
+        }
+        setting(fonts, "User ID",
+                "The Xbox user ID (XUID). Some titles name their saves after it, so changing "
+                "it hides those saves.");
+        const float random = ImGui::CalcTextSize("New").x + 2 * ImGui::GetStyle().FramePadding.x;
+        ImGui::SetNextItemWidth(profile_field - random - ImGui::GetStyle().ItemSpacing.x);
+        ImGui::InputText("##xuid", profile_.user_id, sizeof profile_.user_id,
+                         ImGuiInputTextFlags_CharsDecimal);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (valid_xbox_user_id(profile_.user_id)) {
+                settings.xbox_user_id = profile_.user_id;
+                changed();
+            } else {
+                profile_notice_ = "A user ID has 1 to 20 digits.";
+                profile_loaded_ = false;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("New")) {
+            settings.xbox_user_id = new_xbox_user_id();
+            profile_loaded_ = false;
+            changed();
+        }
+        ImGui::SetItemTooltip("A random user ID");
+        setting(fonts, "Gamerscore");
+        ImGui::SetNextItemWidth(profile_field);
+        ImGui::InputScalar("##gamerscore", ImGuiDataType_U32, &settings.gamerscore);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            changed();
+        setting(fonts, "Age group", "Titles with age ratings or chat limits look at it.");
+        int age = static_cast<int>(std::min(settings.age_group, 3u));
+        if (segmented("age", age_groups, age)) {
+            settings.age_group = static_cast<std::uint32_t>(age);
+            changed();
+        }
+        end_settings();
+    }
+
+    section(fonts, "Files");
+    const auto folder = profile_directory(settings.profile);
+    bool remove = false;
+    if (begin_settings("files")) {
+        setting(fonts, "Folder", "The profile's settings and the saves made as this user.");
+        if (ImGui::Button("Open folder"))
+            show_folder(folder);
+        ImGui::SameLine();
+        if (ImGui::Button("Open saves"))
+            show_folder(folder / "saves");
+        setting(fonts, "Delete",
+                names.size() > 1 ? "The profile and its saves. They cannot be brought back."
+                                 : "The only profile there is cannot be deleted.");
+        ImGui::BeginDisabled(names.size() <= 1);
+        remove = ImGui::Button("Delete profile...");
+        ImGui::EndDisabled();
+        end_settings();
+    }
+    path_field("##folder", folder);
+    if (remove)
+        ImGui::OpenPopup("Delete profile");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {.5f, .5f});
+    if (ImGui::BeginPopupModal("Delete profile", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+        ImGui::Text("Delete the profile \"%s\" and all of its saves?", settings.profile.c_str());
+        note(fonts, "They cannot be brought back.");
+        ImGui::Dummy({0, 8});
+        if (primary_button("Delete", {110, 0})) {
+            delete_profile(settings.profile);
+            for (const auto &name : names)
+                if (name != settings.profile && use_profile(settings, name))
+                    break;
+            profile_loaded_ = false;
+            changed();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {110, 0}))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::Dummy({0, 4});
+    note(fonts, "Applies to the next title started.");
+    if (!profile_notice_.empty())
+        ImGui::TextWrapped("%s", profile_notice_.c_str());
+}
+
+// Asks for what a new profile is to be, then makes it and puts it in use.
+void Settings::new_profile(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {.5f, .5f});
+    ImGui::SetNextWindowSize({500, 0});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {22, 18});
+    const bool shown = ImGui::BeginPopupModal("New profile", nullptr, ImGuiWindowFlags_NoResize);
+    ImGui::PopStyleVar();
+    if (!shown)
+        return;
+    note(fonts, "A profile is a user of the console, with saves of its own.");
+    if (begin_settings("new")) {
+        setting(fonts, "Name", "1 to 32 letters, digits, spaces, - or _.");
+        ImGui::SetNextItemWidth(profile_field);
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("##name", new_.name, sizeof new_.name);
+        setting(fonts, "Gamertag", "1 to 15 characters. The name, if left empty.");
+        ImGui::SetNextItemWidth(profile_field);
+        ImGui::InputText("##gamertag", new_.gamertag, sizeof new_.gamertag);
+        setting(fonts, "User ID", "The Xbox user ID (XUID), 1 to 20 digits.");
+        const float random = ImGui::CalcTextSize("New").x + 2 * ImGui::GetStyle().FramePadding.x;
+        ImGui::SetNextItemWidth(profile_field - random - ImGui::GetStyle().ItemSpacing.x);
+        ImGui::InputText("##xuid", new_.user_id, sizeof new_.user_id,
+                         ImGuiInputTextFlags_CharsDecimal);
+        ImGui::SameLine();
+        if (ImGui::Button("New"))
+            std::snprintf(new_.user_id, sizeof new_.user_id, "%s", new_xbox_user_id().c_str());
+        ImGui::SetItemTooltip("A random user ID");
+        setting(fonts, "Gamerscore");
+        ImGui::SetNextItemWidth(profile_field);
+        ImGui::InputScalar("##gamerscore", ImGuiDataType_U32, &new_.gamerscore);
+        setting(fonts, "Age group");
+        segmented("age", age_groups, new_.age);
+        end_settings();
+    }
+    if (!new_notice_.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, color::scarlet);
+        ImGui::TextWrapped("%s", new_notice_.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::Dummy({0, 8});
+    if (primary_button("Create profile", {150, 0})) {
+        auto made = settings;
+        made.profile = new_.name;
+        made.gamertag = *new_.gamertag ? new_.gamertag : made.profile.substr(0, 15);
+        made.xbox_user_id = new_.user_id;
+        made.gamerscore = new_.gamerscore;
+        made.age_group = static_cast<std::uint32_t>(new_.age);
+        try {
+            create_profile(made);
+            settings = made;
+            profile_loaded_ = false;
+            profile_notice_.clear();
+            if (host.console_saved)
+                host.console_saved();
+            ImGui::CloseCurrentPopup();
+        } catch (const std::exception &e) {
+            new_notice_ = e.what();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", {110, 0}))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &settings) {
     const auto changed = [&] {
         console_notice_.clear();
         try {
@@ -268,83 +579,33 @@ void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &se
             console_notice_ = std::string("Not saved: ") + e.what();
         }
     };
-    constexpr float field = 220;
-    section(fonts, "Profile");
-    if (begin_settings("profile")) {
-        setting(fonts, "Profile", "Each profile is a user of the console with saves of its own.");
-        const auto names = profile_names();
-        ImGui::SetNextItemWidth(field);
-        if (ImGui::BeginCombo("##profile", settings.profile.c_str())) {
-            for (const auto &name : names)
-                if (ImGui::Selectable(name.c_str(), name == settings.profile) &&
-                    use_profile(settings, name)) {
-                    console_loaded_ = confirm_delete_ = false;
+    section(fonts, "Language");
+    if (begin_settings("language")) {
+        setting(fonts, "Language and region",
+                "What titles are told the console's are, whatever this PC's are.");
+        const auto host_choice = "Windows (" + host_language() + ")";
+        const auto shown = [&](const std::string &tag) {
+            for (const auto &entry : languages)
+                if (tag == entry.tag)
+                    return std::string(entry.name);
+            return tag;
+        };
+        ImGui::SetNextItemWidth(260);
+        if (ImGui::BeginCombo("##language", settings.language.empty()
+                                                ? host_choice.c_str()
+                                                : shown(settings.language).c_str())) {
+            if (ImGui::Selectable(host_choice.c_str(), settings.language.empty()) &&
+                !settings.language.empty()) {
+                settings.language.clear();
+                changed();
+            }
+            for (const auto &entry : languages)
+                if (ImGui::Selectable(entry.name, settings.language == entry.tag) &&
+                    settings.language != entry.tag) {
+                    settings.language = entry.tag;
                     changed();
                 }
             ImGui::EndCombo();
-        }
-        if (names.size() > 1) {
-            ImGui::SameLine();
-            if (ImGui::Button(confirm_delete_ ? "Delete it and its saves" : "Delete")) {
-                if (confirm_delete_) {
-                    delete_profile(settings.profile);
-                    for (const auto &name : names)
-                        if (name != settings.profile && use_profile(settings, name))
-                            break;
-                    console_loaded_ = false;
-                    changed();
-                }
-                confirm_delete_ = !confirm_delete_;
-            }
-        }
-        setting(fonts, "New profile", "1 to 32 letters, digits, spaces, - or _.");
-        ImGui::SetNextItemWidth(field);
-        ImGui::InputText("##new_profile", profile_name_, sizeof profile_name_);
-        ImGui::SameLine();
-        if (ImGui::Button("Create")) {
-            try {
-                create_profile(profile_name_);
-                use_profile(settings, profile_name_);
-                profile_name_[0] = '\0';
-                console_loaded_ = false;
-                changed();
-            } catch (const std::exception &e) {
-                console_notice_ = e.what();
-            }
-        }
-        setting(fonts, "Gamertag", "1 to 15 characters, shown by titles as the player's name.");
-        ImGui::SetNextItemWidth(field);
-        ImGui::InputText("##gamertag", gamertag_, sizeof gamertag_);
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (valid_gamertag(gamertag_)) {
-                settings.gamertag = gamertag_;
-                changed();
-            } else
-                console_notice_ = "A gamertag has 1 to 15 characters.";
-        }
-        setting(fonts, "User ID",
-                "The Xbox user ID (XUID). Some titles name their saves after it, so changing "
-                "it hides those saves.");
-        ImGui::SetNextItemWidth(field);
-        ImGui::InputText("##xuid", user_id_, sizeof user_id_, ImGuiInputTextFlags_CharsDecimal);
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (valid_xbox_user_id(user_id_)) {
-                settings.xbox_user_id = user_id_;
-                changed();
-            } else
-                console_notice_ = "A user ID has 1 to 20 digits.";
-        }
-        setting(fonts, "Gamerscore");
-        ImGui::SetNextItemWidth(field);
-        ImGui::InputScalar("##gamerscore", ImGuiDataType_U32, &settings.gamerscore);
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            changed();
-        setting(fonts, "Age group", "Titles with age ratings or chat limits look at it.");
-        static constexpr const char *ages[] = {"Unknown", "Child", "Teen", "Adult"};
-        int age = static_cast<int>(std::min(settings.age_group, 3u));
-        if (segmented("age", ages, age)) {
-            settings.age_group = static_cast<std::uint32_t>(age);
-            changed();
         }
         end_settings();
     }

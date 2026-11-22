@@ -2,6 +2,7 @@
 #include "host/files.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/gameruntime/gameruntime.hpp"
+#include "runtime/modules/locale.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -224,10 +225,9 @@ HRESULT WINAPI package_identifier_of_process(void *, std::size_t size, char *buf
 }
 bool WINAPI is_packaged(void *) { return true; }
 HRESULT WINAPI user_locale(void *, std::size_t size, char *buffer) {
-    wchar_t wide[LOCALE_NAME_MAX_LENGTH] = L"en-US";
-    GetUserDefaultLocaleName(wide, LOCALE_NAME_MAX_LENGTH);
     char text[LOCALE_NAME_MAX_LENGTH * 3] = "en-US";
-    WideCharToMultiByte(CP_UTF8, 0, wide, -1, text, sizeof text, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, console_language().c_str(), -1, text, sizeof text, nullptr,
+                        nullptr);
     return copy_text(text, size, buffer, nullptr);
 }
 // XPackageChunkAvailability: ready
