@@ -24,11 +24,15 @@ bool console_only_shader(std::span<const std::uint8_t> container);
 // The machine code of such a shader, as little-endian words up to and including the one
 // that ends the program. Empty if it is not found.
 std::vector<std::uint32_t> console_shader_code(std::span<const std::uint8_t> container);
-// The HLSL made for a console shader, or nothing and in `why` what stopped it. For tools
-// and tests: `host_shader` is what a title's pipelines get.
+// The HLSL made for a console shader, or nothing and in `why` what stopped it, at the
+// instruction `at` words into its code (~0 if at none). For tools and tests: `host_shader`
+// is what a title's pipelines get.
 std::optional<std::string> console_shader_source(ShaderStage stage,
                                                  std::span<const std::uint8_t> container,
-                                                 std::string *why = nullptr);
+                                                 std::string *why = nullptr,
+                                                 std::uint32_t *at = nullptr);
+// what the host's compiler says against such HLSL, or nothing if it takes it
+std::string console_shader_errors(ShaderStage stage, const std::string &source);
 // What stops the translation of a compute shader made of these words of machine code and
 // nothing else, or nothing if it is translated. For tools: which instructions are handled.
 // With `compiled`, what is translated is given to the host's compiler too, and what that

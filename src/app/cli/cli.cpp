@@ -43,8 +43,11 @@ const std::string_view commands =
     "  xvboot modules durango|scarlett  the console modules and functions implemented here\n"
     "  xvboot shader-probe              what stops the translation of the shader code on each\n"
     "                                   line of the input, as hexadecimal words\n"
-    "  xvboot shader-corpus FOLDER      how many of the shaders a run left there with\n"
-    "                                   XV_SHADER_CODE are translated, and what stops the rest\n";
+    "  xvboot shader-source FILE        the HLSL made for one of the shaders of such a folder\n"
+    "  xvboot shader-corpus FOLDER [--compile]\n"
+    "                                   how many of the shaders a run left there with\n"
+    "                                   XV_SHADER_CODE are translated, and what stops the rest;\n"
+    "                                   with --compile, the host's compiler is asked as well\n";
 
 std::optional<int> run(int argc, wchar_t **argv) {
     if (argc < 2)
@@ -130,9 +133,11 @@ std::optional<int> run(int argc, wchar_t **argv) {
         std::cout << report.dump() << '\n';
         return 0;
     }
-    if (argc == 3 && command == "shader-corpus") {
+    if ((argc == 3 || (argc == 4 && std::filesystem::path(argv[3]) == "--compile")) &&
+        command == "shader-corpus") {
         // <hash>-<stage>.dxbc files, as XV_SHADER_CODE writes them
         std::map<std::string, std::vector<std::string>> stopped;
+        std::map<std::string, std::uint32_t> where; // of each reason's first shader
         std::size_t translated = 0, shaders = 0;
         for (const auto &entry : std::filesystem::directory_iterator(argv[2])) {
             const auto name = entry.path().stem().string();
@@ -146,15 +151,32 @@ std::optional<int> run(int argc, wchar_t **argv) {
                 continue;
             ++shaders;
             std::string why;
+            std::uint32_t at = ~0u;
             const auto bytes = host::read_snapshot(entry.path(), 64 * 1024 * 1024);
-            if (runtime::modules::console_shader_source(stage, bytes, &why))
+            const auto source = runtime::modules::console_shader_source(stage, bytes, &why, &at);
+            if (source && argc == 4) {
+                // the first error the compiler has, without the place in the source
+                why = runtime::modules::console_shader_errors(stage, *source);
+                if (const auto error = why.find("error"); error != std::string::npos)
+                    why = why.substr(error);
+                why = why.substr(0, why.find('\n'));
+                if (!why.empty())
+                    why = "the host's compiler: " + why;
+            }
+            if (source && why.empty()) {
                 ++translated;
-            else
-                stopped[why].push_back(name);
+                continue;
+            }
+            if (stopped[why].empty())
+                where[why] = at;
+            stopped[why].push_back(name);
         }
         auto reasons = nlohmann::json::array();
-        for (const auto &[why, names] : stopped)
+        for (const auto &[why, names] : stopped) {
             reasons.push_back({{"reason", why}, {"shaders", names.size()}, {"first", names[0]}});
+            if (where[why] != ~0u) // in bytes, as a disassembly counts
+                reasons.back()["at"] = 4 * where[why];
+        }
         std::sort(reasons.begin(), reasons.end(), [](const auto &a, const auto &b) {
             return a["shaders"].template get<std::size_t>() >
                    b["shaders"].template get<std::size_t>();
@@ -164,6 +186,22 @@ std::optional<int> run(int argc, wchar_t **argv) {
                                     {"stopped", reasons}}
                          .dump(2)
                   << '\n';
+        return 0;
+    }
+    if (argc == 3 && command == "shader-source") {
+        const std::filesystem::path file(argv[2]);
+        const auto name = file.stem().string();
+        const auto stage = name.ends_with('v')   ? runtime::modules::ShaderStage::vertex
+                           : name.ends_with('p') ? runtime::modules::ShaderStage::pixel
+                                                 : runtime::modules::ShaderStage::compute;
+        std::string why;
+        const auto source = runtime::modules::console_shader_source(
+            stage, host::read_snapshot(file, 64 * 1024 * 1024), &why);
+        if (!source) {
+            std::cerr << why << '\n';
+            return 1;
+        }
+        std::cout << *source;
         return 0;
     }
     if (argc == 3 && command == "modules") {

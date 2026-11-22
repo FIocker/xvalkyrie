@@ -1,4 +1,5 @@
 #include "runtime/modules/console_shader.hpp"
+#include "host/files.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/console_shader_rdna.hpp"
 #include "runtime/modules/inflate.hpp"
@@ -27,10 +28,12 @@
 
 #include <unknwn.h>
 
+#include <dxcapi.h>
+
 namespace xv::runtime::modules {
 namespace {
 // Bumped whenever what is made for a shader changes: the cache keeps one file per version.
-constexpr int translator_version = 12;
+constexpr int translator_version = 14;
 
 using Bytes = std::span<const std::uint8_t>;
 std::uint32_t word(Bytes bytes, std::size_t at) {
@@ -376,7 +379,8 @@ std::string stand_in(ShaderStage stage, Bytes container) {
 // the translation of the code; nothing if the code is not one that is handled, and then
 // `why` says what stopped it
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
-                                             std::string *why = nullptr) {
+                                             std::string *why = nullptr,
+                                             std::uint32_t *at = nullptr) {
     if (stage != ShaderStage::vertex && stage != ShaderStage::pixel &&
         stage != ShaderStage::compute)
         return std::nullopt;
@@ -386,7 +390,7 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     shader.root_signature = part(container, "RTS0");
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
-    return rdna::translate(stage, shader, why);
+    return rdna::translate(stage, shader, why, at);
 }
 
 using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
@@ -395,16 +399,121 @@ struct Blob : IUnknown {
     virtual void *STDMETHODCALLTYPE GetBufferPointer() = 0;
     virtual SIZE_T STDMETHODCALLTYPE GetBufferSize() = 0;
 };
+// The newer of the host's two compilers, which takes seconds over shaders the older one
+// takes minutes over. It is not part of Windows: it is used when dxcompiler.dll and the
+// dxil.dll that signs its shaders are next to xvalkyrie or in a Windows SDK. XV_SHADER_FXC
+// keeps to the older one.
+DxcCreateInstanceProc newer_compiler() {
+    static const auto create = []() -> DxcCreateInstanceProc {
+        if (std::getenv("XV_SHADER_FXC"))
+            return nullptr;
+        std::vector<std::filesystem::path> folders{host::executable_directory()};
+        wchar_t programs[MAX_PATH];
+        if (GetEnvironmentVariableW(L"ProgramFiles(x86)", programs, MAX_PATH)) {
+            std::error_code error;
+            std::vector<std::filesystem::path> kits;
+            for (const auto &entry : std::filesystem::directory_iterator(
+                     std::filesystem::path(programs) / "Windows Kits" / "10" / "bin", error))
+                kits.push_back(entry.path() / "x64");
+            std::sort(kits.rbegin(), kits.rend());
+            folders.insert(folders.end(), kits.begin(), kits.end());
+        }
+        for (const auto &folder : folders) {
+            std::error_code error;
+            if (!std::filesystem::exists(folder / "dxcompiler.dll", error) ||
+                !std::filesystem::exists(folder / "dxil.dll", error))
+                continue;
+            // the compiler asks for the signer by name: it has to be loaded already
+            if (!LoadLibraryExW((folder / "dxil.dll").c_str(), nullptr,
+                                LOAD_WITH_ALTERED_SEARCH_PATH))
+                continue;
+            const auto library = LoadLibraryExW((folder / "dxcompiler.dll").c_str(), nullptr,
+                                                LOAD_WITH_ALTERED_SEARCH_PATH);
+            if (!library)
+                continue;
+            if (const auto found = reinterpret_cast<DxcCreateInstanceProc>(
+                    GetProcAddress(library, "DxcCreateInstance")))
+                return found;
+        }
+        return nullptr;
+    }();
+    return create;
+}
+std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &source,
+                                        std::string *message) {
+    IDxcCompiler3 *compiler = nullptr;
+    if (!newer_compiler() || FAILED(newer_compiler()(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler))) ||
+        !compiler)
+        return {};
+    // the language as the older compiler has it, which the shaders are written in
+    const wchar_t *arguments[] = {L"-E",
+                                  L"main",
+                                  L"-T",
+                                  stage == ShaderStage::vertex  ? L"vs_6_0"
+                                  : stage == ShaderStage::pixel ? L"ps_6_0"
+                                                                : L"cs_6_0",
+                                  L"-HV",
+                                  L"2018"};
+    const DxcBuffer text{source.data(), source.size(), DXC_CP_UTF8};
+    IDxcResult *result = nullptr;
+    std::vector<std::uint8_t> bytes;
+    HRESULT status = E_FAIL;
+    if (SUCCEEDED(compiler->Compile(&text, arguments, static_cast<UINT32>(std::size(arguments)),
+                                    nullptr, IID_PPV_ARGS(&result))) &&
+        result && SUCCEEDED(result->GetStatus(&status)) && SUCCEEDED(status)) {
+        IDxcBlob *code = nullptr;
+        if (SUCCEEDED(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&code), nullptr)) && code) {
+            const auto *const data = static_cast<const std::uint8_t *>(code->GetBufferPointer());
+            bytes.assign(data, data + code->GetBufferSize());
+            code->Release();
+        }
+    } else if (message) {
+        IDxcBlobUtf8 *errors = nullptr;
+        if (result &&
+            SUCCEEDED(result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr)) &&
+            errors) {
+            message->assign(errors->GetStringPointer(), errors->GetStringLength());
+            errors->Release();
+        }
+        if (message->empty())
+            *message = "no message";
+    }
+    if (result)
+        result->Release();
+    compiler->Release();
+    return bytes;
+}
+// `older`: whether the older compiler is asked when the newer one is not there or turns the
+// shader down. A geometry shader is always the older one's: what is made of it is read back.
 std::vector<std::uint8_t> compile_now(ShaderStage stage, const std::string &source, bool report,
-                                      std::string *message = nullptr) {
+                                      std::string *message = nullptr, bool older = true) {
+    if (source.empty())
+        return {};
+    if (stage <= ShaderStage::compute && newer_compiler()) {
+        const auto title_state = _mm_getcsr();
+        _mm_setcsr(0x1f80);
+        std::string said;
+        auto bytes = compile_newer(stage, source, &said);
+        _mm_setcsr(title_state);
+        if (!bytes.empty())
+            return bytes;
+        if (!older) {
+            if (message)
+                *message = said;
+            return {};
+        }
+        if (static std::atomic<int> shown{0}; report && shown++ < 4)
+            std::fprintf(stderr,
+                         "[Runtime] the newer compiler turned a host shader down, and the older "
+                         "one is asked: %s\n",
+                         said.c_str());
+    }
     static const auto function = [] {
         const auto library =
             LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         return library ? reinterpret_cast<Compile>(GetProcAddress(library, "D3DCompile")) : nullptr;
     }();
     if (!function)
-        return {};
-    if (source.empty())
         return {};
     const char *const target = stage == ShaderStage::vertex    ? "vs_5_1"
                                : stage == ShaderStage::pixel   ? "ps_5_1"
@@ -565,8 +674,13 @@ std::string shader_signature(Bytes container) {
 }
 
 std::optional<std::string> console_shader_source(ShaderStage stage, Bytes container,
-                                                 std::string *why) {
-    return translated_source(stage, container, why);
+                                                 std::string *why, std::uint32_t *at) {
+    return translated_source(stage, container, why, at);
+}
+
+std::string console_shader_errors(ShaderStage stage, const std::string &source) {
+    std::string message;
+    return compile_now(stage, source, false, &message, false).empty() ? message : std::string();
 }
 
 std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled,
