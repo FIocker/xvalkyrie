@@ -12,6 +12,8 @@
 #include <vector>
 #include <windows.h>
 
+#include <psapi.h> // after windows.h
+
 // Physical pages: a 16 GiB section mapped in 64 KiB views over placeholders.
 namespace xv::runtime::modules {
 namespace {
@@ -381,9 +383,17 @@ BOOL WINAPI xmem_working_set_statistics(DWORD, WorkingSet *statistics) {
         return FALSE;
     }
     MEMORYSTATUSEX host{sizeof host};
-    GlobalMemoryStatusEx(&host);
+    PROCESS_MEMORY_COUNTERS_EX process{};
+    process.cb = sizeof process;
+    if (!GlobalMemoryStatusEx(&host) ||
+        !K32GetProcessMemoryInfo(GetCurrentProcess(),
+                                 reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&process),
+                                 sizeof process))
+        return FALSE;
+    // What is used is what the title has taken, not what the rest of the host has: a title
+    // sizes its pools and what it streams in by what is left of its limit.
     const SIZE_T limit = std::min<ULONGLONG>(13ull << 30, host.ullTotalPhys);
-    const SIZE_T used = limit - std::min<ULONGLONG>(limit, host.ullAvailPhys);
+    const SIZE_T used = std::min<ULONGLONG>(process.PrivateUsage, limit);
     *statistics = {limit, used, 0, 0, 0, 0, limit, used, 0, 0};
     return TRUE;
 }
