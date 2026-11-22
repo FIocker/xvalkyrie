@@ -271,6 +271,47 @@ void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &se
     constexpr float field = 220;
     section(fonts, "Profile");
     if (begin_settings("profile")) {
+        setting(fonts, "Profile", "Each profile is a user of the console with saves of its own.");
+        const auto names = profile_names();
+        ImGui::SetNextItemWidth(field);
+        if (ImGui::BeginCombo("##profile", settings.profile.c_str())) {
+            for (const auto &name : names)
+                if (ImGui::Selectable(name.c_str(), name == settings.profile) &&
+                    use_profile(settings, name)) {
+                    console_loaded_ = confirm_delete_ = false;
+                    changed();
+                }
+            ImGui::EndCombo();
+        }
+        if (names.size() > 1) {
+            ImGui::SameLine();
+            if (ImGui::Button(confirm_delete_ ? "Delete it and its saves" : "Delete")) {
+                if (confirm_delete_) {
+                    delete_profile(settings.profile);
+                    for (const auto &name : names)
+                        if (name != settings.profile && use_profile(settings, name))
+                            break;
+                    console_loaded_ = false;
+                    changed();
+                }
+                confirm_delete_ = !confirm_delete_;
+            }
+        }
+        setting(fonts, "New profile", "1 to 32 letters, digits, spaces, - or _.");
+        ImGui::SetNextItemWidth(field);
+        ImGui::InputText("##new_profile", profile_name_, sizeof profile_name_);
+        ImGui::SameLine();
+        if (ImGui::Button("Create")) {
+            try {
+                create_profile(profile_name_);
+                use_profile(settings, profile_name_);
+                profile_name_[0] = '\0';
+                console_loaded_ = false;
+                changed();
+            } catch (const std::exception &e) {
+                console_notice_ = e.what();
+            }
+        }
         setting(fonts, "Gamertag", "1 to 15 characters, shown by titles as the player's name.");
         ImGui::SetNextItemWidth(field);
         ImGui::InputText("##gamertag", gamertag_, sizeof gamertag_);

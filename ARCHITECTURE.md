@@ -162,7 +162,7 @@ three kinds of console module:
 - `winrt/storage.cpp`: connected storage (`Windows.Xbox.Storage`), the way
   ERA titles save their games. The spaces, containers and container queries
   are ours and keep everything in files through `modules/storage.cpp` (`SaveSpace`):
-  `saves/<package name>/{machine,user}/<container>/<blob>` in the per-user
+  `profiles/<profile>/saves/<package name>/{machine,user}/<container>/<blob>` in the per-user
   configuration folder, with every name escaped into a portable file name.
   `launcher` picks the folder and hands it over in
   `ExecuteOptions::save_directory`. Only the methods seen in titles are

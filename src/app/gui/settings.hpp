@@ -67,6 +67,7 @@ class Settings {
     int pressed_ = 0;                    // the key it got
     std::string input_notice_, graphics_notice_, console_notice_;
     bool console_loaded_ = false;
-    char gamertag_[64] = "", user_id_[32] = "";
+    char gamertag_[64] = "", user_id_[32] = "", profile_name_[40] = "";
+    bool confirm_delete_ = false;
 };
 } // namespace xv::ui

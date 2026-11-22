@@ -206,7 +206,7 @@ std::filesystem::path title_save_directory(const std::filesystem::path &path) {
             c = '_';
     if (name.empty() || name.find_first_not_of('.') == std::string::npos)
         name = "title";
-    return config_directory() / "saves" / name;
+    return profiles_directory() / load_console_settings().profile / "saves" / name;
 }
 
 namespace {

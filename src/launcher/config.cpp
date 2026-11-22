@@ -2,10 +2,12 @@
 #include "backends/graphics/backend.hpp"
 #include "backends/input/input.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #define WIN32_LEAN_AND_MEAN
@@ -23,6 +25,14 @@ std::filesystem::path config_directory() {
 std::filesystem::path config_file() { return config_directory() / "config.ini"; }
 std::filesystem::path cache_directory() { return config_directory() / "cache"; }
 std::filesystem::path library_cache_file() { return cache_directory() / "library.json"; }
+std::filesystem::path profiles_directory() { return config_directory() / "profiles"; }
+bool valid_profile_name(const std::string &name) {
+    return !name.empty() && name.size() <= 32 && name.front() != ' ' && name.back() != ' ' &&
+           std::all_of(name.begin(), name.end(), [](char c) {
+               return std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' ||
+                      c == '_';
+           });
+}
 
 namespace {
 std::string trim(std::string value) {
@@ -63,11 +73,65 @@ std::string json_string(const std::string &value) {
         return {};
     }
 }
+std::filesystem::path profile_file(const std::string &name) {
+    return profiles_directory() / name / "profile.ini";
+}
+bool read_profile(const std::string &name, ConsoleSettings &console) {
+    std::ifstream file(profile_file(name));
+    if (!file)
+        return false;
+    for (std::string line; std::getline(file, line);) {
+        const auto equal = line.find('=');
+        if (equal == std::string::npos)
+            continue;
+        const auto key = trim(line.substr(0, equal)), value = trim(line.substr(equal + 1));
+        if (key == "gamertag" && valid_gamertag(json_string(value)))
+            console.gamertag = json_string(value);
+        else if (key == "xbox_user_id" && valid_xbox_user_id(value))
+            console.xbox_user_id = value;
+        else if (key == "gamerscore" && number(value))
+            console.gamerscore = *number(value);
+        else if (key == "age_group" && number(value) && *number(value) <= 3)
+            console.age_group = *number(value);
+    }
+    console.profile = name;
+    return true;
+}
+void write_profile(const ConsoleSettings &console) {
+    const auto path = profile_file(console.profile);
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::trunc);
+    file << "gamertag = " << nlohmann::json(console.gamertag).dump()
+         << "\nxbox_user_id = " << console.xbox_user_id << "\ngamerscore = " << console.gamerscore
+         << "\nage_group = " << console.age_group << '\n';
+    if (!file)
+        throw std::runtime_error("Cannot write " + path.string());
+}
+// The profile config.ini names. Before there were profiles the user was in config.ini and
+// the saves in saves/: those become the first profile and its saves.
+void adopt_profile(ConsoleSettings &console) {
+    if (!valid_profile_name(console.profile))
+        console.profile = ConsoleSettings{}.profile;
+    if (read_profile(console.profile, console))
+        return;
+    std::error_code error;
+    const bool first = !std::filesystem::exists(profiles_directory(), error);
+    try {
+        write_profile(console);
+    } catch (const std::exception &) {
+        return;
+    }
+    const auto saves = config_directory() / "saves";
+    if (first && std::filesystem::is_directory(saves, error))
+        std::filesystem::rename(saves, profiles_directory() / console.profile / "saves", error);
+}
 Settings read() {
     Settings result;
     std::ifstream file(config_file());
-    if (!file)
+    if (!file) {
+        adopt_profile(result.console);
         return result;
+    }
     std::string line, section;
     while (std::getline(file, line)) {
         line = trim(line);
@@ -107,7 +171,9 @@ Settings read() {
                     graphics::parse_fullscreen(value).value_or(graphics::Fullscreen::borderless);
         } else if (section == "console") {
             auto &console = result.console;
-            if (key == "gamertag" && valid_gamertag(json_string(value)))
+            if (key == "profile")
+                console.profile = json_string(value);
+            else if (key == "gamertag" && valid_gamertag(json_string(value)))
                 console.gamertag = json_string(value);
             else if (key == "xbox_user_id" && valid_xbox_user_id(value))
                 console.xbox_user_id = value;
@@ -136,6 +202,7 @@ Settings read() {
             }
         }
     }
+    adopt_profile(result.console);
     return result;
 }
 void write(const Settings &settings) {
@@ -155,9 +222,7 @@ void write(const Settings &settings) {
             file << "backend = " << graphics::backend_name(*settings.backend) << '\n';
         file << "fullscreen = " << graphics::fullscreen_name(settings.fullscreen) << '\n';
         const auto &console = settings.console;
-        file << "\n[console]\ngamertag = " << nlohmann::json(console.gamertag).dump()
-             << "\nxbox_user_id = " << console.xbox_user_id
-             << "\ngamerscore = " << console.gamerscore << "\nage_group = " << console.age_group
+        file << "\n[console]\nprofile = " << nlohmann::json(console.profile).dump()
              << "\nheadset = " << (console.headset ? "true" : "false")
              << "\nkeyboard = " << (console.keyboard_dialog ? "dialog" : "default_text") << '\n';
         if (!console.system_storage.empty())
@@ -219,7 +284,44 @@ void save_console_settings(const ConsoleSettings &console) {
     auto settings = read();
     settings.input = input::settings();
     settings.console = console;
+    write_profile(console);
     write(settings);
+}
+std::vector<std::string> profile_names() {
+    std::vector<std::string> names;
+    std::error_code error;
+    for (const auto &entry : std::filesystem::directory_iterator(profiles_directory(), error)) {
+        const auto name = utf8(entry.path().filename());
+        if (valid_profile_name(name) && std::filesystem::is_regular_file(profile_file(name), error))
+            names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+void create_profile(const std::string &name) {
+    std::error_code error;
+    if (!valid_profile_name(name))
+        throw std::invalid_argument("A profile name has 1 to 32 letters, digits, spaces, - or _.");
+    if (std::filesystem::exists(profiles_directory() / name, error))
+        throw std::invalid_argument("There is a profile with that name.");
+    ConsoleSettings console;
+    console.profile = name;
+    console.gamertag = name.substr(0, 15);
+    // 2814 and twelve digits, as the IDs of Xbox Live users are
+    std::random_device device;
+    std::uniform_int_distribution<int> digit(0, 9);
+    console.xbox_user_id = "2814";
+    for (int n = 0; n < 12; ++n)
+        console.xbox_user_id += static_cast<char>('0' + digit(device));
+    write_profile(console);
+}
+bool use_profile(ConsoleSettings &settings, const std::string &name) {
+    return valid_profile_name(name) && read_profile(name, settings);
+}
+void delete_profile(const std::string &name) {
+    std::error_code error;
+    if (valid_profile_name(name))
+        std::filesystem::remove_all(profiles_directory() / name, error);
 }
 LibrarySettings load_library_settings() { return read().library; }
 void save_library_settings(const LibrarySettings &library) {

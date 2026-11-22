@@ -9,8 +9,10 @@ struct LibrarySettings {
     std::vector<std::filesystem::path> directories;
     bool grid = true;
 };
-// UTF-8
+// UTF-8. Gamertag, user ID, gamerscore and age group are the profile's
+// (profiles/<profile>/profile.ini), the rest the console's (config.ini).
 struct ConsoleSettings {
+    std::string profile = "Player"; // the folder of the profile in use
     std::string gamertag = "Player";
     std::string xbox_user_id = "2814600000000001";
     std::uint32_t gamerscore = 0;
@@ -27,7 +29,18 @@ struct ConsoleSettings {
 std::filesystem::path system_menu(const ConsoleSettings &settings);
 bool valid_gamertag(const std::string &gamertag);
 bool valid_xbox_user_id(const std::string &id);
-// config.ini, logs/, saves/ and cache/ live in the per-user configuration folder.
+// Profiles: a folder each in profiles/, with profile.ini and the saves made as that user.
+// A name is 1 to 32 letters, digits, spaces, '-' and '_'.
+std::filesystem::path profiles_directory();
+bool valid_profile_name(const std::string &name);
+std::vector<std::string> profile_names();
+// a new profile with a user ID of its own; throws if the name is taken or not valid
+void create_profile(const std::string &name);
+// makes `name` the profile of `settings`; false if there is no such profile
+bool use_profile(ConsoleSettings &settings, const std::string &name);
+// with its saves
+void delete_profile(const std::string &name);
+// config.ini, logs/, profiles/ and cache/ live in the per-user configuration folder.
 std::filesystem::path config_directory();
 std::filesystem::path config_file();
 // what can be worked out again but takes a while, such as the game library
