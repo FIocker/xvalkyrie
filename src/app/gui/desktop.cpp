@@ -107,6 +107,7 @@ class Desktop {
         });
         check_for_updates();
         settings_host_.add_folder = [this] { pick_folder(Dialog::add_library); };
+        settings_host_.choose_system_storage = [this] { pick_folder(Dialog::system_storage); };
         settings_host_.change_folder = [this](std::size_t index) {
             pick_folder(Dialog::replace_library, index);
         };
@@ -225,7 +226,7 @@ class Desktop {
     void check_for_updates() {
         update_check_ = std::async(std::launch::async, [] { return find_update(release); });
     }
-    enum class Dialog { file, folder, add_library, replace_library };
+    enum class Dialog { file, folder, add_library, replace_library, system_storage };
     void pick() {
         if (!busy()) {
             dialog_kind_ = Dialog::file;
@@ -291,6 +292,12 @@ class Desktop {
                 if (!path.empty()) {
                     if (dialog_kind_ == Dialog::file || dialog_kind_ == Dialog::folder) {
                         open(path);
+                    } else if (dialog_kind_ == Dialog::system_storage) {
+                        if (std::filesystem::is_directory(path)) {
+                            console_.system_storage = std::filesystem::weakly_canonical(path);
+                            if (hooks_.console_changed)
+                                hooks_.console_changed(console_);
+                        }
                     } else if (std::filesystem::is_directory(path)) {
                         const auto normalized = std::filesystem::weakly_canonical(path);
                         if (dialog_kind_ == Dialog::replace_library &&
@@ -391,6 +398,10 @@ class Desktop {
                 pick();
             if (ImGui::MenuItem("Open Folder...", nullptr, false, !busy()))
                 pick_folder(Dialog::folder);
+            // the console's dashboard, where Options > Console has a system storage with one
+            if (const auto dashboard = system_menu(console_);
+                ImGui::MenuItem("Boot from Menu", nullptr, false, !busy() && !dashboard.empty()))
+                open(dashboard);
             if (ImGui::MenuItem("Close App", "Ctrl+W", false, can_close_app()))
                 close_app();
             ImGui::Separator();

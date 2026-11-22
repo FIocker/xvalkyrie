@@ -28,6 +28,7 @@ class Settings {
         std::function<void()> input_saved;                // input::settings() was; may throw
         std::function<void()> graphics_saved;
         std::function<void()> console_saved;
+        std::function<void()> choose_system_storage; // ask for the folder of the system's apps
         std::function<void()> check_updates, install_update;
         std::function<Updates()> updates;
     };

@@ -12,7 +12,9 @@ void install_kernelx(Registry &registry);
 // mmdevapi, mfplat, pixevt, toolhelpx
 void install_system(Registry &registry);
 // WinRT activation for C++/CX titles.
-void install_winrt(Registry &registry);
+// `system_app`: for an app of the console's own system, which takes the host's classes
+// wherever the host has them
+void install_winrt(Registry &registry, bool system_app = false);
 // d3d11_x.dll. Only on hosts with a Direct3D 11 of their own.
 void install_d3d11x(Registry &registry);
 } // namespace durango

@@ -163,6 +163,19 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
   wait for each other outside branches and loops
 - [ ] Check the XVD layout against a real Series package
 
+## System apps
+
+The console's dashboard and its other apps are Windows apps (XAML, .NET Native) that use
+the console's internal WinRT classes. They are started like a title, with the host's WinRT
+classes where the host has them.
+
+- [x] Options > Console > System storage, and File > Boot from Menu
+- [x] An app's framework packages are found next to it or in the system storage
+- [x] The dashboard's executable, its .NET Native runtime and its own DLL load and start
+- [ ] `Windows.Xbox.System.Internal.Interop.AppModelUtil`, the first console class the
+  dashboard asks for: it is not documented, and the dashboard ends there
+- [ ] A XAML host for an app's views
+
 ## Other
 
 - [x] C++20 project, CMake, tests, CI on Windows

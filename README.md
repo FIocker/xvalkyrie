@@ -130,7 +130,10 @@ The commands that look at a title without running it print JSON:
 
 In the window, Options > Input binds the gamepad to keys or to the host's gamepad,
 Options > Graphics picks the backend and what F11 does, Options > Console sets the signed-in
-user, and Options > Game Libraries the folders that are scanned for titles. Settings are kept
+user and, optionally, the system storage: a folder with the console's own apps, each
+unpacked in a folder of its own. With one, apps find the packages they depend on there and
+File > Boot from Menu starts the dashboard, as far as it gets (see the roadmap). Options >
+Game Libraries sets the folders that are scanned for titles. Settings are kept
 in `%APPDATA%\xvalkyrie\config.ini`, logs in `logs` next to it, one file per session and per
 title.
 

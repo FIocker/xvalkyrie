@@ -17,7 +17,14 @@ struct ConsoleSettings {
     std::uint32_t age_group = 3; // unknown, child, teen, adult
     bool headset = false;
     bool keyboard_dialog = true;
+    // The folder with the console's own apps, each unpacked in a folder of its own (the
+    // dashboard, its frameworks and the rest of the system's packages). Optional: with it,
+    // an app finds the packages it depends on there, and the dashboard can be started.
+    std::filesystem::path system_storage;
 };
+// The console's dashboard in the system storage: the folder of its package, empty if the
+// storage is not set or has none.
+std::filesystem::path system_menu(const ConsoleSettings &settings);
 bool valid_gamertag(const std::string &gamertag);
 bool valid_xbox_user_id(const std::string &id);
 // config.ini, logs/, saves/ and cache/ live in the per-user configuration folder.

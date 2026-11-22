@@ -175,8 +175,9 @@ std::string package_name(const std::filesystem::path &folder) {
     }
 }
 // The packages the one in `root` depends on (its framework packages), where they are
-// unpacked next to it: the folders beside `root` whose manifest has a name `root`'s lists.
-// The manifest names a package as "Name.2.2"; the folder of an unpacked one is anything.
+// unpacked next to it or in the system storage: the folders there whose manifest has a
+// name `root`'s lists. The manifest names a package as "Name.2.2"; the folder of an
+// unpacked one is anything.
 const std::vector<std::filesystem::path> &
 dependency_directories(const std::filesystem::path &package) {
     std::error_code absolute_error;
@@ -196,12 +197,19 @@ dependency_directories(const std::filesystem::path &package) {
         for (const auto &name : manifest.at("dependencies"))
             wanted.insert(name.get<std::string>());
         std::error_code error;
-        if (!wanted.empty())
-            for (const auto &entry : std::filesystem::directory_iterator(root.parent_path(), error))
+        std::vector<std::filesystem::path> places{root.parent_path()};
+        if (const auto &storage = console_settings().system_storage;
+            !storage.empty() && !std::filesystem::equivalent(storage, places[0], error))
+            places.push_back(storage);
+        for (const auto &place : places) {
+            if (wanted.empty())
+                break;
+            for (const auto &entry : std::filesystem::directory_iterator(place, error))
                 if (entry.is_directory(error) && entry.path() != root &&
                     std::filesystem::is_regular_file(entry.path() / "AppxManifest.xml", error) &&
-                    wanted.contains(package_name(entry.path())))
+                    wanted.erase(package_name(entry.path())))
                     folders.push_back(entry.path());
+        }
     } catch (const std::exception &) {
         // a title without a manifest that can be read has no packages to look in
     }

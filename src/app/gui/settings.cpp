@@ -328,6 +328,28 @@ void Settings::console(const Fonts &fonts, const Host &host, ConsoleSettings &se
         }
         end_settings();
     }
+    section(fonts, "System storage");
+    if (begin_settings("system storage")) {
+        const auto folder = settings.system_storage.u8string();
+        setting(fonts, "Folder of the console's apps",
+                "Optional. The dashboard and the system's packages, each unpacked in a folder "
+                "of its own. Apps find the packages they depend on there, and File > Boot "
+                "from Menu starts the dashboard.");
+        ImGui::TextWrapped("%s", folder.empty() ? "Not set"
+                                                : reinterpret_cast<const char *>(folder.c_str()));
+        if (ImGui::Button("Choose...") && host.choose_system_storage)
+            host.choose_system_storage();
+        if (!folder.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) {
+                settings.system_storage.clear();
+                changed();
+            }
+            if (system_menu(settings).empty())
+                ImGui::TextDisabled("No dashboard (Xbox.Dashboard) in this folder.");
+        }
+        end_settings();
+    }
     note(fonts, "Applies to the next title started.");
     if (!console_notice_.empty())
         ImGui::TextWrapped("%s", console_notice_.c_str());

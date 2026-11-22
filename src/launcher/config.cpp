@@ -119,6 +119,10 @@ Settings read() {
                 console.headset = value == "true";
             else if (key == "keyboard")
                 console.keyboard_dialog = value != "default_text";
+            else if (key == "system_storage") {
+                const auto path = json_string(value);
+                console.system_storage = std::u8string(path.begin(), path.end());
+            }
         } else if (section == "libraries") {
             if (key == "view")
                 result.library.grid = value != "list";
@@ -156,6 +160,9 @@ void write(const Settings &settings) {
              << "\ngamerscore = " << console.gamerscore << "\nage_group = " << console.age_group
              << "\nheadset = " << (console.headset ? "true" : "false")
              << "\nkeyboard = " << (console.keyboard_dialog ? "dialog" : "default_text") << '\n';
+        if (!console.system_storage.empty())
+            file << "system_storage = " << nlohmann::json(utf8(console.system_storage)).dump()
+                 << '\n';
         file << "\n[libraries]\nview = " << (settings.library.grid ? "grid" : "list") << '\n';
         for (const auto &directory : settings.library.directories)
             file << "path = " << nlohmann::json(utf8(directory)).dump() << '\n';
@@ -200,6 +207,14 @@ bool valid_xbox_user_id(const std::string &id) {
            std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 ConsoleSettings load_console_settings() { return read().console; }
+std::filesystem::path system_menu(const ConsoleSettings &settings) {
+    std::error_code error;
+    const auto dashboard = settings.system_storage / "Xbox.Dashboard";
+    return !settings.system_storage.empty() &&
+                   std::filesystem::is_regular_file(dashboard / "AppxManifest.xml", error)
+               ? dashboard
+               : std::filesystem::path{};
+}
 void save_console_settings(const ConsoleSettings &console) {
     auto settings = read();
     settings.input = input::settings();

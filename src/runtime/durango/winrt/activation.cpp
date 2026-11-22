@@ -25,7 +25,12 @@ namespace xv::runtime::durango {
 namespace {
 // Host classes that behave the same in any process. The rest of the host's classes want a
 // packaged application around them, so the console versions are ours.
+// An app of the console's system is a Windows app: every class the host has is the host's
+// for it, and only the console's own are ours.
+bool host_first = false;
 bool host_class(std::wstring_view name) {
+    if (host_first)
+        return !name.starts_with(L"Windows.Xbox.");
     for (const std::wstring_view prefix :
          {L"Windows.Foundation.", L"Windows.Storage.Streams.", L"Windows.Data.",
           L"Windows.Globalization.", L"Windows.Security.Cryptography.", L"Windows.Media.Devices."})
@@ -82,7 +87,18 @@ HRESULT title_factory(const wchar_t *name, const GUID &iid, void **factory) {
 
 // vccorlib's GetActivationFactoryByPCWSTR: how C++/CX code reaches every WinRT class.
 // Classes of the host are used as they are; the console ones have to be ours.
+HRESULT host_factory(const wchar_t *name, const GUID &iid, void **factory) {
+    HSTRING_HEADER header;
+    HSTRING text = nullptr;
+    auto result =
+        WindowsCreateStringReference(name, static_cast<UINT32>(wcslen(name)), &header, &text);
+    if (SUCCEEDED(result))
+        result = RoGetActivationFactory(text, iid, factory);
+    return result;
+}
 HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **factory) {
+    if (host_first && host_class(name) && SUCCEEDED(host_factory(name, iid, factory)))
+        return S_OK;
     if (auto *const own = winrt::application_class(name))
         return own->QueryInterface(iid, factory);
     if (auto *const own = winrt::input_class(name))
@@ -93,16 +109,8 @@ HRESULT __cdecl activation_factory(const wchar_t *name, const GUID &iid, void **
         return own->QueryInterface(iid, factory);
     if (const auto result = title_factory(name, iid, factory); result != REGDB_E_CLASSNOTREG)
         return result;
-    if (host_class(name)) {
-        HSTRING_HEADER header;
-        HSTRING text = nullptr;
-        auto result =
-            WindowsCreateStringReference(name, static_cast<UINT32>(wcslen(name)), &header, &text);
-        if (SUCCEEDED(result))
-            result = RoGetActivationFactory(text, iid, factory);
-        if (SUCCEEDED(result))
-            return result;
-    }
+    if (host_class(name) && SUCCEEDED(host_factory(name, iid, factory)))
+        return S_OK;
     *factory = winrt::make_placeholder(name, iid);
     return S_OK;
 }
@@ -131,7 +139,8 @@ HRESULT WINAPI ro_activate_instance(HSTRING name, IInspectable **instance) {
 }
 } // namespace
 
-void install_winrt(Registry &registry) {
+void install_winrt(Registry &registry, bool system_app) {
+    host_first = system_app;
     // titles built with Visual Studio 2012 use the first, later ones the second
     for (const auto *module : {"vccorlib110.dll", "vccorlib140.dll"})
         registry.add(module, "?GetActivationFactoryByPCWSTR@@YAJPEAXAEAVGuid@Platform@@PEAPEAX@Z",

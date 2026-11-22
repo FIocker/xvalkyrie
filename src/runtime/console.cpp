@@ -26,8 +26,15 @@ Registry title_registry(std::span<const std::uint8_t> file) {
     if (target)
         return console_registry(*target);
     Registry registry;
-    if (windows_app(file))
+    if (windows_app(file)) {
         registry.open_to_host();
+        // An app of the console's own system (its dashboard and the like) is a Windows app
+        // that asks for the console's WinRT classes: those are answered as for a title,
+        // whichever API set the activation functions are imported from.
+        durango::install_winrt(registry, true);
+        for (const auto *name : {"RoGetActivationFactory", "RoActivateInstance"})
+            registry.add_api(name, registry.find("combase.dll", name));
+    }
     return registry;
 }
 } // namespace xv::runtime
