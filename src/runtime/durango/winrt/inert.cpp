@@ -732,6 +732,9 @@ constexpr Row rows[] = {
     {association_template, guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"), 7, {Inert::empty_list}},
     // IUserStatics::GetUserById(id, User **): the one user there is
     {user, user_statics, 14, {Inert::shared2, user}},
+    // KinectSensor's method 9, by a title's call of it (image+0x9fd9d4): no argument, and
+    // only the HRESULT is looked at. There is no sensor, and nothing comes of it.
+    {L"Windows.Kinect.KinectSensor", direct, 9, {Inert::accept}},
     // DisplayConfiguration's statics, method 6 by the title's call of it (image+0x8a02ccd):
     // (T **), an object
     {L"Windows.Xbox.Graphics.Display.DisplayConfiguration",
