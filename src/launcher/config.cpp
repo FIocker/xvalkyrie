@@ -107,23 +107,16 @@ void write_profile(const ConsoleSettings &console) {
     if (!file)
         throw std::runtime_error("Cannot write " + path.string());
 }
-// The profile config.ini names. Before there were profiles the user was in config.ini and
-// the saves in saves/: those become the first profile and its saves.
+// the profile config.ini names, made with the defaults if it is not there
 void adopt_profile(ConsoleSettings &console) {
     if (!valid_profile_name(console.profile))
         console.profile = ConsoleSettings{}.profile;
     if (read_profile(console.profile, console))
         return;
-    std::error_code error;
-    const bool first = !std::filesystem::exists(profiles_directory(), error);
     try {
         write_profile(console);
     } catch (const std::exception &) {
-        return;
     }
-    const auto saves = config_directory() / "saves";
-    if (first && std::filesystem::is_directory(saves, error))
-        std::filesystem::rename(saves, profiles_directory() / console.profile / "saves", error);
 }
 Settings read() {
     Settings result;
@@ -173,14 +166,6 @@ Settings read() {
             auto &console = result.console;
             if (key == "profile")
                 console.profile = json_string(value);
-            else if (key == "gamertag" && valid_gamertag(json_string(value)))
-                console.gamertag = json_string(value);
-            else if (key == "xbox_user_id" && valid_xbox_user_id(value))
-                console.xbox_user_id = value;
-            else if (key == "gamerscore" && number(value))
-                console.gamerscore = *number(value);
-            else if (key == "age_group" && number(value) && *number(value) <= 3)
-                console.age_group = *number(value);
             else if (key == "headset")
                 console.headset = value == "true";
             else if (key == "keyboard")
