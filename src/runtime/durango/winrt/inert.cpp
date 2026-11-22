@@ -732,6 +732,15 @@ constexpr Row rows[] = {
     {association_template, guid("46745a18-697a-47e1-bb62-cc71de0fdd8c"), 7, {Inert::empty_list}},
     // IUserStatics::GetUserById(id, User **): the one user there is
     {user, user_statics, 14, {Inert::shared2, user}},
+    // DisplayConfiguration's statics, method 6 by the title's call of it (image+0x8a02ccd):
+    // (T **), an object
+    {L"Windows.Xbox.Graphics.Display.DisplayConfiguration",
+     guid("081b331e-db52-49ed-ba5f-2c656b14b232"),
+     6,
+     {Inert::object, L"Windows.Xbox.Graphics.Display.DisplayConfiguration"}},
+    // its first method, by the title's call (image+0x8a03c80): one argument the title was
+    // itself given, and only the HRESULT is looked at
+    {L"Windows.Xbox.Graphics.Display.DisplayConfiguration", direct, 6, {Inert::accept}},
     // IAppModelUtil's first method, by the dashboard's call of it (dashboard.dll+0x1f1fe51):
     // (bool), and only the HRESULT is looked at
     {L"Windows.Xbox.System.Internal.Interop.AppModelUtil",
