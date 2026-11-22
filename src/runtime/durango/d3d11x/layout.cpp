@@ -302,6 +302,47 @@ void STDMETHODCALLTYPE dma_timestamp(void *, UINT64 *destination) {
 void STDMETHODCALLTYPE dma_write_value(void *, UINT *destination, UINT value) {
     *destination = value;
 }
+// GetDescX (10) of a state. Only a sampler has it: the hardware's words for the sampler, of
+// which the addressing, the filters, the comparison and the levels are filled in from the
+// host's description. The other states have a host method at that place.
+std::uint64_t STDMETHODCALLTYPE state_desc_x(void *self, std::uint64_t a, std::uint64_t b,
+                                             std::uint64_t c) {
+    auto *const host = static_cast<IUnknown *>(unwrap(self));
+    ID3D11SamplerState *sampler = nullptr;
+    if (FAILED(host->QueryInterface(&sampler))) {
+        using Raw =
+            std::uint64_t(STDMETHODCALLTYPE *)(void *, std::uint64_t, std::uint64_t, std::uint64_t);
+        return (*reinterpret_cast<Raw **>(host))[8](host, a, b, c);
+    }
+    D3D11_SAMPLER_DESC desc{};
+    sampler->GetDesc(&desc);
+    sampler->Release();
+    const auto clamp = [](D3D11_TEXTURE_ADDRESS_MODE mode) -> std::uint32_t {
+        return mode == D3D11_TEXTURE_ADDRESS_WRAP          ? 0
+               : mode == D3D11_TEXTURE_ADDRESS_MIRROR      ? 1
+               : mode == D3D11_TEXTURE_ADDRESS_MIRROR_ONCE ? 3
+               : mode == D3D11_TEXTURE_ADDRESS_BORDER      ? 6
+                                                           : 2;
+    };
+    const auto level = [](float value) {
+        return static_cast<std::uint32_t>(std::clamp(value, 0.0f, 15.99f) * 256.0f) & 0xfff;
+    };
+    const bool compares = desc.Filter & 0x80, anisotropic = (desc.Filter & 0x55) == 0x55;
+    const std::uint32_t min_linear = desc.Filter >> 4 & 1, mag_linear = desc.Filter >> 2 & 1,
+                        mip_linear = desc.Filter & 1;
+    std::uint32_t ratio = 0;
+    for (UINT most = desc.MaxAnisotropy; anisotropic && most > 1 && ratio < 4; most >>= 1)
+        ++ratio;
+    const std::uint32_t words[4] = {
+        clamp(desc.AddressU) | clamp(desc.AddressV) << 3 | clamp(desc.AddressW) << 6 | ratio << 9 |
+            (compares ? (desc.ComparisonFunc - 1u) & 7 : 0u) << 12,
+        level(desc.MinLOD) | level(desc.MaxLOD) << 12,
+        (static_cast<std::uint32_t>(static_cast<int>(desc.MipLODBias * 256.0f)) & 0x3fff) |
+            mag_linear << 20 | min_linear << 22 | (1u + mip_linear) << 26,
+        0};
+    std::memcpy(reinterpret_cast<void *>(a), words, sizeof words);
+    return 0;
+}
 Layout dma() {
     Layout result{"DMA engine context"};
     device_child(result);
@@ -1278,6 +1319,7 @@ const Layout &layout(Kind kind) {
         view(),
         [] {
             auto state = child("state", 8);
+            state.vtable[10] = custom(&state_desc_x);
             state.words = child_words;
             return state;
         }(),
