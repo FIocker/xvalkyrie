@@ -1875,7 +1875,7 @@ class Translator {
     void emit_vop1(std::string_view name, std::uint32_t destination, const std::string &a) {
         std::string value;
         const auto fa = f(a);
-        if (name == "v_nop")
+        if (name == "v_nop" || name == "v_clrexcp" || name == "v_pipeflush")
             return;
         if (name == "v_swap_b32") {
             line(std::string(exec_changes_ ? "if " + active() + " " : "") + "{ uint X = " +
@@ -1945,7 +1945,42 @@ class Translator {
             value = "(" + a + " == 0u ? 0xffffffffu : 31u - firstbithigh(" + a + "))";
         else if (name == "v_ffbl_b32")
             value = "firstbitlow(" + a + ")";
-        else if (name == "v_floor_f16")
+        else if (name == "v_ffbh_i32")
+            value = "(((int)" + a + " < 0 ? ~" + a + " : " + a +
+                    ") == 0u ? 0xffffffffu : 31u - firstbithigh((int)" + a + " < 0 ? ~" + a +
+                    " : " + a + "))";
+        else if (name == "v_frexp_exp_i32_f32")
+            value = "frexp_exponent(" + a + ")";
+        else if (name == "v_frexp_mant_f32")
+            value = "frexp_mantissa(" + a + ")";
+        else if (name == "v_cvt_f16_u16")
+            value = "f32tof16((float)(" + a + " & 0xffffu))";
+        else if (name == "v_cvt_f16_i16")
+            value = "f32tof16((float)(((int)(" + a + " << 16)) >> 16))";
+        else if (name == "v_cvt_u16_f16")
+            value = "(uint)clamp(f16tof32(" + a + "), 0.0, 65535.0)";
+        else if (name == "v_cvt_i16_f16")
+            value = "((uint)(int)clamp(f16tof32(" + a + "), -32768.0, 32767.0) & 0xffffu)";
+        else if (name == "v_sat_pk_u8_i16")
+            value = "((uint)clamp(((int)(" + a + " << 16)) >> 16, 0, 255) | ((uint)clamp((int)" +
+                    a + " >> 16, 0, 255) << 8))";
+        else if (name == "v_trunc_f16" || name == "v_rndne_f16" || name == "v_fract_f16" ||
+                 name == "v_log_f16" || name == "v_exp_f16" || name == "v_sin_f16" ||
+                 name == "v_cos_f16") {
+            static constexpr std::pair<std::string_view, const char *> functions[] = {
+                {"trunc", "trunc(X)"},
+                {"rndne", "round(X)"},
+                {"fract", "frac(X)"},
+                {"log", "log2(X)"},
+                {"exp", "exp2(X)"},
+                {"sin", "sin(X * 6.28318530718)"},
+                {"cos", "cos(X * 6.28318530718)"}};
+            for (const auto &[which, function] : functions)
+                if (name.substr(2, name.size() - 6) == which)
+                    value = function;
+            value.replace(value.find('X'), 1, "f16tof32(" + a + ")");
+            value = "f32tof16(" + value + ")";
+        } else if (name == "v_floor_f16")
             value = "f32tof16(floor(f16tof32(" + a + ")))";
         else if (name == "v_ceil_f16")
             value = "f32tof16(ceil(f16tof32(" + a + ")))";
@@ -2046,6 +2081,48 @@ class Translator {
                    ") * 65535.0) << 16))";
         if (name == "v_ldexp_f32")
             return u("ldexp(" + fa + ", (float)(int)" + b + ")");
+        if (name == "v_ldexp_f16")
+            return half("ldexp(" + h(a) + ", (float)(((int)(" + b + " << 16)) >> 16))");
+        // the 16-bit operations take the lower half of each source and leave the upper clear
+        const auto low = [](const std::string &x) { return "((" + x + ") & 0xffffu)"; };
+        const auto extended = [](const std::string &x) {
+            return "(((int)(" + x + " << 16)) >> 16)";
+        };
+        if (name == "v_add_nc_u16" || name == "v_add_nc_i16")
+            return low(a + " + " + b);
+        if (name == "v_sub_nc_u16" || name == "v_sub_nc_i16")
+            return low(a + " - " + b);
+        if (name == "v_mul_lo_u16")
+            return low(a + " * " + b);
+        if (name == "v_lshlrev_b16")
+            return low(b + " << (" + a + " & 15u)");
+        if (name == "v_lshrrev_b16")
+            return low(b) + " >> (" + a + " & 15u)";
+        if (name == "v_ashrrev_i16")
+            return low("(uint)(" + extended(b) + " >> (" + a + " & 15u))");
+        if (name == "v_min_u16")
+            return "min(" + low(a) + ", " + low(b) + ")";
+        if (name == "v_max_u16")
+            return "max(" + low(a) + ", " + low(b) + ")";
+        if (name == "v_min_i16")
+            return low("(uint)min(" + extended(a) + ", " + extended(b) + ")");
+        if (name == "v_max_i16")
+            return low("(uint)max(" + extended(a) + ", " + extended(b) + ")");
+        if (name == "v_add_nc_i32")
+            return a + " + " + b;
+        if (name == "v_sub_nc_i32")
+            return a + " - " + b;
+        if (name == "v_bcnt_u32_b32")
+            return "countbits(" + a + ") + " + b;
+        if (name == "v_bfm_b32")
+            return "((1u << (" + a + " & 31u)) - 1u) << (" + b + " & 31u)";
+        if (name == "v_pack_b32_f16")
+            return low(a) + " | (" + b + " << 16)";
+        if (name == "v_cvt_pk_u16_u32")
+            return "min(" + a + ", 0xffffu) | (min(" + b + ", 0xffffu) << 16)";
+        if (name == "v_cvt_pk_i16_i32")
+            return low("(uint)clamp((int)" + a + ", -32768, 32767)") + " | ((uint)clamp((int)" + b +
+                   ", -32768, 32767) << 16)";
         give_up(std::string(name));
     }
     void emit_vop2(const Ins &ins, const std::string &a, const std::string &b) {
@@ -2057,11 +2134,15 @@ class Translator {
             set_v(destination, u(f(a) + " * " + f(b) + " + " + f(hex(ins.literal))));
         } else if (name == "v_fmamk_f32" || name == "v_madmk_f32") {
             set_v(destination, u(f(a) + " * " + f(hex(ins.literal)) + " + " + f(b)));
+        } else if (name == "v_fmamk_f16") {
+            set_v(destination, "f32tof16(f16tof32(" + a + ") * f16tof32(" + hex(ins.literal) +
+                                   ") + f16tof32(" + b + "))");
         } else if (name == "v_fmaak_f16") {
             set_v(destination, "f32tof16(f16tof32(" + a + ") * f16tof32(" + b + ") + f16tof32(" +
                                    hex(ins.literal) + "))");
         } else if (name == "v_add_co_ci_u32" || name == "v_sub_co_ci_u32" ||
-                   name == "v_add_co_u32" || name == "v_sub_co_u32" || name == "v_subrev_co_u32") {
+                   name == "v_add_co_u32" || name == "v_sub_co_u32" || name == "v_subrev_co_u32" ||
+                   name == "v_subrev_co_ci_u32") {
             carry(name, destination, 106, a, b, s(106));
         } else {
             set_v(destination, binary(name, a, b, v(destination)));
@@ -2131,8 +2212,14 @@ class Translator {
                 condition = "float_class(" + x + ", " + b + ")";
             else
                 give_up(std::string(full));
-        } else if (type == "i32" || type == "u32") {
-            const auto x = type == "i32" ? "(int)" + a : a, y = type == "i32" ? "(int)" + b : b;
+        } else if (type == "i32" || type == "u32" || type == "i16" || type == "u16") {
+            const auto as = [&](const std::string &value) {
+                return type == "i32"   ? "(int)" + value
+                       : type == "i16" ? "(((int)(" + value + " << 16)) >> 16)"
+                       : type == "u16" ? "(" + value + " & 0xffffu)"
+                                       : value;
+            };
+            const auto x = as(a), y = as(b);
             if (how == "f")
                 condition = "false";
             else if (how == "t")
@@ -2195,7 +2282,12 @@ class Translator {
             name == "v_cvt_pknorm_i16_f32" || name == "v_cvt_pknorm_u16_f32" ||
             name == "v_add_nc_u16" || name == "v_sub_nc_u16" || name == "v_mul_lo_u16" ||
             name == "v_lshlrev_b64" || name == "v_lshrrev_b64" || name == "v_readlane_b32" ||
-            name == "v_pack_b32_f16";
+            name == "v_pack_b32_f16" || name == "v_add_nc_i16" || name == "v_sub_nc_i16" ||
+            name == "v_add_nc_i32" || name == "v_sub_nc_i32" || name == "v_lshlrev_b16" ||
+            name == "v_lshrrev_b16" || name == "v_ashrrev_i16" || name == "v_min_u16" ||
+            name == "v_max_u16" || name == "v_min_i16" || name == "v_max_i16" ||
+            name == "v_bcnt_u32_b32" || name == "v_bfm_b32" || name == "v_cvt_pk_u16_u32" ||
+            name == "v_cvt_pk_i16_i32" || name == "v_ldexp_f16";
         const int count = one ? 1 : two ? 2 : 3;
         const bool is_float = name.find("_f32") != std::string_view::npos ||
                               name.find("_f16") != std::string_view::npos;
@@ -2325,8 +2417,61 @@ class Translator {
         else if (name == "v_readlane_b32") {
             set_s(destination & 0x7f, x[0]);
             return;
-        } else
+        } else if (name == "v_alignbit_b32" || name == "v_alignbyte_b32") {
+            // the first source over the second as one 64-bit value, moved right
+            const auto count =
+                name == "v_alignbit_b32" ? "(" + x[2] + " & 31u)" : "((" + x[2] + " & 3u) * 8u)";
+            value = "(" + count + " == 0u ? " + x[1] + " : (" + x[1] + " >> " + count + ") | (" +
+                    x[0] + " << (32u - " + count + ")))";
+        } else if (name == "v_lerp_u8")
+            value = "lerp_bytes(" + x[0] + ", " + x[1] + ", " + x[2] + ")";
+        else if (name == "v_sad_u8")
+            value = "sad_bytes(" + x[0] + ", " + x[1] + ", false) + " + x[2];
+        else if (name == "v_msad_u8")
+            value = "sad_bytes(" + x[0] + ", " + x[1] + ", true) + " + x[2];
+        else if (name == "v_sad_hi_u8")
+            value = "(sad_bytes(" + x[0] + ", " + x[1] + ", false) << 16) + " + x[2];
+        else if (name == "v_sad_u16")
+            value = "(uint)abs((int)(" + x[0] + " & 0xffffu) - (int)(" + x[1] +
+                    " & 0xffffu)) + (uint)abs((int)(" + x[0] + " >> 16) - (int)(" + x[1] +
+                    " >> 16)) + " + x[2];
+        else if (name == "v_sad_u32")
+            value = "(" + x[0] + " > " + x[1] + " ? " + x[0] + " - " + x[1] + " : " + x[1] + " - " +
+                    x[0] + ") + " + x[2];
+        else if (name == "v_mad_u16" || name == "v_mad_i16")
+            value = "((" + x[0] + " * " + x[1] + " + " + x[2] + ") & 0xffffu)";
+        else if (name == "v_mad_u32_u16")
+            value = "(" + x[0] + " & 0xffffu) * (" + x[1] + " & 0xffffu) + " + x[2];
+        else if (name == "v_mad_i32_i16")
+            value = "(uint)((((int)(" + x[0] + " << 16)) >> 16) * (((int)(" + x[1] +
+                    " << 16)) >> 16)) + " + x[2];
+        else if (ends(name, "3_i16") || ends(name, "3_u16")) {
+            // v_min3, v_max3 and v_med3 of halves
+            const bool is_signed = ends(name, "_i16");
+            std::string y[3];
+            for (int n = 0; n < 3; ++n)
+                y[n] = is_signed ? "(((int)(" + x[n] + " << 16)) >> 16)"
+                                 : "(int)(" + x[n] + " & 0xffffu)";
+            const auto how = std::string(name.substr(2, 3));
+            if (how == "med")
+                value = "clamp(" + y[0] + ", min(" + y[1] + ", " + y[2] + "), max(" + y[1] + ", " +
+                        y[2] + "))";
+            else
+                value = how + "(" + y[0] + ", " + how + "(" + y[1] + ", " + y[2] + "))";
+            value = "((uint)" + value + " & 0xffffu)";
+        } else if (two)
+            value = binary(name, x[0], x[1], v(destination));
+        else
             give_up(std::string(name));
+        if (clamp && !is_float) {
+            if (name == "v_add_nc_u32")
+                value = "(" + x[0] + " + " + x[1] + " < " + x[0] + " ? 0xffffffffu : " + x[0] +
+                        " + " + x[1] + ")";
+            else if (name == "v_sub_nc_u32")
+                value = "(" + x[1] + " > " + x[0] + " ? 0u : " + x[0] + " - " + x[1] + ")";
+            else
+                give_up(std::string(name) + " that saturates");
+        }
         const auto before = body_.size();
         set_v(destination, value);
         if ((modifier || clamp) && is_float)
@@ -2390,6 +2535,39 @@ class Translator {
             else
                 set_v(destination,
                       "(" + v(destination) + " & 0xffffu) | (f32tof16(" + result + ") << 16)");
+            return;
+        }
+        if (ends(name, "16") && !ends(name, "_f16")) {
+            // integers: each half of the result from the halves the sources say
+            const bool is_signed = ends(name, "_i16");
+            const auto part = [&](int n, bool high) {
+                const auto select = (high ? select_high : select_low) >> n & 1;
+                return is_signed ? "(((int)(" + x[n] + (select ? "" : " << 16") + ")) >> 16)"
+                                 : "(int)((" + x[n] + (select ? " >> 16" : "") + ") & 0xffffu)";
+            };
+            const auto one = [&](bool high) -> std::string {
+                const auto a = part(0, high), b = part(1, high);
+                const auto how = name.substr(5, name.size() - 9);
+                if (how == "add")
+                    return a + " + " + b;
+                if (how == "sub")
+                    return a + " - " + b;
+                if (how == "mul_lo")
+                    return a + " * " + b;
+                if (how == "min" || how == "max")
+                    return std::string(how) + "(" + a + ", " + b + ")";
+                if (how == "mad")
+                    return a + " * " + b + " + " + part(2, high);
+                if (how == "lshlrev")
+                    return b + " << (" + a + " & 15)";
+                if (how == "lshrrev" || how == "ashrrev")
+                    return b + " >> (" + a + " & 15)";
+                give_up(std::string(name));
+            };
+            if (ins.w0 >> 15 & 1)
+                give_up(std::string(name) + " that saturates");
+            set_v(destination,
+                  "(((uint)(" + one(false) + ") & 0xffffu) | ((uint)(" + one(true) + ") << 16))");
             return;
         }
         const auto each = [&](bool high) -> std::string {
@@ -3007,6 +3185,19 @@ class Translator {
         "uint bit_pairs(uint x) { x = (x | (x << 8)) & 0x00ff00ffu; x = (x | (x << 4)) & "
         "0x0f0f0f0fu; x = (x | (x << 2)) & 0x33333333u; x = (x | (x << 1)) & 0x55555555u; return "
         "x * 3u; }\n"
+        "uint frexp_exponent(uint b) { uint e = (b >> 23) & 255u, m = b & 0x7fffffu;\n"
+        "    return e == 255u || (e | m) == 0u ? 0u : e == 0u ? firstbithigh(m) - 148u : e - "
+        "126u; }\n"
+        "uint frexp_mantissa(uint b) { uint e = (b >> 23) & 255u, m = b & 0x7fffffu;\n"
+        "    if (e == 255u || (e | m) == 0u) return b;\n"
+        "    if (e == 0u) m = (m << (23u - firstbithigh(m))) & 0x7fffffu;\n"
+        "    return (b & 0x80000000u) | 0x3f000000u | m; }\n"
+        "uint lerp_bytes(uint a, uint b, uint c) { uint r = 0u; for (uint i = 0u; i < 32u; i += "
+        "8u) r |= ((((a >> i) & 255u) + ((b >> i) & 255u) + ((c >> i) & 1u)) >> 1) << i; return "
+        "r; }\n"
+        "uint sad_bytes(uint a, uint b, bool masked) { uint r = 0u; for (uint i = 0u; i < 32u; i "
+        "+= 8u) { int x = (int)((a >> i) & 255u), y = (int)((b >> i) & 255u); if (!masked || y "
+        "!= 0) r += (uint)abs(x - y); } return r; }\n"
         "float3 cube_direction(float3 place) { float2 at = (place.xy - 1.5) * 2.0; int face = "
         "(int)round(place.z);\n"
         "    return face == 0 ? float3(1.0, -at.y, -at.x) : face == 1 ? float3(-1.0, -at.y, at.x) "
