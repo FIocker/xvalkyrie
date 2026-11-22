@@ -238,6 +238,27 @@ BOOL WINAPI move_file_ex_w(const wchar_t *from, const wchar_t *to, DWORD flags) 
 BOOL WINAPI set_file_attributes_w(const wchar_t *name, DWORD attributes) {
     return SetFileAttributesW(console_path(name).c_str(), attributes);
 }
+// Free space of a console drive: that of the host's volume the drive's folder is on. The
+// host wants a directory that exists; the nearest parent that does is asked.
+std::wstring existing_directory(const wchar_t *name) {
+    std::error_code error;
+    std::filesystem::path path = name ? console_path(name) : std::wstring();
+    if (path.empty())
+        path = std::filesystem::current_path(error);
+    while (!std::filesystem::is_directory(path, error) && path.has_parent_path() &&
+           path.parent_path() != path)
+        path = path.parent_path();
+    return path.wstring();
+}
+BOOL WINAPI get_disk_free_space_ex_w(const wchar_t *name, ULARGE_INTEGER *available,
+                                     ULARGE_INTEGER *total, ULARGE_INTEGER *free) {
+    return GetDiskFreeSpaceExW(existing_directory(name).c_str(), available, total, free);
+}
+BOOL WINAPI get_disk_free_space_w(const wchar_t *name, DWORD *sectors, DWORD *bytes,
+                                  DWORD *free_clusters, DWORD *clusters) {
+    return GetDiskFreeSpaceW(existing_directory(name).c_str(), sectors, bytes, free_clusters,
+                             clusters);
+}
 // What a title writes for a debugger: its own log, which is what says why it gives up.
 // Lines go to stderr as they come, without the trailing newline titles usually add.
 void WINAPI output_debug_string_w(const wchar_t *text) {
@@ -397,6 +418,8 @@ const ApiFunction functions[] = {{"OutputDebugStringW", erase(output_debug_strin
                                  {"DeleteFileW", erase(delete_file_w)},
                                  {"MoveFileExW", erase(move_file_ex_w)},
                                  {"SetFileAttributesW", erase(set_file_attributes_w)},
+                                 {"GetDiskFreeSpaceExW", erase(get_disk_free_space_ex_w)},
+                                 {"GetDiskFreeSpaceW", erase(get_disk_free_space_w)},
                                  {"LoadLibraryExW", erase(load_library)},
                                  {"LoadLibraryW", erase(load_library_w)},
                                  {"LoadLibraryExA", erase(load_library_ex_a)},
