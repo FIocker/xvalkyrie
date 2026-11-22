@@ -150,7 +150,7 @@ share is in `runtime/modules`. See [docs/research/gdk-titles.md](docs/research/g
 - [x] `PresentX` and the frame events on a swap chain of the title surface
 - [x] `GameInput.dll` with the emulated gamepad, `xmem.dll`, `xaudio2_9.dll` by ordinal
 - [x] The Series sample draws its picture and reads the gamepad
-- [x] 37 of the 40 public samples that build for Series present frames
+- [x] All 40 public samples that build for Series present frames
 - [x] Rectangle lists: the fourth corner of each comes from a geometry shader made for the
   pipeline's vertex shader
 - [x] A sampler feedback map read back by copying it to a buffer, as whole mip levels

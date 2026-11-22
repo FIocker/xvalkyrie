@@ -1981,8 +1981,12 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
             host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         // the console takes any alignment for a buffer (a title asks for 64 bytes); the
         // host only its own
-        if (host_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        // and a constant buffer view of 256 bytes on a smaller buffer, which the host drops
+        // the device for: the buffer is made to hold it
+        if (host_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
             host_desc.Alignment = 0;
+            host_desc.Width = (host_desc.Width + 255) & ~std::uint64_t{255};
+        }
         host_rules(heap, host_desc.Flags, state);
     }
     // All of the console's memory is the CPU's as well: a title maps a buffer of the default
