@@ -35,7 +35,8 @@ const std::string_view commands =
     "  xvboot map FILE [--base HEX]     lay out the image; never runs it\n"
     "  xvboot inspect-package FILE      identify an XVD/XVC header; never opens it\n"
     "  xvboot bind FILE                 show where each import would bind; never runs it\n"
-    "  xvboot properties FILE           all of that in one report, as the window shows it\n";
+    "  xvboot properties FILE           all of that in one report, as the window shows it\n"
+    "  xvboot modules durango|scarlett  the console modules and functions implemented here\n";
 
 std::optional<int> run(int argc, wchar_t **argv) {
     if (argc < 2)
@@ -100,6 +101,14 @@ std::optional<int> run(int argc, wchar_t **argv) {
                          runtime::console_system_directory(title_executable(argv[2])))
                          .dump(2)
                   << '\n';
+        return 0;
+    }
+    if (argc == 3 && command == "modules") {
+        const std::filesystem::path console(argv[2]);
+        if (console != "durango" && console != "scarlett")
+            throw std::invalid_argument("modules expects durango or scarlett");
+        const auto target = console == "durango" ? Target::durango : Target::scarlett;
+        std::cout << runtime::console_registry(target).describe().dump(2) << '\n';
         return 0;
     }
     return std::nullopt;

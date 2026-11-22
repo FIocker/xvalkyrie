@@ -33,6 +33,9 @@ class Registry {
     // host policy says: for a Windows app, which is not held to the console's list of APIs.
     void open_to_host() { open_ = true; }
     bool open() const { return open_; }
+    // What is in it, without the functions: the symbols of each module, the modules that go
+    // to the host and the functions answered whatever they are imported from.
+    nlohmann::json describe() const;
 
   private:
     std::map<std::pair<std::string, std::string>, void *> entries_;

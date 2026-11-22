@@ -69,6 +69,17 @@ void Registry::forward(std::string_view module, std::string_view host_module) {
     if (!forwards_.emplace(lower(module), lower(host_module)).second)
         throw std::invalid_argument("Duplicate registry forward");
 }
+nlohmann::json Registry::describe() const {
+    auto modules = nlohmann::json::object(), forwards = nlohmann::json::object();
+    auto apis = nlohmann::json::array();
+    for (const auto &[key, function] : entries_)
+        modules[key.first].push_back(key.second);
+    for (const auto &[module, host] : forwards_)
+        forwards[module] = host;
+    for (const auto &[symbol, function] : apis_)
+        apis.push_back(symbol);
+    return {{"modules", std::move(modules)}, {"forwards", std::move(forwards)}, {"apis", std::move(apis)}};
+}
 std::string_view Registry::forwarded(std::string_view module) const {
     const auto entry = forwards_.find(lower(module));
     return entry == forwards_.end() ? std::string_view{} : entry->second;
