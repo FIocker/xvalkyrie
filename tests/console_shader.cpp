@@ -57,6 +57,22 @@ TEST_CASE("instructions on parts of memory and registers compile") {
                 v1 | v2 << 9 | v3 << 18, 0x35u << 26 | 0x14e << 16 | 1, v1 | v2 << 9 | v3 << 18});
 }
 
+TEST_CASE("operations on a group's memory the host has no function for retry until they hold") {
+    // ds_dec_u32, ds_min_f32, ds_mskor_rtn_b32, ds_wrap_rtn_b32
+    const auto source =
+        translated({shared(0x4), shared_registers, shared(0x12), shared_registers, shared(0x2c),
+                    shared_registers, shared(0x34), shared_registers});
+    CHECK(count(source, "do { X = lds[") == 4);
+    CHECK(count(source, "InterlockedCompareExchange(lds[") == 4);
+    // ds_wrxchg2_rtn_b32, ds_read_b96, ds_write_b8_d16_hi, ds_read_u16_d16_hi
+    const auto parts =
+        translated({shared(0x2e), shared_registers, shared(0xfe), shared_registers, shared(0xa0),
+                    shared_registers, shared(0xa7), shared_registers});
+    CHECK(count(parts, "InterlockedExchange(lds[") == 2);
+    CHECK(parts.find("(v2 >> 16) & 0xffu") != std::string::npos);
+    CHECK(parts.find("v4 = (v4 & 0xffffu) | (") != std::string::npos);
+}
+
 TEST_CASE("a rectangle list's fourth corner comes from a geometry shader") {
     const char vertex[] = "struct Out { float4 position : SV_Position; float2 uv : TEXCOORD0; "
                           "nointerpolation uint layer : LAYER0; };\n"

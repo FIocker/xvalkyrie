@@ -1884,16 +1884,31 @@ class Translator {
         // the address first: an instruction may write the register it takes it from
         const auto at = "x" + std::to_string(temporaries_++);
         const auto address = [&] { line("uint " + at + " = " + v(ins.w1 & 0xff) + ";"); };
-        const bool wide = ends(name, "_b64");
-        const std::uint32_t words = wide ? 2 : 1;
-        if (name == "ds_read_b32" || name == "ds_read_b64") {
+        const std::uint32_t words = ends(name, "_b64")    ? 2
+                                    : ends(name, "_b96")  ? 3
+                                    : ends(name, "_b128") ? 4
+                                                          : 1;
+        // _d16 and _d16_hi: the datum is the lower or the upper half of its register, and
+        // the other half of a destination is kept
+        const bool upper = ends(name, "_d16_hi"), half = upper || ends(name, "_d16");
+        if (half)
+            name.remove_suffix(upper ? 7 : 4);
+        const auto datum = upper ? "(" + v(data[0]) + " >> 16)" : v(data[0]);
+        const auto into = [&](const std::string &value) {
+            return !half   ? value
+                   : upper ? "(" + v(destination) + " & 0xffffu) | (" + value + " << 16)"
+                           : "(" + v(destination) + " & 0xffff0000u) | (" + value + " & 0xffffu)";
+        };
+        if (name == "ds_read_b32" || name == "ds_read_b64" || name == "ds_read_b96" ||
+            name == "ds_read_b128") {
             touch_shared(false);
             address();
             for (std::uint32_t n = 0; n < words; ++n)
                 set_v(destination + n, shared_word(at, offset + 4 * n));
             return;
         }
-        if (name == "ds_write_b32" || name == "ds_write_b64") {
+        if (name == "ds_write_b32" || name == "ds_write_b64" || name == "ds_write_b96" ||
+            name == "ds_write_b128") {
             touch_shared(true);
             address();
             for (std::uint32_t n = 0; n < words; ++n)
@@ -1925,8 +1940,9 @@ class Translator {
             const auto part = "((" + shared_word(at, offset) + " >> " + shift + ") & " +
                               (byte ? "0xffu" : "0xffffu") + ")";
             const auto bits = byte ? "24" : "16";
-            set_v(destination,
-                  extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")" : part);
+            set_v(destination, into(extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " +
+                                                 bits + ")"
+                                           : part));
             return;
         }
         if (name == "ds_write_b8" || name == "ds_write_b16") {
@@ -1935,10 +1951,12 @@ class Translator {
             touch_shared(true);
             address();
             line(guard + "{ InterlockedAnd(" + shared_word(at, offset) + ", ~(" + mask + " << " +
-                 shift + ")); InterlockedOr(" + shared_word(at, offset) + ", (" + v(data[0]) +
-                 " & " + mask + ") << " + shift + "); }");
+                 shift + ")); InterlockedOr(" + shared_word(at, offset) + ", (" + datum + " & " +
+                 mask + ") << " + shift + "); }");
             return;
         }
+        if (half)
+            give_up(std::string(ins.name));
         // ds_<operation>[_rtn]_<type>: the word takes the operation's result, and with _rtn
         // the destination what the word had
         name.remove_prefix(3);
@@ -1947,23 +1965,55 @@ class Translator {
         const bool returns = ends(name, "_rtn");
         if (returns)
             name.remove_suffix(4);
-        static constexpr std::pair<std::string_view, std::string_view> operations[] = {
-            {"add", "add"}, {"sub", "sub"}, {"min", "umin"},    {"max", "umax"},     {"and", "and"},
-            {"or", "or"},   {"xor", "xor"}, {"wrxchg", "swap"}, {"cmpst", "cmpswap"}};
-        std::string_view how;
-        for (const auto &[operation, function] : operations)
-            if (name == operation && (type == "u32" || type == "b32"))
-                how = function;
-        if (how.empty())
+        if (returns && (name == "wrxchg2" || name == "wrxchg2st64") && type == "b32") {
+            // two words take a datum each and give what they had, placed like ds_write2's
+            const auto unit = name == "wrxchg2st64" ? 4 * 64 : 4;
+            touch_shared(true);
+            address();
+            for (std::uint32_t which = 0; which < 2; ++which) {
+                const auto before = "x" + std::to_string(temporaries_++);
+                line("uint " + before + " = 0u;");
+                line(guard + atomic("swap", shared_word(at, offsets[which] * unit),
+                                    v(data[which]), "", before));
+                set_v(destination + which, before);
+            }
+            return;
+        }
+        // the operation of the word, and whether it takes a second datum
+        struct Operation {
+            std::string_view name, type, how;
+            bool two;
+        };
+        static constexpr Operation operations[] = {
+            {"add", "u32", "add", false},      {"sub", "u32", "sub", false},
+            {"rsub", "u32", "rsub", false},    {"inc", "u32", "wrapinc", false},
+            {"dec", "u32", "wrapdec", false},  {"min", "i32", "smin", false},
+            {"max", "i32", "smax", false},     {"min", "u32", "umin", false},
+            {"max", "u32", "umax", false},     {"and", "b32", "and", false},
+            {"or", "b32", "or", false},        {"xor", "b32", "xor", false},
+            {"mskor", "b32", "mskor", true},   {"wrxchg", "b32", "swap", false},
+            {"cmpst", "b32", "cmpswap", true}, {"cmpst", "f32", "fcmpswap", true},
+            {"min", "f32", "fmin", false},     {"max", "f32", "fmax", false},
+            {"add", "f32", "fadd", false},     {"wrap", "b32", "wrap", true}};
+        const Operation *found = nullptr;
+        for (const auto &operation : operations)
+            if (name == operation.name && type == operation.type)
+                found = &operation;
+        if (!found || (found->how == "swap" && !returns) || (found->how == "wrap" && !returns))
             give_up(std::string(ins.name));
+        const auto how = found->how;
         touch_shared(true);
         address();
         const auto before = "x" + std::to_string(temporaries_++);
         line("uint " + before + " = 0u;");
-        // ds_cmpst: the first datum is what the word is compared with, the second what it takes
-        line(guard + (how == "cmpswap"
-                          ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
-                          : atomic(how, shared_word(at, offset), v(data[0]), "", before)));
+        // ds_cmpst: the first datum is what the word is compared with, the second what it
+        // takes. ds_mskor and ds_wrap: the first is the mask or the limit, the second what is
+        // put in or added.
+        line(guard +
+             (how == "cmpswap" || how == "fcmpswap"
+                  ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
+                  : atomic(how, shared_word(at, offset), v(data[0]), found->two ? v(data[1]) : "",
+                           before)));
         if (returns)
             set_v(destination, before);
     }
@@ -3008,7 +3058,37 @@ class Translator {
             return call("InterlockedExchange", value);
         if (how == "cmpswap")
             return call("InterlockedCompareExchange", compare + ", " + value);
-        give_up("an atomic " + std::string(how));
+        // The rest the host has no function for: the word is read, and takes what follows
+        // from it unless another thread changed it meanwhile, in which case it is read again.
+        // X is what was read.
+        const std::string fx = "asfloat(X)", fv = "asfloat(" + value + ")";
+        std::string next;
+        if (how == "rsub")
+            next = value + " - X";
+        else if (how == "wrapinc")
+            next = "(X >= " + value + " ? 0u : X + 1u)";
+        else if (how == "wrapdec")
+            next = "(X == 0u || X > " + value + " ? " + value + " : X - 1u)";
+        else if (how == "smin")
+            next = "(uint)min((int)X, (int)" + value + ")";
+        else if (how == "smax")
+            next = "(uint)max((int)X, (int)" + value + ")";
+        else if (how == "mskor")
+            next = "((X & ~" + value + ") | " + compare + ")";
+        else if (how == "wrap")
+            next = "(X >= " + value + " ? X - " + value + " : X + " + compare + ")";
+        else if (how == "fmin")
+            next = "asuint(min(" + fx + ", " + fv + "))";
+        else if (how == "fmax")
+            next = "asuint(max(" + fx + ", " + fv + "))";
+        else if (how == "fadd")
+            next = "asuint(" + fx + " + " + fv + ")";
+        else if (how == "fcmpswap")
+            next = "(" + fx + " == asfloat(" + compare + ") ? " + value + " : X)";
+        else
+            give_up("an atomic " + std::string(how));
+        return "{ uint X; do { X = " + target + "; InterlockedCompareExchange(" + target + ", X, " +
+               next + ", " + before + "); } while (" + before + " != X); }";
     }
     void emit_buffer(const Ins &ins) {
         const auto name = ins.name;
@@ -3070,17 +3150,47 @@ class Translator {
                 write_word(resource, index, extra, fixed, 4 * n, v(data + n));
             return;
         }
-        if (name == "buffer_load_ubyte" || name == "buffer_load_sbyte" ||
-            name == "buffer_load_ushort" || name == "buffer_load_sshort") {
+        // _d16 and _d16_hi: the datum is the lower or the upper half of its register, and
+        // the other half of a destination is kept
+        const bool upper = ends(name, "_d16_hi"), half = upper || ends(name, "_d16");
+        const auto plain = name.substr(0, name.size() - (upper ? 7 : half ? 4 : 0));
+        const auto shift = "((" + extra + " & 3u) * 8u)";
+        if (plain == "buffer_load_ubyte" || plain == "buffer_load_sbyte" ||
+            plain == "buffer_load_ushort" || plain == "buffer_load_sshort" ||
+            (half && plain == "buffer_load_short")) {
             // part of a word, from where in it the offset says
-            const bool byte = ends(name, "byte"), extend = name[12] == 's';
-            const auto shift = "((" + extra + " & 3u) * 8u)";
+            const bool byte = ends(plain, "byte"), extend = plain[12] == 's';
             const auto part =
                 "((" + read_word(resource, index, extra, fixed == ~0u ? fixed : fixed & ~3u, 0) +
                 " >> " + shift + ") & " + (byte ? "0xffu" : "0xffffu") + ")";
             const auto bits = byte ? "24" : "16";
-            set_v(data,
-                  extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")" : part);
+            const auto value =
+                extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")" : part;
+            set_v(data, !half   ? value
+                        : upper ? "(" + v(data) + " & 0xffffu) | (" + value + " << 16)"
+                                : "(" + v(data) + " & 0xffff0000u) | (" + value + " & 0xffffu)");
+            return;
+        }
+        if ((plain == "buffer_store_byte" || plain == "buffer_store_short") && (!half || upper)) {
+            // part of a word, whose other parts another thread may be writing
+            const auto mask = plain == "buffer_store_byte" ? "0xffu" : "0xffffu";
+            const auto clear = "~(" + std::string(mask) + " << " + shift + ")";
+            const auto part = "((" + (upper ? "(" + v(data) + " >> 16)" : v(data)) + " & " + mask +
+                              ") << " + shift + ")";
+            written(resource);
+            if (resource.root) {
+                const auto buffer = object(resource, "RWByteAddressBuffer");
+                const auto at = bytes_of(resource, index) + "(" + extra + " & ~3u)";
+                line(guard + "{ uint X; " + buffer + ".InterlockedAnd(" + at + ", " + clear +
+                     ", X); " + buffer + ".InterlockedOr(" + at + ", " + part + ", X); }");
+            } else {
+                const auto word = words(resource) + "[" + index + "].w[" +
+                                  field("(" + extra + " + 0u)",
+                                        fixed == ~0u ? fixed : fixed & ~3u, 0) +
+                                  "]";
+                line(guard + "{ InterlockedAnd(" + word + ", " + clear + "); InterlockedOr(" +
+                     word + ", " + part + "); }");
+            }
             return;
         }
         if (starts(name, "buffer_atomic_") && !ends(name, "_x2")) {

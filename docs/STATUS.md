@@ -379,9 +379,9 @@ translated when all of its instructions do, and its resources are followed.
 | vector, three operands | 300 | 428 |
 | packed vector | 22 | 22 |
 | interpolation | 3 | 3 |
-| shared memory | 36 | 147 |
+| shared memory | 71 | 147 |
 | global memory | 0 | 54 |
-| untyped buffer | 38 | 64 |
+| untyped buffer | 48 | 64 |
 | typed buffer | 0 | 16 |
 | image | 73 | 110 |
 | export | 1 | 1 |
@@ -434,9 +434,9 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>shared memory: 111 not handled</summary>
+<details><summary>shared memory: 76 not handled</summary>
 
-`ds_rsub_u32`, `ds_inc_u32`, `ds_dec_u32`, `ds_min_i32`, `ds_max_i32`, `ds_mskor_b32`, `ds_cmpst_f32`, `ds_min_f32`, `ds_max_f32`, `ds_add_f32`, `ds_rsub_rtn_u32`, `ds_inc_rtn_u32`, `ds_dec_rtn_u32`, `ds_min_rtn_i32`, `ds_max_rtn_i32`, `ds_mskor_rtn_b32`, `ds_wrxchg2_rtn_b32`, `ds_wrxchg2st64_rtn_b32`, `ds_cmpst_rtn_f32`, `ds_min_rtn_f32`, `ds_max_rtn_f32`, `ds_wrap_rtn_b32`, `ds_swizzle_b32`, `ds_consume`, `ds_append`, `ds_add_u64`, `ds_sub_u64`, `ds_rsub_u64`, `ds_inc_u64`, `ds_dec_u64`, `ds_min_i64`, `ds_max_i64`, `ds_min_u64`, `ds_max_u64`, `ds_and_b64`, `ds_or_b64`, `ds_xor_b64`, `ds_mskor_b64`, `ds_cmpst_b64`, `ds_cmpst_f64`, `ds_min_f64`, `ds_max_f64`, `ds_add_rtn_f32`, `ds_add_rtn_u64`, `ds_sub_rtn_u64`, `ds_rsub_rtn_u64`, `ds_inc_rtn_u64`, `ds_dec_rtn_u64`, `ds_min_rtn_i64`, `ds_max_rtn_i64`, `ds_min_rtn_u64`, `ds_max_rtn_u64`, `ds_and_rtn_b64`, `ds_or_rtn_b64`, `ds_xor_rtn_b64`, `ds_mskor_rtn_b64`, `ds_wrxchg_rtn_b64`, `ds_wrxchg2_rtn_b64`, `ds_wrxchg2st64_rtn_b64`, `ds_cmpst_rtn_b64`, `ds_cmpst_rtn_f64`, `ds_min_rtn_f64`, `ds_max_rtn_f64`, `ds_condxchg32_rtn_b64`, `ds_add_src2_u32`, `ds_sub_src2_u32`, `ds_rsub_src2_u32`, `ds_inc_src2_u32`, `ds_dec_src2_u32`, `ds_min_src2_i32`, `ds_max_src2_i32`, `ds_min_src2_u32`, `ds_max_src2_u32`, `ds_and_src2_b32`, `ds_or_src2_b32`, `ds_xor_src2_b32`, `ds_write_src2_b32`, `ds_min_src2_f32`, `ds_max_src2_f32`, `ds_add_src2_f32`, `ds_write_b8_d16_hi`, `ds_write_b16_d16_hi`, `ds_read_u8_d16`, `ds_read_u8_d16_hi`, `ds_read_i8_d16`, `ds_read_i8_d16_hi`, `ds_read_u16_d16`, `ds_read_u16_d16_hi`, `ds_write_addtid_b32`, `ds_read_addtid_b32`, `ds_permute_b32`, `ds_bpermute_b32`, `ds_add_src2_u64`, `ds_sub_src2_u64`, `ds_rsub_src2_u64`, `ds_inc_src2_u64`, `ds_dec_src2_u64`, `ds_min_src2_i64`, `ds_max_src2_i64`, `ds_min_src2_u64`, `ds_max_src2_u64`, `ds_and_src2_b64`, `ds_or_src2_b64`, `ds_xor_src2_b64`, `ds_write_src2_b64`, `ds_min_src2_f64`, `ds_max_src2_f64`, `ds_write_b96`, `ds_write_b128`, `ds_read_b96`, `ds_read_b128`
+`ds_swizzle_b32`, `ds_consume`, `ds_append`, `ds_add_u64`, `ds_sub_u64`, `ds_rsub_u64`, `ds_inc_u64`, `ds_dec_u64`, `ds_min_i64`, `ds_max_i64`, `ds_min_u64`, `ds_max_u64`, `ds_and_b64`, `ds_or_b64`, `ds_xor_b64`, `ds_mskor_b64`, `ds_cmpst_b64`, `ds_cmpst_f64`, `ds_min_f64`, `ds_max_f64`, `ds_add_rtn_u64`, `ds_sub_rtn_u64`, `ds_rsub_rtn_u64`, `ds_inc_rtn_u64`, `ds_dec_rtn_u64`, `ds_min_rtn_i64`, `ds_max_rtn_i64`, `ds_min_rtn_u64`, `ds_max_rtn_u64`, `ds_and_rtn_b64`, `ds_or_rtn_b64`, `ds_xor_rtn_b64`, `ds_mskor_rtn_b64`, `ds_wrxchg_rtn_b64`, `ds_wrxchg2_rtn_b64`, `ds_wrxchg2st64_rtn_b64`, `ds_cmpst_rtn_b64`, `ds_cmpst_rtn_f64`, `ds_min_rtn_f64`, `ds_max_rtn_f64`, `ds_condxchg32_rtn_b64`, `ds_add_src2_u32`, `ds_sub_src2_u32`, `ds_rsub_src2_u32`, `ds_inc_src2_u32`, `ds_dec_src2_u32`, `ds_min_src2_i32`, `ds_max_src2_i32`, `ds_min_src2_u32`, `ds_max_src2_u32`, `ds_and_src2_b32`, `ds_or_src2_b32`, `ds_xor_src2_b32`, `ds_write_src2_b32`, `ds_min_src2_f32`, `ds_max_src2_f32`, `ds_add_src2_f32`, `ds_write_addtid_b32`, `ds_read_addtid_b32`, `ds_permute_b32`, `ds_bpermute_b32`, `ds_add_src2_u64`, `ds_sub_src2_u64`, `ds_rsub_src2_u64`, `ds_inc_src2_u64`, `ds_dec_src2_u64`, `ds_min_src2_i64`, `ds_max_src2_i64`, `ds_min_src2_u64`, `ds_max_src2_u64`, `ds_and_src2_b64`, `ds_or_src2_b64`, `ds_xor_src2_b64`, `ds_write_src2_b64`, `ds_min_src2_f64`, `ds_max_src2_f64`
 
 </details>
 
@@ -446,9 +446,9 @@ translated when all of its instructions do, and its resources are followed.
 
 </details>
 
-<details><summary>untyped buffer: 26 not handled</summary>
+<details><summary>untyped buffer: 16 not handled</summary>
 
-`buffer_store_byte`, `buffer_store_byte_d16_hi`, `buffer_store_short`, `buffer_store_short_d16_hi`, `buffer_load_ubyte_d16`, `buffer_load_ubyte_d16_hi`, `buffer_load_sbyte_d16`, `buffer_load_sbyte_d16_hi`, `buffer_load_short_d16`, `buffer_load_short_d16_hi`, `buffer_atomic_swap_x2`, `buffer_atomic_cmpswap_x2`, `buffer_atomic_add_x2`, `buffer_atomic_sub_x2`, `buffer_atomic_smin_x2`, `buffer_atomic_umin_x2`, `buffer_atomic_smax_x2`, `buffer_atomic_umax_x2`, `buffer_atomic_and_x2`, `buffer_atomic_or_x2`, `buffer_atomic_xor_x2`, `buffer_atomic_inc_x2`, `buffer_atomic_dec_x2`, `buffer_atomic_fcmpswap_x2`, `buffer_atomic_fmin_x2`, `buffer_atomic_fmax_x2`
+`buffer_atomic_swap_x2`, `buffer_atomic_cmpswap_x2`, `buffer_atomic_add_x2`, `buffer_atomic_sub_x2`, `buffer_atomic_smin_x2`, `buffer_atomic_umin_x2`, `buffer_atomic_smax_x2`, `buffer_atomic_umax_x2`, `buffer_atomic_and_x2`, `buffer_atomic_or_x2`, `buffer_atomic_xor_x2`, `buffer_atomic_inc_x2`, `buffer_atomic_dec_x2`, `buffer_atomic_fcmpswap_x2`, `buffer_atomic_fmin_x2`, `buffer_atomic_fmax_x2`
 
 </details>
 
