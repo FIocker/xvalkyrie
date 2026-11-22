@@ -7,11 +7,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <direct.h>
 #include <filesystem>
 #include <intrin.h>
+#include <share.h>
 #include <shlwapi.h>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <windows.h>
 
 #include <objbase.h> // after windows.h
@@ -259,6 +262,39 @@ BOOL WINAPI get_disk_free_space_w(const wchar_t *name, DWORD *sectors, DWORD *by
     return GetDiskFreeSpaceW(existing_directory(name).c_str(), sectors, bytes, free_clusters,
                              clusters);
 }
+// The C runtime's file functions open files without going through the functions above, so
+// the console's drives are put in their paths here as well.
+FILE *crt_wfopen(const wchar_t *name, const wchar_t *mode) {
+    return _wfsopen(console_path(name).c_str(), mode, _SH_DENYNO);
+}
+errno_t crt_wfopen_s(FILE **file, const wchar_t *name, const wchar_t *mode) {
+    return _wfopen_s(file, console_path(name).c_str(), mode);
+}
+FILE *crt_wfsopen(const wchar_t *name, const wchar_t *mode, int share) {
+    return _wfsopen(console_path(name).c_str(), mode, share);
+}
+FILE *crt_fopen(const char *name, const char *mode) {
+    return _fsopen(console_path(name).c_str(), mode, _SH_DENYNO);
+}
+errno_t crt_fopen_s(FILE **file, const char *name, const char *mode) {
+    return fopen_s(file, console_path(name).c_str(), mode);
+}
+FILE *crt_fsopen(const char *name, const char *mode, int share) {
+    return _fsopen(console_path(name).c_str(), mode, share);
+}
+int crt_wstat64(const wchar_t *name, struct _stat64 *status) {
+    return _wstat64(console_path(name).c_str(), status);
+}
+int crt_stat64i32(const char *name, struct _stat64i32 *status) {
+    return _stat64i32(console_path(name).c_str(), status);
+}
+int crt_remove(const char *name) { return std::remove(console_path(name).c_str()); }
+int crt_wremove(const wchar_t *name) { return _wremove(console_path(name).c_str()); }
+int crt_wrename(const wchar_t *from, const wchar_t *to) {
+    return _wrename(console_path(from).c_str(), console_path(to).c_str());
+}
+int crt_wrmdir(const wchar_t *name) { return _wrmdir(console_path(name).c_str()); }
+int crt_wmkdir(const wchar_t *name) { return _wmkdir(console_path(name).c_str()); }
 // What a title writes for a debugger: its own log, which is what says why it gives up.
 // Lines go to stderr as they come, without the trailing newline titles usually add.
 void WINAPI output_debug_string_w(const wchar_t *text) {
@@ -420,6 +456,19 @@ const ApiFunction functions[] = {{"OutputDebugStringW", erase(output_debug_strin
                                  {"SetFileAttributesW", erase(set_file_attributes_w)},
                                  {"GetDiskFreeSpaceExW", erase(get_disk_free_space_ex_w)},
                                  {"GetDiskFreeSpaceW", erase(get_disk_free_space_w)},
+                                 {"_wfopen", erase(crt_wfopen)},
+                                 {"_wfopen_s", erase(crt_wfopen_s)},
+                                 {"_wfsopen", erase(crt_wfsopen)},
+                                 {"fopen", erase(crt_fopen)},
+                                 {"fopen_s", erase(crt_fopen_s)},
+                                 {"_fsopen", erase(crt_fsopen)},
+                                 {"_wstat64", erase(crt_wstat64)},
+                                 {"_stat64i32", erase(crt_stat64i32)},
+                                 {"remove", erase(crt_remove)},
+                                 {"_wremove", erase(crt_wremove)},
+                                 {"_wrename", erase(crt_wrename)},
+                                 {"_wrmdir", erase(crt_wrmdir)},
+                                 {"_wmkdir", erase(crt_wmkdir)},
                                  {"LoadLibraryExW", erase(load_library)},
                                  {"LoadLibraryW", erase(load_library_w)},
                                  {"LoadLibraryExA", erase(load_library_ex_a)},
