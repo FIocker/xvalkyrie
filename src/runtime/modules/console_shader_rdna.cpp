@@ -1,5 +1,6 @@
 #include "runtime/modules/console_shader_rdna.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <map>
@@ -126,7 +127,8 @@ struct Known {
     // table: the address of a descriptor table; descriptor: a word of a descriptor loaded
     // from one; root: half of the address a root descriptor gives; code: an address in the
     // shader's own code
-    enum Kind { nothing, constant, table, descriptor, root, code } kind = nothing;
+    // conflict: one thing or another, by the way the shader came
+    enum Kind { nothing, constant, table, descriptor, root, code, conflict } kind = nothing;
     std::uint32_t value = 0; // the constant; the root parameter of the others
     std::uint32_t offset = 0, part = 0; // a descriptor: its byte offset in the table, and
                                         // which of its words this is; a root: which half
@@ -135,18 +137,50 @@ struct Known {
     std::uint32_t origin = 0; // the instruction that loaded the descriptor
     std::uint32_t stride = 0; // the upper half of a root address made into a buffer
                               // descriptor: the stride given to it
+    bool maybe = false;       // only on some of the ways that lead here
+    bool operator==(const Known &) const = default;
 };
+// a register that stands for something of the console's, and has no value of its own here
+bool stands_in(const Known &known) {
+    return known.kind == Known::table || known.kind == Known::descriptor || known.kind == Known::root;
+}
+// What is known where two ways through a shader meet. A descriptor that only one of them
+// loads stays one: compiled code loads descriptors in blocks that are skipped when no lane
+// is active, and uses them after.
+Known join(const Known &a, const Known &b) {
+    if (a.kind == Known::conflict || b.kind == Known::conflict)
+        return {Known::conflict};
+    if (stands_in(a) && stands_in(b)) {
+        auto both = a;
+        both.maybe = b.maybe;
+        if (!(both == b))
+            return {Known::conflict};
+        both.maybe = a.maybe || b.maybe;
+        return both;
+    }
+    if (stands_in(a) || stands_in(b)) {
+        auto one = stands_in(a) ? a : b;
+        one.maybe = true;
+        return one;
+    }
+    return a == b ? a : Known{};
+}
+// the scalar registers, then the places a shader keeps scalars in lanes of vector registers
+constexpr std::size_t known_slots = 128 + 96;
+using State = std::array<Known, known_slots>;
 struct Resource {
     std::uint32_t type = 0, reg = 0, space = 0; // type as a Range's
     bool root = false;        // a root descriptor: an address, not a view
     std::uint32_t stride = 0; // of a root buffer, if the shader says
     int dynamic = -1;         // one of an array: the variable with its place in the table
     std::uint32_t parameter = 0, origin = 0;
+    bool loaded = false; // from a table, by the instruction `origin`
 };
 // What a first pass over a shader found out that changes how it is translated: the
 // descriptors written through, which are unordered access views where the table allows both.
 struct Facts {
     std::set<std::uint32_t> written;
+    std::map<std::uint32_t, std::string> types; // what each loaded descriptor is used as
 };
 struct Retry {};
 
@@ -161,9 +195,16 @@ class Translator {
         read_file();
         decode();
         find_blocks();
+        analyse();
         prepare_registers();
         for (std::size_t block = 0; block < blocks_.size(); ++block)
             emit_block(block);
+        // a descriptor whose words the shader reads, met before what it is was known
+        for (const auto origin : wanted_) {
+            if (facts_.types.count(origin))
+                throw Retry{};
+            give_up("a descriptor used as a value");
+        }
         return finish();
     }
 
@@ -452,13 +493,16 @@ class Translator {
         if (source == 125)
             return "0u";
         if (source < 128) {
-            if (known_[source].kind == Known::table || known_[source].kind == Known::descriptor)
-                give_up("a descriptor used as a value (" + std::string(ins.name) + ")");
+            const auto &known = known_[source];
+            if (!stands_in(known) || known.maybe)
+                return s(source);
             // an address of the console's has no meaning here, and only goes into the
             // descriptor a shader makes of it
-            if (known_[source].kind == Known::root)
+            if (known.kind == Known::root)
                 return "0u";
-            return s(source);
+            if (known.kind == Known::descriptor)
+                return descriptor_word(source);
+            give_up("a descriptor table used as a value (" + std::string(ins.name) + ")");
         }
         give_up("operand " + std::to_string(source));
     }
@@ -473,6 +517,228 @@ class Translator {
     void forget(std::uint32_t reg) {
         if (reg < 128)
             known_[reg] = {};
+    }
+    // A word of a descriptor as a value. Shaders read a texture's size out of its
+    // descriptor instead of asking for it; the words with the size are made from what the
+    // host says of the resource.
+    std::string descriptor_word(std::uint32_t reg) {
+        const auto known = known_[reg];
+        const auto type = facts_.types.find(known.origin);
+        if (type == facts_.types.end()) {
+            wanted_.insert(known.origin);
+            return s(reg);
+        }
+        const auto base = reg - known.part;
+        if (reg < known.part || known_[base].kind != Known::descriptor || known_[base].origin != known.origin ||
+            known_[base].part != 0)
+            give_up("a descriptor used as a value");
+        const auto name = object(resource_of(base), type->second);
+        const auto id = "x" + std::to_string(temporaries_++);
+        std::string_view kind = type->second;
+        const bool writable = starts(kind, "RW");
+        if (writable)
+            kind.remove_prefix(2);
+        kind = kind.substr(0, kind.find('<'));
+        if (kind == "StructuredBuffer" && known.part == 2) {
+            line("uint " + id + ", " + id + "s; " + name + ".GetDimensions(" + id + ", " + id + "s);");
+            return id;
+        }
+        static constexpr std::pair<std::string_view, const char *> sizes[] = {
+            {"Texture1D", "w"}, {"Texture2D", "w, h"}, {"Texture3D", "w, h, d"}, {"TextureCube", "w, h"},
+            {"Texture1DArray", "w, d"}, {"Texture2DArray", "w, h, d"}, {"Texture2DMS", "w, h"},
+            {"Texture2DMSArray", "w, h, d"}};
+        const char *size = nullptr;
+        for (const auto &[texture, has] : sizes)
+            if (kind == texture)
+                size = has;
+        if (!size || known.part < 1 || known.part > 4)
+            give_up("a descriptor used as a value");
+        std::string arguments;
+        for (; *size; ++size)
+            arguments += *size == ',' || *size == ' ' ? std::string(1, *size) : id + *size;
+        if (kind.find("MS") != std::string_view::npos)
+            arguments += ", " + id + "l";
+        else if (!writable)
+            arguments = "0u, " + arguments + ", " + id + "l";
+        line("uint " + id + "w = 1u, " + id + "h = 1u, " + id + "d = 1u, " + id + "l = 1u; " + name +
+             ".GetDimensions(" + arguments + ");");
+        // the width less one over the second and third words, the height after it; the last
+        // level in the fourth; the depth or the last layer in the fifth
+        if (known.part == 1) return "((" + id + "w - 1u) << 30)";
+        if (known.part == 2) return "(((" + id + "w - 1u) >> 2) | ((" + id + "h - 1u) << 14))";
+        if (known.part == 3) return "((" + id + "l - 1u) << 16)";
+        return "(" + id + "d - 1u)";
+    }
+
+    // ---- what is known of the registers at each block ----
+    // The blocks are not laid out in the order they run in, so what a register holds where
+    // a block starts is what its predecessors leave, joined.
+    void analyse() {
+        entry_.assign(blocks_.size(), State{});
+        std::vector<bool> reached(blocks_.size(), false);
+        entry_[0] = known_;
+        reached[0] = true;
+        std::vector<std::size_t> work{0};
+        for (int budget = 0; !work.empty(); ++budget) {
+            if (budget > 200000)
+                give_up("descriptors that do not settle");
+            const auto block = work.back();
+            work.pop_back();
+            auto state = entry_[block];
+            for (auto i = blocks_[block].first; i < blocks_[block].end; ++i)
+                track(code_list_[i], state);
+            const auto &last = code_list_[blocks_[block].end - 1];
+            std::size_t next[2], count = 0;
+            if (branch(last))
+                next[count++] = target_block_[block];
+            if (last.name != "s_endpgm" && last.name != "s_branch" && block + 1 < blocks_.size())
+                next[count++] = block + 1;
+            for (std::size_t n = 0; n < count; ++n) {
+                const auto to = next[n];
+                if (!reached[to]) {
+                    entry_[to] = state;
+                    reached[to] = true;
+                    work.push_back(to);
+                    continue;
+                }
+                bool changed = false;
+                for (std::size_t reg = 0; reg < known_slots; ++reg) {
+                    const auto joined = join(entry_[to][reg], state[reg]);
+                    changed |= !(joined == entry_[to][reg]);
+                    entry_[to][reg] = joined;
+                }
+                if (changed)
+                    work.push_back(to);
+            }
+        }
+    }
+    int dynamic_of(const Ins &ins) {
+        return dynamic_id_.try_emplace(ins.at, static_cast<int>(dynamic_id_.size())).first->second;
+    }
+    // the place that stands for one lane of a vector register a shader keeps a scalar in
+    std::optional<std::uint32_t> spill(std::uint32_t reg, std::uint32_t lane, bool make) {
+        const auto found = spills_.find({reg, lane});
+        if (found != spills_.end())
+            return found->second;
+        if (!make || spills_.size() >= known_slots - 128)
+            return std::nullopt;
+        const auto slot = static_cast<std::uint32_t>(128 + spills_.size());
+        spills_[{reg, lane}] = slot;
+        return slot;
+    }
+    // what an instruction does to what is known of the registers it writes
+    void track(const Ins &ins, State &known) {
+        const auto name = ins.name;
+        const auto clear = [&](std::uint32_t reg, std::uint32_t count = 1) {
+            for (std::uint32_t n = 0; n < count; ++n)
+                if (reg + n < 128)
+                    known[reg + n] = {};
+        };
+        const bool wide = ends(name, "_b64") || ends(name, "_i64");
+        switch (ins.format) {
+        case F::sop1: {
+            const auto destination = (ins.w0 >> 16) & 0x7f, source = ins.w0 & 0xff;
+            if (name == "s_mov_b32" || name == "s_mov_b64") {
+                const auto value = constant_of(source, ins.literal);
+                for (std::uint32_t n = 0; n < (wide ? 2u : 1u); ++n)
+                    if (destination + n < 128)
+                        known[destination + n] = source + n < 128 ? known[source + n]
+                                                 : value && !n   ? Known{Known::constant, *value}
+                                                                 : Known{};
+            } else if (name == "s_getpc_b64") {
+                known[destination] = {Known::code};
+                clear(destination + 1);
+            } else if (name.find("saveexec") != std::string_view::npos) {
+                clear(destination, wide ? 2 : 1);
+            } else if (name != "s_swappc_b64") {
+                clear(destination, wide && name.find("_i32_") == std::string_view::npos ? 2 : 1);
+            }
+            break;
+        }
+        case F::sop2: {
+            const auto destination = (ins.w0 >> 16) & 0x7f, first = ins.w0 & 0xff, second = (ins.w0 >> 8) & 0xff;
+            Known result;
+            if ((name == "s_add_u32" || name == "s_add_i32") &&
+                ((first < 128 && known[first].kind == Known::code) || (second < 128 && known[second].kind == Known::code)))
+                result = {Known::code};
+            // the upper half of a root descriptor's address with a stride put in: on its
+            // way to being a buffer descriptor
+            if (name == "s_or_b32" || name == "s_and_b32")
+                for (const auto &[reg, other] : {std::pair{first, second}, std::pair{second, first}})
+                    if (reg < 128 && known[reg].kind == Known::root && known[reg].part == 1) {
+                        result = known[reg];
+                        if (const auto bits = constant_of(other, ins.literal); bits && name == "s_or_b32")
+                            result.stride = (*bits >> 16) & 0x3fff;
+                    }
+            clear(destination, wide ? 2 : 1);
+            if (destination < 128)
+                known[destination] = result;
+            break;
+        }
+        case F::sopk: {
+            const auto destination = (ins.w0 >> 16) & 0x7f;
+            if (name == "s_movk_i32")
+                known[destination] = {Known::constant, static_cast<std::uint32_t>(static_cast<std::int16_t>(ins.w0 & 0xffff))};
+            else if (!starts(name, "s_cmpk_") && !starts(name, "s_setreg") && name != "s_version")
+                clear(destination);
+            break;
+        }
+        case F::smem: {
+            const auto data = (ins.w0 >> 6) & 0x7f, base = (ins.w0 & 0x3f) * 2;
+            if (!starts(name, "s_load_dword") && !starts(name, "s_buffer_load_dword"))
+                break;
+            const auto rest = name.substr(name.rfind("dword") + 5);
+            const std::uint32_t words = rest.empty() ? 1 : rest == "x2" ? 2 : rest == "x4" ? 4 : rest == "x8" ? 8 : 16;
+            const auto from = known[base];
+            clear(data, words);
+            if (starts(name, "s_load_dword") && from.kind == Known::table) {
+                Known loaded{Known::descriptor, from.value, ins.w1 & 0x1fffff};
+                loaded.origin = ins.at;
+                if (ins.w1 >> 25 != 0x7d)
+                    loaded.dynamic = dynamic_of(ins);
+                for (std::uint32_t n = 0; n < words; ++n)
+                    if (data + n < 128) {
+                        known[data + n] = loaded;
+                        known[data + n].part = n;
+                    }
+            }
+            break;
+        }
+        case F::vop1:
+            if (name == "v_readfirstlane_b32")
+                clear((ins.w0 >> 17) & 0x7f);
+            break;
+        case F::vopc:
+            if (ins.form == Ins::Form::sub_dword && ins.modifier >> 15 & 1)
+                clear((ins.modifier >> 8) & 0x7f, wave64_ ? 2 : 1);
+            else
+                clear(106, 2);
+            break;
+        case F::vop2:
+            if (name.find("_co_") != std::string_view::npos)
+                clear(106, 2);
+            break;
+        case F::vop3: {
+            const auto destination = ins.w0 & 0xff;
+            const std::uint32_t codes[2] = {ins.w1 & 0x1ff, (ins.w1 >> 9) & 0x1ff};
+            if (ins.op < 0x100) {
+                clear(destination & 0x7f, wave64_ ? 2 : 1);
+            } else if (name.find("_co_") != std::string_view::npos) {
+                clear((ins.w0 >> 8) & 0x7f, wave64_ ? 2 : 1);
+            } else if (name == "v_writelane_b32") {
+                if (const auto lane = constant_of(codes[1], ins.literal))
+                    if (const auto slot = spill(destination, *lane, true))
+                        known[*slot] = codes[0] < 128 ? known[codes[0]] : Known{};
+            } else if (name == "v_readlane_b32") {
+                clear(destination & 0x7f);
+                if (const auto lane = constant_of(codes[1], ins.literal); lane && codes[0] >= 256)
+                    if (const auto slot = spill(codes[0] - 256, *lane, false))
+                        known[destination & 0x7f] = known[*slot];
+            }
+            break;
+        }
+        default: break;
+        }
     }
     std::string active() { return "(" + s(126) + " != 0u)"; }
     void line(const std::string &text) { body_ += indent_ + text + "\n"; }
@@ -529,6 +795,7 @@ class Translator {
     // ---- emitting ----
     void emit_block(std::size_t index) {
         auto &block = blocks_[index];
+        known_ = entry_[index];
         if (block.opens) {
             line("for (uint loop" + std::to_string(index) + " = 0u; loop" + std::to_string(index) +
                  " < 4096u; ++loop" + std::to_string(index) + ") {");
@@ -544,6 +811,7 @@ class Translator {
             if (i + 1 == block.end && (branch(ins) || ins.name == "s_endpgm"))
                 break;
             emit(ins);
+            track(ins, known_);
         }
         const auto &last = code_list_[block.end - 1];
         const auto to = target_block_[index];
@@ -626,26 +894,24 @@ class Translator {
             fetch_inputs();
             return;
         }
+        // what stands for something of the console's is moved by what is known of it alone
+        const auto only_known = [&](std::uint32_t reg) {
+            return reg < 128 && stands_in(known_[reg]) && !known_[reg].maybe;
+        };
         if (name == "s_mov_b32") {
-            if (source < 128 && (known_[source].kind == Known::table || known_[source].kind == Known::descriptor ||
-                                 known_[source].kind == Known::root)) {
-                const auto copy = known_[source];
-                known_[destination] = copy;
-                return;
-            }
-            const auto value = constant_of(source, ins.literal);
-            const bool code = source < 128 && known_[source].kind == Known::code;
-            set_s(destination, operand(ins, source));
-            if (value)
-                known_[destination] = {Known::constant, *value};
-            else if (code)
-                known_[destination] = {Known::code};
+            if (!only_known(source))
+                set_s(destination, operand(ins, source));
+            return;
+        }
+        if (name == "s_mov_b64" && source < 127 && (only_known(source) || only_known(source + 1))) {
+            for (std::uint32_t half = 0; half < 2; ++half)
+                if (!only_known(source + half))
+                    set_s(destination + half, operand(ins, source + half));
             return;
         }
         if (name == "s_getpc_b64") { // where the next instruction is, from the first
             set_s(destination, hex(4 * (ins.at + 1)));
             set_s(destination + 1, "0u");
-            known_[destination] = {Known::code};
             return;
         }
         if (name == "s_bitset0_b32" || name == "s_bitset1_b32") {
@@ -797,29 +1063,11 @@ class Translator {
         else if (name == "s_mul_hi_u32") value = "mul_hi(" + a + ", " + b + ")", condition.clear();
         else
             give_up(std::string(name));
-        // an address in the code stays one with something added to it
-        const bool code = (name == "s_add_u32" || name == "s_add_i32") &&
-                          ((first < 128 && known_[first].kind == Known::code) ||
-                           (second < 128 && known_[second].kind == Known::code));
-        // the upper half of a root descriptor's address with a stride put in: on its way to
-        // being a buffer descriptor
-        Known upper;
-        if (name == "s_or_b32" || name == "s_and_b32")
-            for (const auto &[reg, other] : {std::pair{first, second}, std::pair{second, first}})
-                if (reg < 128 && known_[reg].kind == Known::root && known_[reg].part == 1) {
-                    upper = known_[reg];
-                    if (const auto bits = constant_of(other, ins.literal); bits && name == "s_or_b32")
-                        upper.stride = (*bits >> 16) & 0x3fff;
-                }
         line("{ uint X = " + value + ";");
         if (!condition.empty())
             line("scc = " + condition + ";");
         set_s(destination, "X");
         line("}");
-        if (code)
-            known_[destination] = {Known::code};
-        else if (upper.kind == Known::root)
-            known_[destination] = upper;
     }
     void emit_sopk(const Ins &ins) {
         const auto destination = (ins.w0 >> 16) & 0x7f;
@@ -827,7 +1075,6 @@ class Translator {
         const auto name = ins.name;
         if (name == "s_movk_i32") {
             set_s(destination, hex(immediate));
-            known_[destination] = {Known::constant, immediate};
         } else if (name == "s_addk_i32") {
             set_s(destination, s(destination) + " + " + hex(immediate));
         } else if (name == "s_mulk_i32") {
@@ -894,8 +1141,12 @@ class Translator {
         if (known.dynamic < 0) {
             const auto index = known.offset / descriptor_size(known.value);
             for (const auto &range : ranges)
-                if (index >= range.offset && (range.count == ~0u || index - range.offset < range.count))
-                    return {range.type, range.base + (index - range.offset), range.space};
+                if (index >= range.offset && (range.count == ~0u || index - range.offset < range.count)) {
+                    Resource resource{range.type, range.base + (index - range.offset), range.space};
+                    resource.loaded = true;
+                    resource.origin = known.origin;
+                    return resource;
+                }
             give_up("a descriptor outside its table");
         }
         // One of many, picked while the shader runs. A table that has views of both kinds
@@ -905,6 +1156,7 @@ class Translator {
         resource.dynamic = known.dynamic;
         resource.parameter = known.value;
         resource.origin = known.origin;
+        resource.loaded = true;
         bool readable = false, writable = false;
         for (const auto &range : ranges) {
             readable |= range.type == 0;
@@ -934,6 +1186,8 @@ class Translator {
     // gets a range of its own, which is what the table has several for.
     std::string object(const Resource &resource, const std::string &type) {
         const char letter = "tubs"[resource.type];
+        if (resource.loaded)
+            facts_.types.emplace(resource.origin, type);
         if (resource.dynamic < 0) {
             const auto name = std::string(1, letter) + std::to_string(resource.reg) + "_" + std::to_string(resource.space);
             const auto found = declared_.find(name);
@@ -1005,18 +1259,9 @@ class Translator {
             }
             if (from.kind != Known::table)
                 give_up("a load from memory that is not a descriptor of a table");
-            Known loaded{Known::descriptor, from.value, offset};
-            loaded.origin = ins.at;
-            if (indexed) {
-                // where in the table is only known when the shader runs
-                loaded.dynamic = dynamics_++;
-                line("d" + std::to_string(loaded.dynamic) + " = " + where + ";");
-            }
-            for (std::uint32_t n = 0; n < words; ++n)
-                if (data + n < 128) {
-                    known_[data + n] = loaded;
-                    known_[data + n].part = n;
-                }
+            // where in the table is only known when the shader runs
+            if (indexed)
+                line("d" + std::to_string(dynamic_of(ins)) + " = " + where + ";");
             return;
         }
         if (starts(name, "s_buffer_load_dword")) {
@@ -1404,13 +1649,13 @@ class Translator {
         const auto &x = reversed ? b : a, &y = reversed ? a : b;
         const auto extra = with_in ? "(" + in + " != 0u ? 1u : 0u)" : std::string("0u");
         if (subtract)
-            line("{ uint cin = " + extra + ", X = " + x + " - " + y + " - cin; bool out = " + y + " > " + x +
+            line("{ uint cin = " + extra + ", X = " + x + " - " + y + " - cin; bool carried = " + y + " > " + x +
                  " || (cin != 0u && " + y + " == " + x + ");");
         else
-            line("{ uint cin = " + extra + ", X = " + x + " + " + y + " + cin; bool out = X < " + x +
+            line("{ uint cin = " + extra + ", X = " + x + " + " + y + " + cin; bool carried = X < " + x +
                  " || (cin != 0u && X == " + x + ");");
         set_v(destination, "X");
-        set_mask(mask, "out");
+        set_mask(mask, "carried");
         line("}");
     }
     void emit_compare(std::string_view full, std::uint32_t mask, const std::string &a, const std::string &b) {
@@ -1457,14 +1702,38 @@ class Translator {
     }
     void emit_vop3(const Ins &ins) {
         const auto destination = ins.w0 & 0xff;
-        const auto absolute = (ins.w0 >> 8) & 7, clamp = (ins.w0 >> 15) & 1;
+        // an addition with a carry has the register its carry goes to where others have
+        // their modifiers
+        const bool carries = ins.name.find("_co_") != std::string_view::npos;
+        const auto absolute = carries ? 0 : (ins.w0 >> 8) & 7, clamp = (ins.w0 >> 15) & 1;
         const auto negate = ins.w1 >> 29, modifier = (ins.w1 >> 27) & 3;
         const std::uint32_t codes[3] = {ins.w1 & 0x1ff, (ins.w1 >> 9) & 0x1ff, (ins.w1 >> 18) & 0x1ff};
         const auto name = ins.name;
+        if (name == "v_writelane_b32" || name == "v_readlane_b32") {
+            // A scalar kept in one lane of a vector register and taken back from it: each
+            // such lane is a variable of its own.
+            const auto lane = constant_of(codes[1], ins.literal);
+            const auto variable = [](std::uint32_t slot) { return "w" + std::to_string(slot - 128); };
+            if (name == "v_writelane_b32") {
+                const auto slot = lane ? spill(destination, *lane, true) : std::nullopt;
+                if (!slot)
+                    give_up("v_writelane_b32 to a lane picked at run time");
+                if (!(codes[0] < 128 && stands_in(known_[codes[0]]) && !known_[codes[0]].maybe))
+                    line(variable(*slot) + " = " + operand(ins, codes[0]) + ";");
+                return;
+            }
+            const auto slot = lane && codes[0] >= 256 ? spill(codes[0] - 256, *lane, false) : std::nullopt;
+            if (!slot)
+                set_s(destination & 0x7f, operand(ins, codes[0]));
+            else if (!(stands_in(known_[*slot]) && !known_[*slot].maybe))
+                set_s(destination & 0x7f, variable(*slot));
+            return;
+        }
         // which sources each operation has, so that no register is read that is not one
         const bool compare = ins.op < 0x100;
         const bool one = ins.op >= 0x180 && ins.op < 0x200;
-        const bool two = compare || (ins.op >= 0x100 && ins.op < 0x140 && name != "v_cndmask_b32") || name == "v_mul_lo_u32" || name == "v_mul_hi_u32" || name == "v_mul_lo_i32" || name == "v_mul_hi_i32" || name == "v_ldexp_f32" || name == "v_add_co_u32" || name == "v_sub_co_u32" || name == "v_subrev_co_u32" || name == "v_cvt_pkrtz_f16_f32" || name == "v_cvt_pknorm_i16_f32" || name == "v_cvt_pknorm_u16_f32" || name == "v_add_nc_u16" || name == "v_sub_nc_u16" || name == "v_mul_lo_u16" || name == "v_lshlrev_b64" || name == "v_lshrrev_b64" || name == "v_readlane_b32" || name == "v_pack_b32_f16";
+        const bool carry_in = name.find("_co_ci_") != std::string_view::npos;
+        const bool two = compare || (ins.op >= 0x100 && ins.op < 0x140 && name != "v_cndmask_b32" && !carry_in) || name == "v_mul_lo_u32" || name == "v_mul_hi_u32" || name == "v_mul_lo_i32" || name == "v_mul_hi_i32" || name == "v_ldexp_f32" || name == "v_add_co_u32" || name == "v_sub_co_u32" || name == "v_subrev_co_u32" || name == "v_cvt_pkrtz_f16_f32" || name == "v_cvt_pknorm_i16_f32" || name == "v_cvt_pknorm_u16_f32" || name == "v_add_nc_u16" || name == "v_sub_nc_u16" || name == "v_mul_lo_u16" || name == "v_lshlrev_b64" || name == "v_lshrrev_b64" || name == "v_readlane_b32" || name == "v_pack_b32_f16";
         const int count = one ? 1 : two ? 2 : 3;
         const bool is_float = name.find("_f32") != std::string_view::npos || name.find("_f16") != std::string_view::npos;
         const bool is_half = name.find("_f16") != std::string_view::npos && name.find("f16_f32") == std::string_view::npos;
@@ -1501,8 +1770,8 @@ class Translator {
             return;
         }
         if (name == "v_cndmask_b32") value = "(" + x[2] + " != 0u ? " + x[1] + " : " + x[0] + ")";
-        else if (name == "v_add_co_u32" || name == "v_sub_co_u32" || name == "v_subrev_co_u32") {
-            carry(name, destination, (ins.w0 >> 8) & 0x7f, x[0], x[1], "0u");
+        else if (carries) {
+            carry(name, destination, (ins.w0 >> 8) & 0x7f, x[0], x[1], carry_in ? x[2] : "0u");
             return;
         } else if (two && ins.op >= 0x100 && ins.op < 0x140) value = binary(name, x[0], x[1], v(destination));
         else if (name == "v_mad_f32" || name == "v_fma_f32") value = u(fx(0) + " * " + fx(1) + " + " + fx(2));
@@ -2053,8 +2322,10 @@ class Translator {
         }
         text += declarations_;
         std::string registers;
-        for (int n = 0; n < dynamics_; ++n)
+        for (std::size_t n = 0; n < dynamic_id_.size(); ++n)
             registers += "    uint d" + std::to_string(n) + " = 0u;\n";
+        for (std::size_t n = 0; n < spills_.size(); ++n)
+            registers += "    uint w" + std::to_string(n) + " = 0u;\n";
         for (const auto reg : used_s_)
             registers += "    uint s" + std::to_string(reg) + " = " + (reg == 126 || reg == 127 ? "0xffffffffu" : "0u") + ";\n";
         for (const auto reg : used_v_)
@@ -2113,7 +2384,6 @@ class Translator {
     Stage stage_;
     const Shader &shader_;
     Facts &facts_;
-    int dynamics_ = 0;
     std::map<std::string, std::pair<std::string, std::uint32_t>> arrays_; // name and first slot
     std::set<std::pair<std::uint32_t, std::size_t>> taken_;             // ranges with an array
     std::optional<std::pair<std::uint32_t, std::uint32_t>> placed_;
@@ -2129,7 +2399,11 @@ class Translator {
     std::vector<std::size_t> target_block_;
     std::map<std::size_t, std::size_t> loop_end_;
     std::vector<std::size_t> open_loops_;
-    Known known_[128];
+    State known_{};
+    std::vector<State> entry_;                   // what is known where each block starts
+    std::map<std::uint32_t, int> dynamic_id_;    // by the instruction that loads
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> spills_; // register, lane
+    std::set<std::uint32_t> wanted_;
     std::map<std::uint32_t, std::uint32_t> attributes_;
     std::set<std::uint32_t> used_s_, used_v_;
     std::map<std::string, std::string> declared_;
