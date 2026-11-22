@@ -2238,12 +2238,9 @@ struct Staging {
 };
 std::mutex staging_mutex;
 std::deque<Staging> staging;
-// A sampler feedback map copied to a buffer. The console decodes the map on the way; the host
-// copies a map only to another map, and decodes it with ResolveSubresourceRegion into a
-// texture of bytes. So the map is resolved into a texture of ours, one for each map and kept,
-// and that one copied to where the title wants it. A byte is the least mip that was asked
-// for, 255 for none. In a footprint of R8_TYPELESS the console gives it with three bits of
-// fraction, which is not done here: the title reads an eighth of the level.
+// CopyTextureRegion from a sampler feedback map to a buffer: the console decodes in the copy,
+// the host needs ResolveSubresourceRegion(DECODE) into an R8_UINT texture first. Bytes are
+// whole mip levels (255: none); the console's 5.3 fixed point for R8_TYPELESS is not done.
 struct DecodedFeedback {
     ID3D12Resource *texture;
     UINT64 width;
@@ -2833,10 +2830,8 @@ void STDMETHODCALLTYPE clear_render_target(void *self, Handle view, const FLOAT 
                                            const D3D12_RECT *rects) {
     host_of(self)->ClearRenderTargetView(host_view(view), color, count, rects);
 }
-// The view a clear names by its CPU handle is one the host reads, which it cannot in a heap
-// shaders see, and a console title has the view of its sampler feedback map in no other. The
-// host gets a view of the map in a heap of ours instead, made for the clear: the host reads
-// it when the clear is recorded, so the slots are used in turn.
+// ClearUnorderedAccessView needs its CPU handle in a non-shader-visible heap; a title passes
+// one of its shader-visible heap. The feedback map's view is remade in a heap of ours.
 std::mutex feedback_mutex;
 std::map<ID3D12Resource *, ID3D12Resource *> feedback_texture; // by map: what it is paired with
 struct FeedbackViews {

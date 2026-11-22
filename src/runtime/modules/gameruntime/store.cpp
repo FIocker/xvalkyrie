@@ -119,14 +119,13 @@ HRESULT WINAPI query_none_count(void *, XAsyncBlock *block, std::uint32_t *count
 HRESULT WINAPI query_none_result(void *, XAsyncBlock *block, std::uint32_t, void *) {
     return result(block, count_identity, 0, nullptr, nullptr);
 }
-// the packages named have no updates either, so downloading them is done at once
+// no updates: nothing to download
 HRESULT WINAPI query_none_of(void *, Context *, const char **, std::size_t, XAsyncBlock *block) {
     return finish(block, count_identity, S_OK);
 }
 HRESULT WINAPI none_result(void *, XAsyncBlock *block) {
     return result(block, count_identity, 0, nullptr, nullptr);
 }
-// the package a product of the store installs as: no product is installed
 HRESULT WINAPI package_identifier(void *, const char *, std::size_t size, char *identifier) {
     if (identifier && size)
         *identifier = '\0';

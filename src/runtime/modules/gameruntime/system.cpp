@@ -138,9 +138,7 @@ HRESULT WINAPI save_files_quota(void *, void *, const char *, std::int64_t *rema
     *remaining = std::int64_t{1} << 30;
     return S_OK;
 }
-// PFXGameSave: the same files with a service to synchronize them with, which is never
-// reached. A configuration only says where its files are: the place the title names
-// (PFXGameSaveConfigRequest with InitFlagUseFileLocation), or a folder of its own.
+// PFXGameSave: local files, never synchronized. InitFlagUseFileLocation (8) names the folder.
 struct SaveConfig {
     std::string folder;
 };
@@ -174,7 +172,7 @@ HRESULT WINAPI save_synchronized(void *, SaveConfig *, std::uint64_t, XAsyncBloc
 HRESULT WINAPI save_synchronized_result(void *, XAsyncBlock *block) {
     return result(block, sync_identity, 0, nullptr, nullptr);
 }
-// PFXGameSaveSyncState: SyncComplete, with nothing transferred
+// PFXGameSaveSyncState::SyncComplete
 HRESULT WINAPI save_progress(void *, void *, std::uint32_t *state, std::uint64_t *current,
                              std::uint64_t *total) {
     if (state)
@@ -187,7 +185,7 @@ HRESULT WINAPI save_progress(void *, void *, std::uint32_t *state, std::uint64_t
 }
 HRESULT WINAPI save_callbacks(void *, const void *) { return S_OK; }
 HRESULT WINAPI save_device_callback(void *, void *, void *) { return S_OK; }
-// an answer to a screen about synchronizing, none of which is ever asked for
+// no sync UI is ever raised
 HRESULT WINAPI save_ui_response(void *, void *, std::uint32_t) { return E_UNEXPECTED; }
 
 HRESULT WINAPI storage_path_size(void *, std::size_t *size) {
@@ -286,19 +284,18 @@ HRESULT WINAPI install_chunks_async(void *, const char *, std::uint32_t, const v
 HRESULT WINAPI install_chunks_result(void *, XAsyncBlock *block, Monitor **handle) {
     return result(block, chunks_identity, sizeof *handle, handle, nullptr);
 }
-// the title's files are the user's: nothing is removed, and what is asked about stays ready
+// nothing is removed
 HRESULT WINAPI uninstall_chunks(void *, const char *, std::uint32_t, const void *) { return S_OK; }
 HRESULT WINAPI uninstall_instance(void *, const char *) { return e_not_found; }
 bool WINAPI uninstall_package(void *, const char *) { return false; }
-// XPackageKind: a game
+// XPackageKind::Game
 HRESULT WINAPI package_kind(void *, const char *, std::uint32_t *kind) {
     if (!kind)
         return E_POINTER;
     *kind = 0;
     return S_OK;
 }
-// XPackageWriteStats: the budget a console gives a title for writing to its package's drive,
-// a gibibyte in ten minutes, none of it used
+// XPackageWriteStats: 1 GiB per 10 minutes, unused
 struct WriteStats {
     std::uint64_t interval, budget, elapsed, bytes_written;
 };
@@ -308,8 +305,7 @@ HRESULT WINAPI write_stats(void *, WriteStats *stats) {
     *stats = {600000, 1ull << 30, 0, 0};
     return S_OK;
 }
-// a mount of the package's files, and one of the storage a package keeps
-// (XPersistentLocalStorageMountForPackage)
+// storage_mount: XPersistentLocalStorageMountForPackage
 struct Mount {
 } mount, storage_mount;
 HRESULT WINAPI mount_package(void *, const char *, Mount **handle) {
@@ -421,7 +417,7 @@ HRESULT WINAPI register_3(void *, void *, void *, void *, std::uint64_t *token) 
     return S_OK;
 }
 bool WINAPI unregister(void *, std::uint64_t, bool) { return true; }
-// an invitation to accept: none ever arrives, so the address names none
+// no invite is ever pending
 HRESULT WINAPI accept_invite(void *, const char *) { return e_not_found; }
 HRESULT WINAPI succeeded(void *) { return S_OK; }
 bool WINAPI no(void *) { return false; }

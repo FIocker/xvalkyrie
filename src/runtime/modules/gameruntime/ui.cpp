@@ -50,10 +50,8 @@ std::vector<std::uint8_t> bytes_of(std::uint32_t value) {
     return bytes;
 }
 
-// A title may draw these screens itself (XGameUiSetUiCallbacks, XGameUiUiCallbacks of
-// XGameUI.h). Its callback for a screen gets a handle and what the screen was asked with, on
-// the work port of the operation's queue, and the operation ends when the title answers the
-// handle with the screen's XGameUiSet...UiResponse.
+// XGameUiSetUiCallbacks: the title's callback runs on the work port of the operation's queue
+// with a handle; the operation completes on XGameUiSet...UiResponse(handle).
 enum class Screen {
     profile_card,
     player_picker,
@@ -77,7 +75,7 @@ UiCallbacks ui_callbacks{};
 bool prefer_system_ui = true;
 std::set<Pending *> pending;
 
-// the title's callback for a screen and its context, if the title is the one to draw it
+// {callback, context}; null callback when the system draws the screen
 template <class Callback> std::pair<Callback *, void *> drawn_by_title(Screen screen, bool here) {
     const std::lock_guard lock(ui_mutex);
     auto *const callback = ui_callbacks.screens[static_cast<std::size_t>(screen)];
@@ -188,8 +186,7 @@ HRESULT WINAPI error_dialog(void *, XAsyncBlock *block, HRESULT code, const char
                          });
     return finish(block, shown_identity, S_OK);
 }
-// The screens of Xbox Live have nothing behind them here: each is closed as soon as it is
-// asked for, unless the title draws it.
+// Xbox Live screens: completed at once unless the title draws them
 HRESULT WINAPI profile_card(void *, XAsyncBlock *block, void *user, std::uint64_t player) {
     using Callback = void CALLBACK(Pending *, Queue *, void *, std::uint64_t, void *);
     if (const auto [callback, context] = drawn_by_title<Callback>(Screen::profile_card, false);
@@ -252,7 +249,7 @@ struct PickerInfo {
     const std::uint64_t *selected;
     std::uint32_t least, most;
 };
-// nobody to pick from: the user leaves the picker, unless the title draws it
+// E_ABORT unless the title draws it
 HRESULT WINAPI player_picker(void *, XAsyncBlock *block, void *user, const char *prompt,
                              std::uint32_t from_count, const std::uint64_t *from,
                              std::uint32_t selected_count, const std::uint64_t *selected,
@@ -376,10 +373,8 @@ HRESULT WINAPI text_entry_response(void *, Pending *handle, const char *text) {
                    std::vector<std::uint8_t>(text, text + std::strlen(text) + 1));
 }
 
-// The keyboard that stays open while the title draws the text itself (XGameUiTextEntryOpen)
-// and asks for its state every frame. The host's is a window that gives its text once, when
-// it is closed: the state then says the text changed and the keyboard was dismissed. Without
-// that window it is dismissed from the start, with the text it was opened with.
+// XGameUiTextEntry: the host's keyboard is a modal window, so the state changes once, when it
+// closes (text changed, dismissed). Without it the entry is dismissed from the start.
 struct TextEntry {
     std::mutex mutex;
     std::string text;
@@ -416,8 +411,7 @@ HRESULT WINAPI text_entry_open(void *, const TextEntryOptions *options, std::uin
     return S_OK;
 }
 void WINAPI text_entry_close(void *, TextEntryHandle *handle) { delete handle; }
-// XGameUiTextEntryChangeTypeFlags: text changed 1, dismissed 2. The cursor is after the text,
-// and nothing is being composed.
+// XGameUiTextEntryChangeTypeFlags: TextChanged 1, Dismissed 2
 HRESULT WINAPI text_entry_state(void *, TextEntryHandle *handle, std::uint32_t *change,
                                 std::uint32_t *cursor, std::uint32_t *clause_start,
                                 std::uint32_t *clause_end, std::uint32_t size, char *buffer) {
@@ -437,7 +431,7 @@ HRESULT WINAPI text_entry_state(void *, TextEntryHandle *handle, std::uint32_t *
             *clause = 0;
     return S_OK;
 }
-// XGameUiTextEntryExtents: the part of the screen the keyboard covers, which is none of it
+// XGameUiTextEntryExtents: nothing covered
 HRESULT WINAPI text_entry_extents(void *, TextEntryHandle *handle, float *extents) {
     if (!handle || !extents)
         return E_POINTER;

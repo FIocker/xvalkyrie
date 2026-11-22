@@ -2,10 +2,8 @@
 #include <atomic>
 #include <cstring>
 
-// What leaves a console as video: a stream to a remote client (XGameStreaming), a broadcast
-// (XAppBroadcast) and clips or screenshots (XAppCapture). The title is played where it runs,
-// so no client is ever connected, and the user's capture setting is "not by games".
-// Signatures and structures are those of XGameStreaming.h and XAppCapture.h.
+// XGameStreaming, XAppBroadcast, XAppCapture: no streaming client is ever connected and
+// capture by games is off. Signatures from XGameStreaming.h and XAppCapture.h.
 namespace xv::runtime::modules::gameruntime {
 namespace {
 constexpr HRESULT e_client_not_connected = static_cast<HRESULT>(0x89245401);
@@ -68,15 +66,13 @@ HRESULT WINAPI associated_frame(void *, void *, std::uint64_t *frame) {
         *frame = 0;
     return e_not_streaming_controller;
 }
-// every button, stick and trigger of a reading is a real one: XGameStreamingGamepadPhysicality
-// AllPhysical
+// XGameStreamingGamepadPhysicality::AllPhysical
 HRESULT WINAPI gamepad_physicality(void *, void *reading, std::uint64_t *physicality) {
     if (!reading || !physicality)
         return E_POINTER;
     *physicality = 0x3FF3FF;
     return S_OK;
 }
-// touch layouts for all clients, of which there are none
 HRESULT WINAPI update_state(void *, std::size_t, const void *) { return S_OK; }
 HRESULT WINAPI show_with_state(void *, const char *, std::size_t, const void *) { return S_OK; }
 HRESULT WINAPI update_state_on_client(void *, Client, std::size_t, const void *) {
@@ -106,7 +102,7 @@ HRESULT WINAPI session_id(void *, Client, std::size_t size, char *id, std::size_
         *used = 0;
     return e_client_not_connected;
 }
-// XGameStreamingDisplayDetails is 44 bytes: two sizes, a RECT, three limits and flags
+// sizeof(XGameStreamingDisplayDetails) == 44
 HRESULT WINAPI display_details(void *, Client, std::uint32_t, float, float, void *details) {
     if (details)
         std::memset(details, 0, 44);
@@ -141,7 +137,7 @@ HRESULT WINAPI capture_settings(void *, VideoCaptureSettings *settings) {
     *settings = {1920, 1080, 0, 0, 0, false};
     return S_OK;
 }
-// XAppCaptureDiagnosticScreenshotResult starts with its count of files
+// result->fileCount is first
 HRESULT WINAPI diagnostic_screenshot(void *, bool, std::uint16_t, const char *,
                                      std::size_t *result) {
     if (result)
@@ -160,7 +156,6 @@ HRESULT WINAPI start_user_record(void *, void *, std::uint32_t size, char *local
         *local_id = '\0';
     return E_ACCESSDENIED;
 }
-// nothing was captured, so no local id names anything and no stream is open
 HRESULT WINAPI open_screenshot(void *, const char *, std::uint16_t, void **handle,
                                std::uint64_t *total) {
     if (handle)

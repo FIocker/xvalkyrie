@@ -63,24 +63,21 @@ HRESULT WINAPI add_async(void *, std::uint32_t, XAsyncBlock *block) {
 HRESULT WINAPI add_result(void *, XAsyncBlock *block, User **handle) {
     return result(block, add_identity, sizeof *handle, handle, nullptr);
 }
-// the one user is the only one there is to add by id
 HRESULT WINAPI add_by_id_async(void *, std::uint64_t id, XAsyncBlock *block) {
     return id == xbox_user_id() ? add_async(nullptr, 0, block)
                                 : finish(block, add_identity, e_user_not_found);
 }
-// XUserIsSignOutPresent says there is no signing out
+// XUserIsSignOutPresent is false
 HRESULT WINAPI sign_out_async(void *, User *, XAsyncBlock *block) {
     return finish(block, sign_out_identity, E_NOTIMPL);
 }
 HRESULT WINAPI sign_out_result(void *, XAsyncBlock *block) {
     return result(block, sign_out_identity, 0, nullptr, nullptr);
 }
-// Signing in on another device (remote connect) and on this one while signed in elsewhere
-// (SPOP) are prompts the title may draw. The user is signed in from the start, so neither is
-// ever raised and no operation exists to cancel or complete.
+// remote connect and SPOP prompts are never raised: no operation to cancel or complete
 HRESULT WINAPI prompt_handlers(void *, Queue *, void *, void *) { return S_OK; }
 HRESULT WINAPI prompt_operation(void *, void *, std::uint32_t) { return E_INVALIDARG; }
-// the gamepad is the user's: APP_LOCAL_DEVICE_ID, 32 bytes, as GameInput reports it
+// APP_LOCAL_DEVICE_ID (32 bytes) of the GameInput gamepad
 HRESULT WINAPI find_controller_async(void *, User *, XAsyncBlock *block) {
     return finish(block, controller_identity, S_OK, std::vector<std::uint8_t>(32));
 }
