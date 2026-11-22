@@ -435,6 +435,8 @@ class Translator {
                 exec_changes_ = true;
             if (ends(ins.name, "_b64") || ends(ins.name, "saveexec_b64"))
                 wave64_ = true;
+            if (ins.format == F::ds && ins.name != "ds_swizzle_b32" && ins.name != "ds_nop")
+                uses_shared_ = true;
         }
     }
 
@@ -999,6 +1001,10 @@ class Translator {
             "s_denorm_mode",  "s_ttracedata",   "s_ttracedata_imm",
             "s_incperflevel", "s_decperflevel", "s_icache_inv",
             "s_wakeup",       "s_sleep",        "s_setprio"};
+        if (ins.name == "s_barrier" && uses_shared_) {
+            synchronize();
+            return;
+        }
         if (std::find(std::begin(nothing), std::end(nothing), ins.name) != std::end(nothing))
             return;
         // FP_ROUND of MODE: 0 in both fields is round to nearest even, the host's only mode
@@ -1834,14 +1840,143 @@ class Translator {
                    std::to_string(32 - width - shift) + ")";
         return "(" + part + " << " + std::to_string(shift) + ")";
     }
-    // Memory the lanes share. Of it, only reading a register of another pixel of the same
-    // quad is done: the pixel's own value and how it changes across the quad give it.
+    // The threads of a group wait for each other. The host only allows it where every
+    // thread is sure to come by: outside the blocks a branch may skip and outside loops.
+    void synchronize() {
+        if (indent_.size() == 4)
+            line("GroupMemoryBarrierWithGroupSync();");
+        shared_ = Shared::settled;
+    }
+    // A wave runs each instruction for all of its lanes before the next one, so what one
+    // lane writes is there for every lane that reads after it, and what one reads is not
+    // yet what another writes after it. The host's threads run on their own: they are made
+    // to wait for each other where a shader goes from writing to reading or back.
+    void touch_shared(bool write) {
+        const auto now = write ? Shared::written : Shared::read;
+        if (shared_ != Shared::settled && shared_ != now)
+            synchronize();
+        shared_ = now;
+    }
+    // the word of the group's memory at `offset` bytes from `address`
+    std::string shared_word(const std::string &address, std::uint32_t offset) {
+        return "lds[min((" + address + " + " + std::to_string(offset) + "u) >> 2, " +
+               std::to_string(shared_words() - 1) + "u)]";
+    }
+    // LDS_SIZE of COMPUTE_PGM_RSRC2, in units of 128 words; the host has 32 KiB at most
+    std::uint32_t shared_words() const {
+        const auto units = (header_[0] >> 15) & 0x1ff;
+        return units ? std::min(units * 128, 8192u) : 8192u;
+    }
+    // The memory the threads of a group share (LDS), as an array of words.
+    void emit_group_memory(const Ins &ins) {
+        auto name = ins.name;
+        if (name == "ds_nop")
+            return;
+        if (stage_ != Stage::compute)
+            give_up(std::string(name) + " outside a compute shader");
+        if (ins.w0 >> 16 & 1)
+            give_up(std::string(name) + " on global memory");
+        const std::uint32_t offsets[2] = {ins.w0 & 0xff, (ins.w0 >> 8) & 0xff};
+        const auto offset = ins.w0 & 0xffff;
+        const std::uint32_t data[2] = {(ins.w1 >> 8) & 0xff, (ins.w1 >> 16) & 0xff};
+        const auto destination = ins.w1 >> 24;
+        const std::string guard = exec_changes_ ? "if " + active() + " " : "";
+        // the address first: an instruction may write the register it takes it from
+        const auto at = "x" + std::to_string(temporaries_++);
+        const auto address = [&] { line("uint " + at + " = " + v(ins.w1 & 0xff) + ";"); };
+        const bool wide = ends(name, "_b64");
+        const std::uint32_t words = wide ? 2 : 1;
+        if (name == "ds_read_b32" || name == "ds_read_b64") {
+            touch_shared(false);
+            address();
+            for (std::uint32_t n = 0; n < words; ++n)
+                set_v(destination + n, shared_word(at, offset + 4 * n));
+            return;
+        }
+        if (name == "ds_write_b32" || name == "ds_write_b64") {
+            touch_shared(true);
+            address();
+            for (std::uint32_t n = 0; n < words; ++n)
+                line(guard + shared_word(at, offset + 4 * n) + " = " + v(data[0] + n) + ";");
+            return;
+        }
+        if (starts(name, "ds_read2") || starts(name, "ds_write2")) {
+            // two places, each counted in elements, or in 64 of them
+            const bool write = starts(name, "ds_write2");
+            const auto unit = 4 * words * (name.find("st64") != std::string_view::npos ? 64 : 1);
+            touch_shared(write);
+            address();
+            for (std::uint32_t which = 0; which < 2; ++which)
+                for (std::uint32_t n = 0; n < words; ++n) {
+                    const auto word = shared_word(at, offsets[which] * unit + 4 * n);
+                    if (write)
+                        line(guard + word + " = " + v(data[which] + n) + ";");
+                    else
+                        set_v(destination + which * words + n, word);
+                }
+            return;
+        }
+        const auto shift = "(((" + at + " + " + std::to_string(offset) + "u) & 3u) * 8u)";
+        if (name == "ds_read_u8" || name == "ds_read_i8" || name == "ds_read_u16" ||
+            name == "ds_read_i16") {
+            const bool byte = ends(name, "8"), extend = name[8] == 'i';
+            touch_shared(false);
+            address();
+            const auto part = "((" + shared_word(at, offset) + " >> " + shift + ") & " +
+                              (byte ? "0xffu" : "0xffffu") + ")";
+            const auto bits = byte ? "24" : "16";
+            set_v(destination,
+                  extend ? "(uint)(((int)(" + part + " << " + bits + ")) >> " + bits + ")" : part);
+            return;
+        }
+        if (name == "ds_write_b8" || name == "ds_write_b16") {
+            // part of a word, whose other parts another thread may be writing
+            const auto mask = name == "ds_write_b8" ? "0xffu" : "0xffffu";
+            touch_shared(true);
+            address();
+            line(guard + "{ InterlockedAnd(" + shared_word(at, offset) + ", ~(" + mask + " << " +
+                 shift + ")); InterlockedOr(" + shared_word(at, offset) + ", (" + v(data[0]) +
+                 " & " + mask + ") << " + shift + "); }");
+            return;
+        }
+        // ds_<operation>[_rtn]_<type>: the word takes the operation's result, and with _rtn
+        // the destination what the word had
+        name.remove_prefix(3);
+        const auto type = name.substr(name.rfind('_') + 1);
+        name.remove_suffix(type.size() + 1);
+        const bool returns = ends(name, "_rtn");
+        if (returns)
+            name.remove_suffix(4);
+        static constexpr std::pair<std::string_view, std::string_view> operations[] = {
+            {"add", "add"}, {"sub", "sub"}, {"min", "umin"},    {"max", "umax"},     {"and", "and"},
+            {"or", "or"},   {"xor", "xor"}, {"wrxchg", "swap"}, {"cmpst", "cmpswap"}};
+        std::string_view how;
+        for (const auto &[operation, function] : operations)
+            if (name == operation && (type == "u32" || type == "b32"))
+                how = function;
+        if (how.empty())
+            give_up(std::string(ins.name));
+        touch_shared(true);
+        address();
+        const auto before = "x" + std::to_string(temporaries_++);
+        line("uint " + before + " = 0u;");
+        // ds_cmpst: the first datum is what the word is compared with, the second what it takes
+        line(guard + (how == "cmpswap"
+                          ? atomic(how, shared_word(at, offset), v(data[1]), v(data[0]), before)
+                          : atomic(how, shared_word(at, offset), v(data[0]), "", before)));
+        if (returns)
+            set_v(destination, before);
+    }
+    // Reading a register of another pixel of the same quad: the pixel's own value and how
+    // it changes across the quad give it.
     void emit_shared(const Ins &ins) {
         const auto name = ins.name;
         const auto offset = ins.w0 & 0xffff;
         const auto source = (ins.w1 >> 8) & 0xff, destination = ins.w1 >> 24;
-        if (name != "ds_swizzle_b32")
-            give_up(std::string(name));
+        if (name != "ds_swizzle_b32") {
+            emit_group_memory(ins);
+            return;
+        }
         if (stage_ != Stage::pixel || !(offset >> 15 & 1))
             give_up("ds_swizzle_b32 that is not between the pixels of a quad");
         const auto id = "x" + std::to_string(temporaries_++);
@@ -3092,6 +3227,8 @@ class Translator {
             text += "struct Words { uint w[" + std::to_string(words_in_element) + "]; };\n";
         if (uses_constants_)
             text += "struct Constants { uint4 w[4096]; };\n";
+        if (uses_shared_)
+            text += "groupshared uint lds[" + std::to_string(shared_words()) + "];\n";
         if (uses_data_) {
             // the constants a shader keeps after its code, by their address from the first
             // instruction
@@ -3218,6 +3355,9 @@ class Translator {
     std::optional<std::pair<std::uint32_t, std::uint32_t>> placed_;
     std::map<std::string, std::uint32_t> constants_size_; // in vectors, by name
     bool uses_words_ = false, uses_constants_ = false, uses_data_ = false, quad_ = false;
+    bool uses_shared_ = false;
+    // what the shader did last with the memory its group shares
+    enum class Shared { settled, read, written } shared_ = Shared::settled;
     std::vector<Parameter> parameters_;
     std::vector<std::uint32_t> code_;
     std::uint32_t header_[4] = {};
