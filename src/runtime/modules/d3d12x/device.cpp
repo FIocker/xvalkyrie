@@ -3071,7 +3071,9 @@ std::uint64_t root_address(std::uint64_t address) {
 // read holds from such an address on is copied to where the host takes it.
 std::uint64_t root_constants(std::uint64_t address) {
     const auto host = root_address(address);
-    if (!(host & 255))
+    // only Xbox One titles have been seen to need it, and a Series title that binds its
+    // constants this way for every draw would have 64 KiB copied each time
+    if (!(host & 255) || console != Target::durango)
         return host;
     ID3D12Resource *buffer = nullptr;
     std::uint64_t start = 0, end = 0;
