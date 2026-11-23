@@ -248,6 +248,50 @@ HRESULT STDMETHODCALLTYPE create_buffer(void *self, const D3D11_BUFFER_DESC *des
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
     return result;
 }
+// The inputs a vertex shader reads that `elements` does not name, from the input signature
+// of its DXBC. The console reads zeros for them and the host refuses the layout, so they
+// are given a vertex stream of their own that nothing is ever bound to.
+constexpr UINT unbound_stream = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1;
+void add_missing_inputs(std::vector<D3D11_INPUT_ELEMENT_DESC> &elements, const void *code,
+                        SIZE_T size) {
+    const auto *const bytes = static_cast<const std::uint8_t *>(code);
+    const auto word = [&](std::size_t at) {
+        std::uint32_t value = 0;
+        if (at + 4 <= size)
+            std::memcpy(&value, bytes + at, 4);
+        return value;
+    };
+    if (!code || size < 32 || std::memcmp(code, "DXBC", 4))
+        return;
+    for (std::uint32_t chunk = 0; chunk < word(28); ++chunk) {
+        const std::size_t at = word(32 + 4 * chunk);
+        const bool wide = at + 4 <= size && !std::memcmp(bytes + at, "ISG1", 4);
+        if (at + 16 > size || (!wide && std::memcmp(bytes + at, "ISGN", 4)))
+            continue;
+        const std::size_t data = at + 8, stride = wide ? 32 : 24;
+        for (std::uint32_t index = 0; index < word(data); ++index) {
+            const auto entry = data + 8 + index * stride + (wide ? 4 : 0);
+            const auto name = data + word(entry);
+            if (entry + 24 > size || name >= size || word(entry + 8)) // a system value
+                continue;
+            const auto *const semantic = reinterpret_cast<const char *>(bytes + name);
+            if (!std::memchr(semantic, 0, size - name))
+                continue;
+            const auto number = word(entry + 4);
+            const bool named = std::any_of(elements.begin(), elements.end(), [&](const auto &e) {
+                return e.SemanticIndex == number && !_stricmp(e.SemanticName, semantic);
+            });
+            if (named)
+                continue;
+            const auto type = word(entry + 12); // 1 unsigned, 2 signed, 3 float
+            elements.push_back({semantic, number,
+                                type == 1   ? DXGI_FORMAT_R32G32B32A32_UINT
+                                : type == 2 ? DXGI_FORMAT_R32G32B32A32_SINT
+                                            : DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                unbound_stream, 0, D3D11_INPUT_PER_VERTEX_DATA, 0});
+        }
+    }
+}
 // CreateInputLayout (11): the console's R10G10B10_SNORM_A2_UNORM (189), what packed normals
 // are in, is no vertex format of the host's. Its bits are read unsigned there.
 HRESULT STDMETHODCALLTYPE create_input_layout(void *self, const D3D11_INPUT_ELEMENT_DESC *elements,
@@ -258,9 +302,15 @@ HRESULT STDMETHODCALLTYPE create_input_layout(void *self, const D3D11_INPUT_ELEM
         if (element.Format == static_cast<DXGI_FORMAT>(189))
             element.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
     ID3D11InputLayout *created = nullptr;
-    const auto result =
-        static_cast<ID3D11Device *>(unwrap(self))
-            ->CreateInputLayout(host.data(), count, code, size, layout ? &created : nullptr);
+    auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+    auto result =
+        device->CreateInputLayout(host.data(), count, code, size, layout ? &created : nullptr);
+    if (result == E_INVALIDARG) {
+        add_missing_inputs(host, code, size);
+        if (host.size() > count)
+            result = device->CreateInputLayout(host.data(), static_cast<UINT>(host.size()), code,
+                                               size, layout ? &created : nullptr);
+    }
     if (FAILED(result)) {
         std::fprintf(stderr,
                      "[Runtime] CreateInputLayout: 0x%08lx, signature of %zu bytes%s, elements:",
