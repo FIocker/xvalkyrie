@@ -105,7 +105,12 @@ std::wstring console_path(const wchar_t *name) {
     };
     std::error_code error;
     if (drive(L"G:") || drive(L"GAME:")) {
-        const auto rest = path.substr(path.find(L':') + 2);
+        // nothing is above the root of a drive: G:\..\data is G:\data
+        std::filesystem::path rest;
+        for (const auto &part :
+             std::filesystem::path(path.substr(path.find(L':') + 2)).lexically_normal())
+            if (part != L"..")
+                rest /= part;
         return (package_directory(std::filesystem::current_path(error)) / rest).wstring();
     }
     if (drive(L"T:")) {
