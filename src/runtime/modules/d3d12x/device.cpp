@@ -2136,6 +2136,18 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
     }
     return result;
 }
+// CreateCommandQueueX (48): the type, the flags, and which engine and queue of the hardware.
+// The copy engine's queue (type 16) is a copy queue here.
+HRESULT STDMETHODCALLTYPE create_command_queue_x(ID3D12Device *self, const UINT *desc, REFIID iid,
+                                                 void **queue) {
+    if (!desc)
+        return E_INVALIDARG;
+    const D3D12_COMMAND_QUEUE_DESC host{desc[0] == 16
+                                            ? D3D12_COMMAND_LIST_TYPE_COPY
+                                            : static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]),
+                                        0, static_cast<D3D12_COMMAND_QUEUE_FLAGS>(desc[1] & 1), 0};
+    return create_command_queue(self, &host, iid, queue);
+}
 // What the host insists on where the console takes anything: a resource of an upload heap
 // starts as one to read from and one of a readback heap as one to copy to, and only a depth
 // buffer is kept from shaders.
@@ -3661,6 +3673,14 @@ void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT coun
         CloseHandle(event);
     }
 }
+// CreateCommandAllocator (9): the console's copy engine has a list type of its own (16),
+// which is a copy list here
+HRESULT STDMETHODCALLTYPE create_command_allocator(ID3D12Device *self, UINT type, REFIID iid,
+                                                   void **allocator) {
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, UINT, REFIID, void **);
+    return original<Create>(self, 9)(self, type == 16 ? D3D12_COMMAND_LIST_TYPE_COPY : type, iid,
+                                     allocator);
+}
 // CreateCommandList (12), the desktop's way: a proxy as well
 HRESULT STDMETHODCALLTYPE create_command_list_desktop(ID3D12Device *self, UINT node,
                                                       D3D12_COMMAND_LIST_TYPE type,
@@ -4117,9 +4137,13 @@ HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, vo
     overrides.push_back({74, reinterpret_cast<Slot>(&register_page_pool)});
     overrides.push_back({10, reinterpret_cast<Slot>(&create_graphics_pipeline)});
     overrides.push_back({11, reinterpret_cast<Slot>(&create_compute_pipeline)});
-    overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue)});
+    overrides.push_back(
+        {48, reinterpret_cast<Slot>(console == Target::durango
+                                        ? reinterpret_cast<void *>(&create_command_queue_x)
+                                        : reinterpret_cast<void *>(&create_command_queue))});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
     overrides.push_back({12, reinterpret_cast<Slot>(&create_command_list_desktop)});
+    overrides.push_back({9, reinterpret_cast<Slot>(&create_command_allocator)});
     overrides.push_back({29, reinterpret_cast<Slot>(&create_placed_resource)});
     overrides.push_back({30, reinterpret_cast<Slot>(&create_reserved_resource)});
     overrides.push_back({60, reinterpret_cast<Slot>(&create_graphics_pipeline_x)});
