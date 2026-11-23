@@ -5053,10 +5053,106 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             lost_pipeline("deserialized compute", pipeline, signature);
         return made;
     }
-    const auto vertex = modules::empty_vertex_shader(), pixel = modules::empty_pixel_shader();
+    auto vertex = modules::empty_vertex_shader(), pixel = modules::empty_pixel_shader();
     if (vertex.empty() || pixel.empty())
         return E_NOTIMPL;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+    // The state's parts, each a pointer and its length: the programs begin with hashes
+    // (0xd580....) and the vertex program is the one that exports a position; the input
+    // layout has 0x1c at 0x10 and ~0 at 0x1c. Where both programs are translated and the
+    // host's compiler takes them the pipeline is made of them, with the layout; its blend,
+    // depth and target formats are not read yet (XV_PSO_STAND_IN: never).
+    std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
+    std::vector<std::string> names;
+    if (!std::getenv("XV_PSO_STAND_IN")) {
+        using Words = std::span<const std::uint32_t>;
+        Words programs[2]{}; // vertex, pixel
+        std::span<const std::uint8_t> layout;
+        for (int word = 1;
+             word + 1 < 32 && readable(reinterpret_cast<std::uint64_t>(state), 8 * (word + 2));
+             ++word) {
+            const auto length = state[word + 1];
+            if (length < 0x40 || length > (1u << 20) || !readable(state[word], length))
+                continue;
+            const auto *const words = reinterpret_cast<const std::uint32_t *>(state[word]);
+            if (words[0] >> 16 == 0xd580) {
+                bool position = false;
+                for (std::size_t n = 0; n + 1 < length / 4 && words[n] != 0xbf810000; ++n)
+                    position |= words[n] >> 26 == 0x3e && (words[n] >> 4 & 0x3f) == 12;
+                programs[position ? 0 : 1] = {words, static_cast<std::size_t>(length / 4)};
+            } else if (words[4] == 0x1c && words[7] == ~0u) {
+                layout = {reinterpret_cast<const std::uint8_t *>(state[word]),
+                          static_cast<std::size_t>(length)};
+            }
+        }
+        static std::mutex mutex;
+        static std::map<std::uint64_t, std::vector<std::uint8_t>> made;
+        static std::atomic<unsigned> real{0}, stood{0};
+        const auto root = signature_part(signature);
+        const auto shader = [&](modules::ShaderStage stage,
+                                Words program) -> std::span<const std::uint8_t> {
+            if (program.empty())
+                return {};
+            std::uint64_t hash = 0xcbf29ce484222325ull ^ static_cast<std::uint64_t>(stage);
+            const auto mix = [&](const void *data, std::size_t bytes) {
+                for (std::size_t i = 0; i < bytes; ++i)
+                    hash = (hash ^ static_cast<const std::uint8_t *>(data)[i]) * 0x100000001b3ull;
+            };
+            mix(program.data(), program.size_bytes());
+            mix(root.data(), root.size());
+            mix(layout.data(), layout.size());
+            {
+                const std::lock_guard lock(mutex);
+                if (const auto found = made.find(hash); found != made.end())
+                    return found->second;
+            }
+            auto compiled = modules::console_program_shader(stage, program, root, layout);
+            const std::lock_guard lock(mutex);
+            return made.emplace(hash, std::move(compiled)).first->second;
+        };
+        const auto real_vertex = shader(modules::ShaderStage::vertex, programs[0]);
+        const auto real_pixel = shader(modules::ShaderStage::pixel, programs[1]);
+        const auto at32 = [&](std::size_t at) {
+            std::uint32_t value = 0;
+            if (at + 4 <= layout.size())
+                std::memcpy(&value, layout.data() + at, 4);
+            return value;
+        };
+        if (!real_vertex.empty() && !real_pixel.empty()) {
+            vertex = real_vertex, pixel = real_pixel;
+            std::size_t at = 0x50;
+            const auto count = std::min(at32(0x4c), 32u);
+            names.reserve(count);
+            for (std::uint32_t n = 0; n < count; ++n) {
+                const auto length = at32(at);
+                if (!length || length > 64 || at + 4 + length + 24 > layout.size())
+                    break;
+                names.emplace_back(reinterpret_cast<const char *>(layout.data()) + at + 4,
+                                   length - 1);
+                at += 4 + length;
+                elements.push_back(
+                    {names.back().c_str(), at32(at), static_cast<DXGI_FORMAT>(at32(at + 4)),
+                     at32(at + 8), at32(at + 12),
+                     static_cast<D3D12_INPUT_CLASSIFICATION>(at32(at + 16)), at32(at + 20)});
+                at += 24;
+            }
+            desc.InputLayout = {elements.data(), static_cast<UINT>(elements.size())};
+            desc.NumRenderTargets = 1;
+            desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+            for (auto &target : desc.BlendState.RenderTarget)
+                target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            ++real;
+        } else {
+            ++stood;
+        }
+        if (const auto all = real + stood; (all & (all - 1)) == 0) {
+            std::fprintf(stderr,
+                         "[Runtime] pipelines of the title's cache so far: %u made of its "
+                         "programs, %u that draw nothing%c",
+                         real.load(), stood.load(), 10);
+            std::fflush(stderr);
+        }
+    }
     desc.pRootSignature = signature;
     desc.VS = {vertex.data(), vertex.size()};
     desc.PS = {pixel.data(), pixel.size()};
