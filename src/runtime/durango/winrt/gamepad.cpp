@@ -114,30 +114,37 @@ class Reading final : public IGamepadReading {
     }
     STDMETHODIMP get_Timestamp(std::uint64_t *value) override { return put(value, raw_.timestamp); }
     STDMETHODIMP get_Buttons(std::uint32_t *value) override { return put(value, raw_.buttons); }
-    // clang-format off
 #define XV_PRESSED(Name, Bit)                                                                      \
     STDMETHODIMP get_Is##Name##Pressed(boolean *value) override {                                  \
         return put<boolean>(value, (raw_.buttons & (Bit)) != 0);                                   \
     }
-    XV_PRESSED(DPadUp, 0x1)
-    XV_PRESSED(DPadDown, 0x2)
-    XV_PRESSED(DPadLeft, 0x4)
-    XV_PRESSED(DPadRight, 0x8)
-  XV_PRESSED(Menu, 0x10)
-  XV_PRESSED(View, 0x20) XV_PRESSED(LeftThumbstick, 0x40) XV_PRESSED(RightThumbstick, 0x80)
-      XV_PRESSED(LeftShoulder, 0x100) XV_PRESSED(RightShoulder, 0x200) XV_PRESSED(A, 0x1000)
-          XV_PRESSED(B, 0x2000) XV_PRESSED(X, 0x4000) XV_PRESSED(Y, 0x8000)
+    XV_PRESSED(DPadUp, 0x1);
+    XV_PRESSED(DPadDown, 0x2);
+    XV_PRESSED(DPadLeft, 0x4);
+    XV_PRESSED(DPadRight, 0x8);
+    XV_PRESSED(Menu, 0x10);
+    XV_PRESSED(View, 0x20);
+    XV_PRESSED(LeftThumbstick, 0x40);
+    XV_PRESSED(RightThumbstick, 0x80);
+    XV_PRESSED(LeftShoulder, 0x100);
+    XV_PRESSED(RightShoulder, 0x200);
+    XV_PRESSED(A, 0x1000);
+    XV_PRESSED(B, 0x2000);
+    XV_PRESSED(X, 0x4000);
+    XV_PRESSED(Y, 0x8000);
 #undef XV_PRESSED
 #define XV_AXIS(Name, Field)                                                                       \
     STDMETHODIMP get_##Name(float *value) override { return put(value, raw_.Field); }
-              XV_AXIS(LeftTrigger, left_trigger) XV_AXIS(RightTrigger, right_trigger)
-                  XV_AXIS(LeftThumbstickX, left_x) XV_AXIS(LeftThumbstickY, left_y)
-                      XV_AXIS(RightThumbstickX, right_x) XV_AXIS(RightThumbstickY, right_y)
+    XV_AXIS(LeftTrigger, left_trigger);
+    XV_AXIS(RightTrigger, right_trigger);
+    XV_AXIS(LeftThumbstickX, left_x);
+    XV_AXIS(LeftThumbstickY, left_y);
+    XV_AXIS(RightThumbstickX, right_x);
+    XV_AXIS(RightThumbstickY, right_y);
 #undef XV_AXIS
-      // clang-format on
 
-      private : template <class T>
-                static HRESULT put(T *value, T field) {
+  private:
+    template <class T> static HRESULT put(T *value, T field) {
         if (!value)
             return E_POINTER;
         *value = field;
