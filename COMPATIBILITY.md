@@ -13,9 +13,8 @@ launcher shows next to the name.
 | **Nothing**  | Ends with an error before it shows anything                              |
 | **Untested** | In the library, not run yet                                              |
 
-No title is Playable or In-game yet. States come from short runs (under a minute, nobody at
-the gamepad), so a title may get further than its state says. Logs of a run are in
-`%APPDATA%\xvalkyrie\logs`.
+States come from short runs (under a minute, nobody at the gamepad), so a title may get
+further than its state says. Logs of a run are in `%APPDATA%\xvalkyrie\logs`.
 
 ## Xbox One
 
@@ -66,8 +65,8 @@ the gamepad), so a title may get further than its state says. Logs of a run are 
 | Title                                             | ID         | State        | Notes                                                                                                       |
 | ------------------------------------------------- | ---------- | ------------ | ----------------------------------------------------------------------------------------------------------- |
 | Minecraft Preview                                 | `639AA8DD` | **Playable** | Main menu with the right picture                                                                            |
-| Unicorn Overlord                                  | `6897AC80` | **Menu**     | Title screen with the right picture, at "Press Any Button"                                                  |
-| Fortnite                                          | `0FF4B5BD` | **Intro**    | Unreal Engine. Loading screen with the right picture, at "connecting"; it needs its servers to go on        |
+| Unicorn Overlord                                  | `6897AC80` | **Playable** |                                                                                                             |
+| Fortnite                                          | `0FF4B5BD` | **Menu**     | Unreal Engine. Loading screen with the right picture, at "connecting"; it needs its servers to go on        |
 | Psychonauts 2                                     | `68076383` | **Intro**    | Unreal Engine 4. First frames, then the host drops the Direct3D 12 device                                   |
 | XDefiant                                          | `799B973E` | **Boots**    | First frames, then the host drops the Direct3D 12 device (`0x887a0005`). 1966 of its 2004 shaders translate |
 | Concept Destruction                               | `72A634A4` | **Nothing**  |                                                                                                             |

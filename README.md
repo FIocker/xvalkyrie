@@ -84,8 +84,8 @@ the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
     <td><img src="docs/img/compat/psychonauts-2.png" alt="Psychonauts 2" width="170"></td>
   </tr>
   <tr>
-    <td align="center">Intro</td>
     <td align="center">Menu</td>
+    <td align="center">Playable</td>
     <td align="center">Playable</td>
     <td align="center">Boots</td>
     <td align="center">Intro</td>
