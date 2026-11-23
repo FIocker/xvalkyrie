@@ -3796,6 +3796,32 @@ void STDMETHODCALLTYPE set_pipeline_state(void *self, ID3D12PipelineState *state
 }
 // XV_D3D_LOST: what the first draws are made with
 void lost_draw(void *self, const char *method, UINT count) {
+    // how the pipelines the title draws with were made, every so many draws
+    if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr; checking) {
+        static std::mutex mutex;
+        static std::map<std::string, std::uint64_t> kinds;
+        static std::uint64_t draws = 0;
+        std::string kind = "not known";
+        {
+            const std::lock_guard lock(kept_mutex);
+            if (const auto made = made_pipelines.find(static_cast<ListProxy *>(self)->pipeline);
+                made != made_pipelines.end())
+                kind = made->second.rfind("stream", 0) == 0
+                           ? "stream" + made->second.substr(made->second.rfind(", ", made->second.rfind(", root") - 1),
+                                                           made->second.rfind(", root") - made->second.rfind(", ", made->second.rfind(", root") - 1))
+                           : made->second.substr(0, made->second.find(", root"));
+        }
+        const std::lock_guard lock(mutex);
+        ++kinds[kind];
+        if (++draws % 500 == 0) {
+            std::fprintf(stderr, "[Lost] %llu draws:", static_cast<unsigned long long>(draws));
+            for (const auto &[name, number] : kinds)
+                std::fprintf(stderr, " %llu %s;", static_cast<unsigned long long>(number),
+                             name.c_str());
+            std::fprintf(stderr, "%c", 10);
+            std::fflush(stderr);
+        }
+    }
     static std::atomic<int> shown{0};
     if (!std::getenv("XV_D3D_LOST") || shown++ >= 16)
         return;
