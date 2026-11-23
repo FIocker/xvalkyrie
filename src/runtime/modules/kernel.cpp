@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <windows.h>
 
+#include <mmdeviceapi.h>
 #include <objbase.h> // after windows.h
 
 // The Win32 functions a console answers differently from the host: libraries that are ours
@@ -484,8 +485,48 @@ struct ConsoleAudioInfo {
 };
 constexpr GUID console_audio_info{
     0x8b557adc, 0x555e, 0x47a0, {0xb2, 0x23, 0x43, 0x47, 0x7e, 0x48, 0x1d, 0xad}};
+// Another class of the console's device API ({730C5326-...} as {15B673D7-...}), by a
+// title's calls: its first method gives a device (T **), which the title activates an
+// audio client on. The host's default output stands for it.
+struct ConsoleAudioOutput {
+    void **vtable;
+    static HRESULT STDMETHODCALLTYPE query(ConsoleAudioOutput *self, const GUID *, void **object) {
+        *object = self;
+        return S_OK;
+    }
+    static ULONG STDMETHODCALLTYPE reference(ConsoleAudioOutput *) { return 1; }
+    static HRESULT STDMETHODCALLTYPE unknown(ConsoleAudioOutput *) { return E_NOTIMPL; }
+    static HRESULT STDMETHODCALLTYPE device(ConsoleAudioOutput *, IMMDevice **device) {
+        if (!device)
+            return E_POINTER;
+        *device = nullptr;
+        IMMDeviceEnumerator *devices = nullptr;
+        auto result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                       IID_PPV_ARGS(&devices));
+        if (SUCCEEDED(result)) {
+            result = devices->GetDefaultAudioEndpoint(eRender, eConsole, device);
+            devices->Release();
+        }
+        return result;
+    }
+};
+constexpr GUID console_audio_output{
+    0x15b673d7, 0xbd21, 0x4441, {0xa3, 0x0e, 0x58, 0xea, 0xaa, 0xd3, 0x1e, 0x73}};
 HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD context,
                                   const GUID *iid, void **object) {
+    if (*iid == console_audio_output && object) {
+        static void *vtable[16];
+        static ConsoleAudioOutput output{[] {
+            for (auto &slot : vtable)
+                slot = reinterpret_cast<void *>(&ConsoleAudioOutput::unknown);
+            vtable[0] = reinterpret_cast<void *>(&ConsoleAudioOutput::query);
+            vtable[1] = vtable[2] = reinterpret_cast<void *>(&ConsoleAudioOutput::reference);
+            vtable[3] = reinterpret_cast<void *>(&ConsoleAudioOutput::device);
+            return vtable;
+        }()};
+        *object = &output;
+        return S_OK;
+    }
     if (*iid == console_audio_info && object) {
         static void *vtable[16];
         static ConsoleAudioInfo info{[] {
