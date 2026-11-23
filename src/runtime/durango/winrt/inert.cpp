@@ -824,15 +824,14 @@ constexpr Row rows[] = {
     // KinectSensor's method 9, by a title's call of it (image+0x9fd9d4): no argument, and
     // only the HRESULT is looked at. There is no sensor, and nothing comes of it.
     {L"Windows.Kinect.KinectSensor", direct, 9, {Inert::accept}},
-    // DisplayConfiguration's statics, method 6 by the title's call of it (image+0x8a02ccd):
-    // (T **), an object
+    // IDisplayConfigurationStatics2::TrySetHdrModeAsync, by a title's symbols: an operation
+    // that gives an HdrModeInfo. A title waits for it before it creates its device.
     {L"Windows.Xbox.Graphics.Display.DisplayConfiguration",
      guid("081b331e-db52-49ed-ba5f-2c656b14b232"),
      6,
-     {Inert::object, L"Windows.Xbox.Graphics.Display.DisplayConfiguration"}},
-    // its first method, by the title's call (image+0x8a03c80): one argument the title was
-    // itself given, and only the HRESULT is looked at
-    {L"Windows.Xbox.Graphics.Display.DisplayConfiguration", direct, 6, {Inert::accept}},
+     {Inert::operation, L"Windows.Xbox.Graphics.Display.HdrModeInfo"}},
+    // its first property, a bool (image+0x3afef1): the display is not in an HDR mode
+    {L"Windows.Xbox.Graphics.Display.HdrModeInfo", direct, 6, {Inert::zero8}},
     // IAppModelUtil's first method, by the dashboard's call of it (dashboard.dll+0x1f1fe51):
     // (bool), and only the HRESULT is looked at
     {L"Windows.Xbox.System.Internal.Interop.AppModelUtil",
