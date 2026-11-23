@@ -25,6 +25,8 @@ void describe_composed(std::uint32_t *descriptor, ID3D11ShaderResourceView *host
 void describe_composed(std::uint32_t *descriptor, ID3D11UnorderedAccessView *host);
 void describe_composed(std::uint32_t *descriptor, ID3D11SamplerState *host);
 ID3D11UnorderedAccessView *described_unordered(const std::uint32_t *descriptor);
+// the host object is going: no descriptor stands for it any more
+void forget_described(IUnknown *host);
 // a buffer at the title's memory `address` (a placement buffer)
 void describe_buffer(void *object, ID3D11Buffer *host, const void *address);
 // how far into `host` the GPU address `address` is, if it is in it

@@ -311,6 +311,7 @@ ULONG STDMETHODCALLTYPE release(void *self) {
             found != objects.end() && found->second == self)
             objects.erase(found);
     }
+    forget_described(info->host);
     info->host->Release();
     info->magic = 0;
     info->~Header();

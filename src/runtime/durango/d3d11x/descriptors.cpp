@@ -30,17 +30,23 @@ struct Range {
     ID3D11Buffer *buffer;
 };
 std::map<std::uintptr_t, Range> buffers; // by start address
+// what was said of each host object, to take back when it goes
+std::multimap<IUnknown *, std::uint32_t> ids_of;
+std::multimap<IUnknown *, std::uintptr_t> addresses_of;
 std::atomic<std::uintptr_t> next_address{0x7e0000000000};
 
-void put_id(void *object, std::size_t offset, IUnknown *host, std::uint32_t kind = magic) {
+void put_id(void *object, std::size_t offset, IUnknown *host, std::uint32_t kind = magic,
+            IUnknown *owner = nullptr) {
     const auto id = next_id++;
     auto *const at = static_cast<std::byte *>(object) + offset;
     std::memcpy(at, &id, 4);
     std::memcpy(at + 4, &kind, 4);
     const std::lock_guard lock(mutex);
     by_id[id] = host;
+    ids_of.emplace(owner ? owner : host, id);
 }
-void put_buffer(void *object, ID3D11Buffer *host, std::uintptr_t address) {
+void put_buffer(void *object, ID3D11Buffer *host, std::uintptr_t address,
+                IUnknown *owner = nullptr) {
     D3D11_BUFFER_DESC desc;
     host->GetDesc(&desc);
     auto *const at = static_cast<std::byte *>(object) + 0x20;
@@ -50,6 +56,7 @@ void put_buffer(void *object, ID3D11Buffer *host, std::uintptr_t address) {
     std::memcpy(at + 8, &desc.ByteWidth, 4);
     const std::lock_guard lock(mutex);
     buffers[address] = {address + desc.ByteWidth, host};
+    addresses_of.emplace(owner ? owner : host, address);
 }
 template <class T> T *object_of(const std::uint32_t *descriptor, std::uint32_t kind = magic) {
     if (descriptor[1] != kind)
@@ -185,17 +192,31 @@ ID3D11UnorderedAccessView *described_unordered(const std::uint32_t *descriptor) 
     return object_of<ID3D11UnorderedAccessView>(descriptor, unordered_magic);
 }
 
+void forget_described(IUnknown *host) {
+    const std::lock_guard lock(mutex);
+    const auto ids = ids_of.equal_range(host);
+    for (auto id = ids.first; id != ids.second; ++id)
+        by_id.erase(id->second);
+    ids_of.erase(ids.first, ids.second);
+    const auto addresses = addresses_of.equal_range(host);
+    for (auto address = addresses.first; address != addresses.second; ++address)
+        if (const auto found = buffers.find(address->second); found != buffers.end())
+            buffers.erase(found);
+    addresses_of.erase(addresses.first, addresses.second);
+}
+
 void describe(void *object, IUnknown *host) {
     if (ID3D11ShaderResourceView *view = nullptr; SUCCEEDED(host->QueryInterface(&view))) {
-        put_id(object, 0x30, view);
+        put_id(object, 0x30, view, magic, host);
         view->Release();
     } else if (ID3D11SamplerState *sampler = nullptr; SUCCEEDED(host->QueryInterface(&sampler))) {
-        put_id(object, 0x20, sampler);
+        put_id(object, 0x20, sampler, magic, host);
         sampler->Release();
     } else if (ID3D11Buffer *buffer = nullptr; SUCCEEDED(host->QueryInterface(&buffer))) {
         D3D11_BUFFER_DESC desc;
         buffer->GetDesc(&desc);
-        put_buffer(object, buffer, next_address.fetch_add((desc.ByteWidth + 0xffff) & ~0xffffull));
+        put_buffer(object, buffer, next_address.fetch_add((desc.ByteWidth + 0xffff) & ~0xffffull),
+                   host);
         buffer->Release();
     }
 }
