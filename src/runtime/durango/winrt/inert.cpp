@@ -103,6 +103,8 @@ constexpr Row rows[] = {
     {transport, game_transport_controls, 22, {Inert::accept}},
     {transport, game_transport_controls, 24, {Inert::accept}},
     {transport, game_transport_controls, 25, {Inert::event_add}}, // button pressed
+    {transport, game_transport_controls, 27, {Inert::event_add}}, // property changed
+    {transport, game_transport_controls, 28, {Inert::accept}},
 
     // public interfaces ICurrentApp and ILicenseInformation: a full license that never changes
     {store, current_app, 6, {Inert::object, license}},
@@ -806,6 +808,8 @@ constexpr Row rows[] = {
      {Inert::empty_list}},
     {speech_recognizer, direct, 14, {Inert::accept}}, // (bool)
     {speech_recognizer, direct, 17, {Inert::event_add}},
+    // the same event through the recognizer's interface by name
+    {speech_recognizer, guid("3a3aa19c-f4e9-4985-a53c-dbcc22795ca7"), 17, {Inert::event_add}},
     {speech_recognizer, direct, 21, {Inert::event_add}},
     {speech_recognizer, direct, 23, {Inert::event_add}},
     {speech_recognizer, direct, 25, {Inert::event_add}},
