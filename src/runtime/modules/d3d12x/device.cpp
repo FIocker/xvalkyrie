@@ -1479,7 +1479,33 @@ HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
                                                  void **heap) {
     using Create =
         HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_DESCRIPTOR_HEAP_DESC *, REFIID, void **);
+    // The Series console's sampler heap without a bound (type 4) is a sampler heap here, as
+    // large as the host makes one: 2048 samplers, which is more than titles keep
+    D3D12_DESCRIPTOR_HEAP_DESC changed{};
+    if (desc && static_cast<int>(desc->Type) == 4) {
+        changed = *desc;
+        changed.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+        changed.NumDescriptors = std::min(changed.NumDescriptors, 2048u);
+        desc = &changed;
+    }
+    // and a heap of target views is never one shaders see, whatever the title says of it
+    if (desc &&
+        (desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV ||
+         desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_DSV) &&
+        desc->Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
+        changed = *desc;
+        changed.Flags &= ~D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        desc = &changed;
+    }
     const auto result = original<Create>(self, 14)(self, desc, iid, heap);
+    if (FAILED(result) && desc) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateDescriptorHeap type %d, %u descriptors, flags 0x%x, node "
+                     "0x%x: 0x%08lx%c",
+                     desc->Type, desc->NumDescriptors, desc->Flags, desc->NodeMask,
+                     static_cast<unsigned long>(result), 10);
+        std::fflush(stderr);
+    }
     if (FAILED(result) || !heap || !*heap || !desc)
         return result;
     auto *const host_heap_object = static_cast<ID3D12DescriptorHeap *>(*heap);
@@ -2124,6 +2150,14 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
     using Create =
         HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_COMMAND_QUEUE_DESC *, REFIID, void **);
     const auto result = original<Create>(self, 8)(self, desc, iid, queue);
+    if (FAILED(result) && desc) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateCommandQueue type %d priority %d flags 0x%x node 0x%x: "
+                     "0x%08lx%c",
+                     desc->Type, desc->Priority, desc->Flags, desc->NodeMask,
+                     static_cast<unsigned long>(result), 10);
+        std::fflush(stderr);
+    }
     auto *const host =
         SUCCEEDED(result) && queue ? static_cast<ID3D12CommandQueue *>(*queue) : nullptr;
     if (host)
@@ -2137,13 +2171,13 @@ HRESULT STDMETHODCALLTYPE create_command_queue(ID3D12Device *self,
     return result;
 }
 // CreateCommandQueueX (48): the type, the flags, and which engine and queue of the hardware.
-// The copy engine's queue (type 16) is a copy queue here.
+// The copy engine's queue (type 16) is a direct queue here, whose lists take any transition.
 HRESULT STDMETHODCALLTYPE create_command_queue_x(ID3D12Device *self, const UINT *desc, REFIID iid,
                                                  void **queue) {
     if (!desc)
         return E_INVALIDARG;
     const D3D12_COMMAND_QUEUE_DESC host{desc[0] == 16
-                                            ? D3D12_COMMAND_LIST_TYPE_COPY
+                                            ? D3D12_COMMAND_LIST_TYPE_DIRECT
                                             : static_cast<D3D12_COMMAND_LIST_TYPE>(desc[0]),
                                         0, static_cast<D3D12_COMMAND_QUEUE_FLAGS>(desc[1] & 1), 0};
     return create_command_queue(self, &host, iid, queue);
@@ -3376,7 +3410,7 @@ void *make_list_proxy(List *host) {
 
 // ID3D12XboxDmaCommandList (a list of type 16): the console's hardware copies, fills and
 // (de)compresses memory by itself, in the order of a queue. The slots are the ones of the
-// console header's table. Resources are copied on a host copy list of ours; what works on
+// console header's table. Resources are copied on a host list of ours; what works on
 // memory by address is done by the CPU when it is recorded, since on the console a GPU
 // address is the title's own memory. The compression formats are not known: those say so.
 constexpr UINT dma_list_type = 16;
@@ -3482,10 +3516,10 @@ const std::array<Slot, dma_slots> dma_vtable = [] {
 }();
 HRESULT make_dma_list(ID3D12Device *device, void **list) {
     auto *const proxy = new DmaProxy{};
-    auto result = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY,
+    auto result = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
                                                  IID_PPV_ARGS(&proxy->allocator));
     if (SUCCEEDED(result))
-        result = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, proxy->allocator,
+        result = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, proxy->allocator,
                                            nullptr, IID_PPV_ARGS(&proxy->host));
     if (FAILED(result)) {
         delete proxy;
@@ -3674,11 +3708,11 @@ void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT coun
     }
 }
 // CreateCommandAllocator (9): the console's copy engine has a list type of its own (16),
-// which is a copy list here
+// which is a direct list here, as its queue is
 HRESULT STDMETHODCALLTYPE create_command_allocator(ID3D12Device *self, UINT type, REFIID iid,
                                                    void **allocator) {
     using Create = HRESULT(STDMETHODCALLTYPE *)(void *, UINT, REFIID, void **);
-    return original<Create>(self, 9)(self, type == 16 ? D3D12_COMMAND_LIST_TYPE_COPY : type, iid,
+    return original<Create>(self, 9)(self, type == 16 ? D3D12_COMMAND_LIST_TYPE_DIRECT : type, iid,
                                      allocator);
 }
 // CreateCommandList (12), the desktop's way: a proxy as well
@@ -3756,6 +3790,16 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline_x(ID3D12Device *self,
 // what only the console's driver and debugger have a use for: driver hints, hang and debug
 // callbacks, debug flags, memory priority, UnregisterPagePoolX
 HRESULT STDMETHODCALLTYPE ignored_device_method(void *) { return S_OK; }
+// GetGpuHardwareConfigurationX (68): the GPU's clock and which console it is: the first
+// Xbox One, or the Series X
+void STDMETHODCALLTYPE gpu_hardware_configuration(void *, std::uint64_t *configuration) {
+    if (!configuration)
+        return;
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    configuration[0] = static_cast<std::uint64_t>(frequency.QuadPart);
+    configuration[1] = console == Target::scarlett ? 5 : 0;
+}
 constexpr std::size_t host_device_slots = 44, device_slots = 128;
 template <std::size_t... Index>
 std::vector<std::pair<std::size_t, Slot>> unknown_device_methods(std::index_sequence<Index...>) {
@@ -4137,10 +4181,7 @@ HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, vo
     overrides.push_back({74, reinterpret_cast<Slot>(&register_page_pool)});
     overrides.push_back({10, reinterpret_cast<Slot>(&create_graphics_pipeline)});
     overrides.push_back({11, reinterpret_cast<Slot>(&create_compute_pipeline)});
-    overrides.push_back(
-        {48, reinterpret_cast<Slot>(console == Target::durango
-                                        ? reinterpret_cast<void *>(&create_command_queue_x)
-                                        : reinterpret_cast<void *>(&create_command_queue))});
+    overrides.push_back({48, reinterpret_cast<Slot>(&create_command_queue_x)});
     overrides.push_back({73, reinterpret_cast<Slot>(&create_command_list)});
     overrides.push_back({12, reinterpret_cast<Slot>(&create_command_list_desktop)});
     overrides.push_back({9, reinterpret_cast<Slot>(&create_command_allocator)});
@@ -4149,6 +4190,7 @@ HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, vo
     overrides.push_back({60, reinterpret_cast<Slot>(&create_graphics_pipeline_x)});
     for (const std::size_t ignored : {49, 50, 51, 52, 53, 54, 58, 69, 72, 75})
         overrides.push_back({ignored, reinterpret_cast<Slot>(&ignored_device_method)});
+    overrides.push_back({68, reinterpret_cast<Slot>(&gpu_hardware_configuration)});
     // how a GDK title paces its frames: there is no swap chain to wait for
     overrides.push_back({78, reinterpret_cast<Slot>(&set_frame_interval)});
     overrides.push_back({79, reinterpret_cast<Slot>(&schedule_frame_event)});
