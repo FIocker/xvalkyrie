@@ -6,6 +6,7 @@ if(MSVC)
   # xvboot.map, next to the executable: what the xvboot.exe+0x... of a log's stacks are
   target_link_options(xvboot PRIVATE /MAP)
 endif()
+xv_deploy_agility(xvboot)
 if(XV_DXVK)
   xv_deploy_dxvk(xvboot)
 endif()

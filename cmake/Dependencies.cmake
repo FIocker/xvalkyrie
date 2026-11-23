@@ -35,3 +35,22 @@ if(BUILD_TESTING)
   add_library(xv_catch INTERFACE)
   target_include_directories(xv_catch SYSTEM INTERFACE ${catch2_SOURCE_DIR}/single_include)
 endif()
+
+# The DirectX 12 Agility SDK: Microsoft's newer Direct3D 12 runtime, for hosts whose own is
+# older than what the later console kits ask of it. Only D3D12Core.dll is used, which the
+# package's license lets an application carry; it goes next to xvboot (xv_deploy_agility).
+set(XV_AGILITY_VERSION 620)
+FetchContent_Declare(xv_agility
+  URL "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/1.620.2/microsoft.direct3d.d3d12.1.620.2.nupkg"
+  URL_HASH "SHA256=70489669c2bbeaf318b62d72b0ac3e753d521387bfc848c9763791c4e920bfcc"
+  DOWNLOAD_NAME agility.zip)
+FetchContent_MakeAvailable(xv_agility)
+function(xv_deploy_agility target)
+  target_compile_definitions(${target} PRIVATE XV_AGILITY_VERSION=${XV_AGILITY_VERSION})
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/D3D12"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${xv_agility_SOURCE_DIR}/build/native/bin/x64/D3D12Core.dll"
+      "$<TARGET_FILE_DIR:${target}>/D3D12/D3D12Core.dll"
+    VERBATIM)
+endfunction()

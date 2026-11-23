@@ -8,6 +8,19 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <windows.h>
+
+// What the host's d3d12.dll looks for in the executable of a process: the version of the
+// Agility SDK's D3D12Core.dll it is to load in place of the system's when that is older,
+// and where it is from here (the build puts it in D3D12 next to this executable). A folder
+// of its own, as Microsoft asks: next to the executable a newer system's runtime would
+// find it by name and take it for its own.
+// The version is not constant: where that file is not there (it is not part of a release),
+// it is set to 0 before anything loads d3d12.dll, which then keeps to the system's runtime.
+extern "C" {
+__declspec(dllexport) unsigned int D3D12SDKVersion = XV_AGILITY_VERSION;
+__declspec(dllexport) extern const char *D3D12SDKPath = ".\\D3D12\\";
+}
 
 // xvboot: what runs a title, in a process and a window of its own, and the commands that
 // look at one. The window (xvalkyrie) starts this for each title it runs.
@@ -53,6 +66,12 @@ int exec(int argc, wchar_t **argv) {
 
 int wmain(int argc, wchar_t **argv) {
     try {
+        if (wchar_t path[MAX_PATH]; GetModuleFileNameW(nullptr, path, MAX_PATH)) {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(
+                    std::filesystem::path(path).parent_path() / "D3D12" / "D3D12Core.dll", error))
+                D3D12SDKVersion = 0;
+        }
         if (const auto code = xv::app::session_log_helper(argc, argv))
             return *code;
         const std::filesystem::path command =
