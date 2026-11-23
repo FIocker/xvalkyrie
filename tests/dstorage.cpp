@@ -83,7 +83,20 @@ TEST_CASE("the newer factory makes a queue from the longer description in slot 1
     static_cast<IUnknown *>(queue)->Release();
     CHECK(call(factory, 10, static_cast<const NewerQueueDesc *>(nullptr), &newer_queue, &queue) ==
           E_POINTER);
-    // slot 9 is not known and says so instead of doing something
-    CHECK(call(factory, 9) == E_NOTIMPL);
+    // slot 9 is GetStats, which writes nothing here and takes a null pointer as well
+    using GetStats = void(STDMETHODCALLTYPE *)(void *, void *);
+    reinterpret_cast<GetStats>((*static_cast<void ***>(factory))[9])(factory, nullptr);
+    // the 8 bytes after the description are options: bit 0 keeps the queue from submitting
+    // itself, and the queue says so when asked (slot 13, Query1)
+    struct Info {
+        NewerQueueDesc desc;
+        UINT16 empty_slots, until_submit;
+    } info{};
+    REQUIRE(call(factory, 10, &desc, &newer_queue, &queue) == S_OK);
+    using Query1 = void(STDMETHODCALLTYPE *)(void *, Info *);
+    reinterpret_cast<Query1>((*static_cast<void ***>(queue))[13])(queue, &info);
+    CHECK(info.desc.unknown == 1);
+    CHECK(info.desc.desc.capacity == 64);
+    static_cast<IUnknown *>(queue)->Release();
     static_cast<IUnknown *>(factory)->Release();
 }
