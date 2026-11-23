@@ -303,6 +303,9 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             return WindowsCreateString(value.c_str(), static_cast<UINT32>(value.size()),
                                        static_cast<HSTRING *>(first));
         }
+        case Inert::title_version:
+            *static_cast<std::uint64_t *>(first) = title_version();
+            break;
         case Inert::shared:
             *static_cast<void **>(first) = shared_placeholder(known->result);
             break;

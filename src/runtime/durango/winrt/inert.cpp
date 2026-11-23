@@ -49,6 +49,8 @@ constexpr wchar_t product[] = L"Windows.Xbox.ApplicationModel.Store.Product";
 constexpr auto product_statics = guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7");
 constexpr wchar_t display_info[] = L"Windows.Xbox.System.UserDisplayInfo";
 constexpr wchar_t local_folder[] = L"Windows.Storage.StorageFolder";
+constexpr wchar_t package_id[] = L"Windows.ApplicationModel.PackageId";
+constexpr wchar_t package_folder[] = L"Windows.Storage.StorageFolder.InstalledLocation";
 constexpr auto storage_item = guid("4207a996-ca2f-42f7-bde8-8b10457a7f30");
 constexpr wchar_t audio_device[] = L"Windows.Xbox.System.AudioDeviceInfo";
 
@@ -334,6 +336,20 @@ constexpr Row rows[] = {
      guid("4e534bdf-2960-4878-97a4-9624deb72f2d"),
      6,
      {Inert::shared, L"Windows.ApplicationModel.Package"}},
+    // IPackage::Id and the public IPackageId, from the manifest's identity
+    {L"Windows.ApplicationModel.Package", direct, 6, {Inert::shared, package_id}},
+    {package_id, direct, 6, {Inert::title_string, L"package_name"}},
+    {package_id, direct, 7, {Inert::title_version}},
+    {package_id, direct, 8, {Inert::number32, nullptr, 9}}, // ProcessorArchitecture: x64
+    {package_id, direct, 9, {Inert::zero64}},               // ResourceId: none
+    {package_id, direct, 10, {Inert::title_string, L"package_publisher"}},
+    {package_id, direct, 11, {Inert::title_string, L"package_publisher_id"}},
+    {package_id, direct, 12, {Inert::title_string, L"package_full_name"}},
+    {package_id, direct, 13, {Inert::title_string, L"package_family_name"}},
+    // IPackage::InstalledLocation: the folder the title was unpacked in
+    {L"Windows.ApplicationModel.Package", direct, 7, {Inert::shared, package_folder}},
+    {package_folder, storage_item, 6, {Inert::console_string, L"package_folder_name"}},
+    {package_folder, storage_item, 7, {Inert::console_string, L"package_folder"}},
     // PackageTransferWatcher: the whole package is on disk, nothing is being transferred
     {L"Windows.Xbox.Management.Deployment.PackageTransferWatcher",
      guid("a306e506-12f9-460a-b0ae-50ba328c786c"),

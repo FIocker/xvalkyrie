@@ -159,6 +159,11 @@ std::wstring console_string(std::wstring_view key) {
         }
     if (key == L"local_folder_name")
         return L"LocalState";
+    if (key == L"package_folder" || key == L"package_folder_name") {
+        std::error_code error;
+        const auto folder = package_directory(std::filesystem::current_path(error));
+        return key == L"package_folder" ? folder.wstring() : folder.filename().wstring();
+    }
     if (key == L"audio_device_id") {
         static const auto id = communications_output();
         return id;

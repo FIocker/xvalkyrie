@@ -30,6 +30,7 @@ enum class Inert : std::uint8_t {
     one64,          // same, 8 bytes
     string,         // HRESULT get(HSTRING *result): the text in `result`
     title_string,   // same, the title_info() named `result`
+    title_version,  // HRESULT get(PackageVersion *result): the package's
     shared,         // HRESULT get(T **result): the one object of type `result` there is
     shared2,        // HRESULT get(key, T **result): likewise, whatever the key
     shared_list,    // HRESULT get(IVectorView<T> **): a view with that one object
