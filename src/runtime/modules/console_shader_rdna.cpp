@@ -335,6 +335,14 @@ class Translator {
         // an Xbox One vertex shader with nothing to fetch calls no fetch shader
         if (older_ && stage_ == Stage::vertex && code_list_[0].name != "s_swappc_b64")
             fetch_inputs();
+        // A Series vertex shader that takes nothing but the numbers of its vertex and its
+        // instance calls no fetch shader either: it reads its vertices from buffers itself,
+        // by the vertex's number in v0 (7952987A's e5fcb71c: `v1 = s5 * v0`).
+        if (!older_ && stage_ == Stage::vertex &&
+            std::none_of(code_list_.begin(), code_list_.end(),
+                         [](const Ins &ins) { return ins.name == "s_swappc_b64"; }) &&
+            std::all_of(shader_.inputs.begin(), shader_.inputs.end(), generated))
+            fetch_inputs();
         for (std::size_t block = 0; block < blocks_.size(); ++block)
             emit_block(block);
         // a descriptor whose words the shader reads, met before what it is was known
@@ -3954,8 +3962,19 @@ class Translator {
             return rest.empty() ? 1 : rest == "x2" ? 2 : rest == "x3" ? 3 : rest == "x4" ? 4 : 0;
         };
         if (starts(name, "buffer_load_dword") && count("buffer_load_dword")) {
-            for (std::uint32_t n = 0, words = count("buffer_load_dword"); n < words; ++n)
-                set_v(data + n, read_word(resource, index, extra, fixed, 4 * n));
+            // all of them read before any is written: the address may be in one of them
+            const auto words = count("buffer_load_dword");
+            std::vector<std::string> read;
+            for (std::uint32_t n = 0; n < words; ++n) {
+                read.push_back(words > 1 ? "x" + std::to_string(temporaries_++) : "");
+                const auto value = read_word(resource, index, extra, fixed, 4 * n);
+                if (words > 1)
+                    line("uint " + read.back() + " = " + value + ";");
+                else
+                    read.back() = value;
+            }
+            for (std::uint32_t n = 0; n < words; ++n)
+                set_v(data + n, read[n]);
             return;
         }
         if (starts(name, "buffer_store_dword") && count("buffer_store_dword")) {
