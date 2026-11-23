@@ -31,7 +31,8 @@ std::vector<std::uint32_t> console_shader_code(std::span<const std::uint8_t> con
 std::optional<std::string> console_shader_source(ShaderStage stage,
                                                  std::span<const std::uint8_t> container,
                                                  std::string *why = nullptr,
-                                                 std::uint32_t *at = nullptr);
+                                                 std::uint32_t *at = nullptr,
+                                                 std::span<const std::uint8_t> root_signature = {});
 // what the host's compiler says against such HLSL, or nothing if it takes it
 std::string console_shader_errors(ShaderStage stage, const std::string &source);
 // What stops the translation of a compute shader made of these words of machine code and
@@ -57,8 +58,15 @@ struct PackedInput {
     std::string name;
     unsigned index = 0;
 };
+// `root_signature` is the RTS0 part of the root signature the pipeline is made with, for
+// a shader that carries none of its own (the later kits' shaders): what its registers hold
+// is read from it, and the shader made is one for that root signature.
 std::span<const std::uint8_t> host_shader(ShaderStage stage,
                                           std::span<const std::uint8_t> container,
                                           HostShaderModel model = HostShaderModel::sm5,
-                                          std::span<const PackedInput> packed = {});
+                                          std::span<const PackedInput> packed = {},
+                                          std::span<const std::uint8_t> root_signature = {});
+// A compute shader that does nothing, for a pipeline whose own shader the host's driver
+// cannot make. Empty if the host's compiler gives none.
+std::span<const std::uint8_t> empty_compute_shader();
 } // namespace xv::runtime::modules

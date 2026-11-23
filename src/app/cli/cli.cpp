@@ -24,6 +24,15 @@ namespace {
 std::vector<std::uint8_t> read_title(const std::filesystem::path &path) {
     return host::read_snapshot(title_executable(path), 256 * 1024 * 1024);
 }
+// The root signature of the pipeline a dumped shader was met in, which XV_SHADER_CODE
+// writes next to it as .rts0 when the shader has none of its own
+std::vector<std::uint8_t> pipeline_root_signature(std::filesystem::path shader) {
+    shader.replace_extension(".rts0");
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(shader, error))
+        return {};
+    return host::read_snapshot(shader, 1024 * 1024);
+}
 nlohmann::json inspect_file(const std::filesystem::path &path) {
     return pe::inspect(read_title(path));
 }
@@ -153,7 +162,8 @@ std::optional<int> run(int argc, wchar_t **argv) {
             std::string why;
             std::uint32_t at = ~0u;
             const auto bytes = host::read_snapshot(entry.path(), 64 * 1024 * 1024);
-            const auto source = runtime::modules::console_shader_source(stage, bytes, &why, &at);
+            const auto source = runtime::modules::console_shader_source(
+                stage, bytes, &why, &at, pipeline_root_signature(entry.path()));
             if (source && argc == 4) {
                 // the first error the compiler has, without the place in the source
                 why = runtime::modules::console_shader_errors(stage, *source);
@@ -197,7 +207,8 @@ std::optional<int> run(int argc, wchar_t **argv) {
         std::string why;
         std::uint32_t at = ~0u;
         const auto source = runtime::modules::console_shader_source(
-            stage, host::read_snapshot(file, 64 * 1024 * 1024), &why, &at);
+            stage, host::read_snapshot(file, 64 * 1024 * 1024), &why, &at,
+            pipeline_root_signature(file));
         if (!source) {
             if (at != ~0u) // in words, from the first instruction
                 why += " at " + std::to_string(at);

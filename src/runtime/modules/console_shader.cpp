@@ -413,7 +413,8 @@ std::string stand_in(ShaderStage stage, Bytes container) {
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
                                              std::string *why = nullptr,
                                              std::uint32_t *at = nullptr, bool *needs_sm6 = nullptr,
-                                             std::uint32_t signed_inputs = 0) {
+                                             std::uint32_t signed_inputs = 0,
+                                             Bytes root_signature = {}) {
     if (stage != ShaderStage::vertex && stage != ShaderStage::pixel &&
         stage != ShaderStage::compute)
         return std::nullopt;
@@ -421,6 +422,8 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     rdna::Shader shader;
     shader.file = file;
     shader.root_signature = part(container, "RTS0");
+    if (shader.root_signature.empty())
+        shader.root_signature = root_signature;
     shader.bindings = bindings_section(container);
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
@@ -747,8 +750,9 @@ std::string shader_signature(Bytes container) {
 }
 
 std::optional<std::string> console_shader_source(ShaderStage stage, Bytes container,
-                                                 std::string *why, std::uint32_t *at) {
-    return translated_source(stage, container, why, at);
+                                                 std::string *why, std::uint32_t *at,
+                                                 Bytes root_signature) {
+    return translated_source(stage, container, why, at, nullptr, 0, root_signature);
 }
 
 std::string console_shader_errors(ShaderStage stage, const std::string &source) {
@@ -850,7 +854,11 @@ std::vector<std::uint32_t> console_shader_code(Bytes container) {
 namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container,
                                                HostShaderModel model,
-                                               std::span<const PackedInput> packed) {
+                                               std::span<const PackedInput> packed,
+                                               Bytes root_signature) {
+    // only a shader with no root signature of its own is made for the pipeline's
+    if (!part(container, "RTS0").empty())
+        root_signature = {};
     const char letter = "vpc123"[static_cast<int>(stage)];
     const auto hash = hash_name(container);
     // a vertex shader for a layout with packed signed inputs is another shader
@@ -871,9 +879,11 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     const char *const model_name = model == HostShaderModel::sm6         ? "-sm6"
                                    : model == HostShaderModel::automatic ? "-auto"
                                                                          : "";
-    const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) + model_name +
-                      (signed_inputs ? "-s" + std::to_string(signed_inputs) : "") +
-                      (stand_ins_only ? "-stand-in" : "") + ".dxbc";
+    const auto name =
+        hash + "-" + letter + "-v" + std::to_string(translator_version) + model_name +
+        (signed_inputs ? "-s" + std::to_string(signed_inputs) : "") +
+        (root_signature.empty() ? "" : "-r" + hash_name(root_signature).substr(0, 12)) +
+        (stand_ins_only ? "-stand-in" : "") + ".dxbc";
     // one thread makes a shader, and the others that want the same one wait for it: titles
     // make their pipelines on many threads, and the host's compiler is slow
     {
@@ -900,13 +910,15 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                        {reinterpret_cast<const std::uint8_t *>(code.data()), code.size() * 4});
         write_file(base.wstring() + L".fssm", code_container(container));
         write_file(base.wstring() + L".dxbc", container); // the shader as the title has it
+        if (!root_signature.empty())
+            write_file(base.wstring() + L".rts0", root_signature);
     }
     if (shader.empty()) {
         std::string why = "stand-ins asked for";
         bool needs_sm6 = false;
         auto source = stand_ins_only ? std::nullopt
                                      : translated_source(stage, container, &why, nullptr,
-                                                         &needs_sm6, signed_inputs);
+                                                         &needs_sm6, signed_inputs, root_signature);
         const bool sm6 =
             model == HostShaderModel::sm6 || (model == HostShaderModel::automatic && needs_sm6);
         if (needs_sm6 && !sm6) {
@@ -968,11 +980,17 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
 }
 } // namespace
 
+std::span<const std::uint8_t> empty_compute_shader() {
+    static const auto shader = compile(ShaderStage::compute, stand_in(ShaderStage::compute, {}));
+    return shader;
+}
+
 std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container, HostShaderModel model,
-                                          std::span<const PackedInput> packed) {
+                                          std::span<const PackedInput> packed,
+                                          Bytes root_signature) {
     if (model != HostShaderModel::sm5 && stage != ShaderStage::vertex &&
         stage != ShaderStage::pixel)
         return {};
-    return make_host_shader(stage, container, model, packed);
+    return make_host_shader(stage, container, model, packed, root_signature);
 }
 } // namespace xv::runtime::modules
