@@ -294,6 +294,7 @@ constexpr Row rows[] = {
      7,
      {Inert::accept}},
     {kinect, direct, 8, {Inert::accept}},
+    {kinect, direct, 10, {Inert::true8}}, // IsOpen
     {kinect, direct, 11, {Inert::zero8}}, // IsAvailable
     {kinect, direct, 14, {Inert::object, L"Windows.Kinect.BodyFrameSource"}},
     {L"Windows.Kinect.BodyFrameSource",
