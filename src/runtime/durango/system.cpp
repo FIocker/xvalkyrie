@@ -1,5 +1,6 @@
 #include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
+#include "runtime/durango/d3d11x/wrap.hpp"
 #include "runtime/durango/runtime.hpp"
 
 #include <atomic>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ksmedia.h>
+#include <mfobjects.h>
 #include <mmdeviceapi.h>
 #include <string>
 #include <string_view>
@@ -216,6 +218,34 @@ BOOL WINAPI query_system_hardware_info() {
     return FALSE;
 }
 
+// MFCreateDXGIDeviceManager: the host's manager, whose decoders make their textures and
+// views on the device the title gives it. They are the host's own code and get the host's
+// device, not the object the title has for it.
+HRESULT manager_query(Forwarder *self, REFIID iid, void **object) {
+    if (iid != __uuidof(IUnknown) && iid != __uuidof(IMFDXGIDeviceManager))
+        return forwarder_host(self)->QueryInterface(iid, object);
+    forwarder_add_ref(self);
+    *object = self;
+    return S_OK;
+}
+HRESULT STDMETHODCALLTYPE reset_device(Forwarder *self, IUnknown *device, UINT token) {
+    return static_cast<IMFDXGIDeviceManager *>(forwarder_host(self))
+        ->ResetDevice(static_cast<IUnknown *>(d3d11x::unwrap(device)), token);
+}
+HRESULT WINAPI create_device_manager(UINT *token, IMFDXGIDeviceManager **manager) {
+    using Create = HRESULT(WINAPI *)(UINT *, IMFDXGIDeviceManager **);
+    static const auto create =
+        reinterpret_cast<Create>(detail::host_export("mfplat.dll", "MFCreateDXGIDeviceManager"));
+    if (!create || !manager)
+        return E_NOTIMPL;
+    IMFDXGIDeviceManager *host = nullptr;
+    const auto result = create(token, &host);
+    if (SUCCEEDED(result))
+        *manager = reinterpret_cast<IMFDXGIDeviceManager *>(make_forwarder(
+            host, 10, &manager_query, {{7, reinterpret_cast<void *>(&reset_device)}}));
+    return result;
+}
+
 template <class F> void *erase(F *function) { return reinterpret_cast<void *>(function); }
 } // namespace
 
@@ -230,6 +260,7 @@ void install_system(Registry &registry) {
         registry.add("mmdevapi.dll", name, erase(nothing));
 
     registry.forward("mfplat.dll", "mfplat.dll");
+    registry.add("mfplat.dll", "MFCreateDXGIDeviceManager", erase(create_device_manager));
     registry.add("mfplat.dll", "MFResetDXGIDeviceManagerX", erase(succeeded));
     for (const auto *name : {"MFCreateDxvaSampleRendererX", "MFCreateDXGISurfaceBufferX",
                              "MFCreateNV12ToRGB32ConverterX", "MFCreateRGB32ToNV12ConverterX"})
