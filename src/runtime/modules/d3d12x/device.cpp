@@ -5004,10 +5004,10 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                      GetCurrentThreadId(), Kind ? "Compute" : "Graphics", index);
         std::fflush(stderr);
     }
-    if (const auto *const dump = std::getenv("XV_SHADER_CODE");
-        dump && index < 6 && state && readable(reinterpret_cast<std::uint64_t>(state), 0x100)) {
-        const auto name =
-            std::string(dump) + (Kind ? "/pso_c_" : "/pso_g_") + std::to_string(index);
+    // XV_SHADER_CODE=<folder>: the state and each of its parts, under `name`
+    const auto dump_parts = [&](const std::string &name) {
+        if (!state || !readable(reinterpret_cast<std::uint64_t>(state), 0x100))
+            return;
         if (auto *const file = std::fopen((name + ".bin").c_str(), "wb")) {
             std::fwrite(state, 1, 0x100, file);
             std::fclose(file);
@@ -5035,7 +5035,10 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                     std::fclose(file);
                 }
             }
-    }
+    };
+    const auto *const dump = std::getenv("XV_SHADER_CODE");
+    if (dump && index < 6)
+        dump_parts(std::string(dump) + (Kind ? "/pso_c_" : "/pso_g_") + std::to_string(index));
     if (!state || !pipeline || !readable(reinterpret_cast<std::uint64_t>(state), 8) ||
         signature_part(reinterpret_cast<const void *>(state[0])).empty())
         return E_NOTIMPL;
@@ -5058,10 +5061,12 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
         return E_NOTIMPL;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
     // The state's parts, each a pointer and its length: the programs begin with hashes
-    // (0xd580....) and the vertex program is the one that exports a position; the input
-    // layout has 0x1c at 0x10 and ~0 at 0x1c. Where both programs are translated and the
-    // host's compiler takes them the pipeline is made of them, with the layout; its blend,
-    // depth and target formats are not read yet (XV_PSO_STAND_IN: never).
+    // (0xd580....) and the vertex program is the one that exports a position. The part
+    // with 0x1000 at 4 and ~0 at 0x1c has the formats of the targets as bytes from 0x10,
+    // the depth format at 0x24, how many targets at 0x25, and the input layout from 0x4c.
+    // Where the programs are translated and the host's compiler takes them the pipeline is
+    // made of them (one without a pixel program draws depth alone); its blend, depth and
+    // rasterizer states are not read yet (XV_PSO_STAND_IN: never).
     std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
     std::vector<std::string> names;
     if (!std::getenv("XV_PSO_STAND_IN")) {
@@ -5080,7 +5085,7 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                 for (std::size_t n = 0; n + 1 < length / 4 && words[n] != 0xbf810000; ++n)
                     position |= words[n] >> 26 == 0x3e && (words[n] >> 4 & 0x3f) == 12;
                 programs[position ? 0 : 1] = {words, static_cast<std::size_t>(length / 4)};
-            } else if (words[4] == 0x1c && words[7] == ~0u) {
+            } else if (words[1] == 0x1000 && words[7] == ~0u) {
                 layout = {reinterpret_cast<const std::uint8_t *>(state[word]),
                           static_cast<std::size_t>(length)};
             }
@@ -5088,9 +5093,13 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
         static std::mutex mutex;
         static std::map<std::uint64_t, std::vector<std::uint8_t>> made;
         static std::atomic<unsigned> real{0}, stood{0};
+        // what stops each program, and how many pipelines each of those reasons stops
+        static std::map<std::uint64_t, std::string> stopped;
+        static std::map<std::string, unsigned> reasons;
         const auto root = signature_part(signature);
-        const auto shader = [&](modules::ShaderStage stage,
-                                Words program) -> std::span<const std::uint8_t> {
+        const auto shader = [&](modules::ShaderStage stage, Words program,
+                                std::string &reason) -> std::span<const std::uint8_t> {
+            reason = "no program found";
             if (program.empty())
                 return {};
             std::uint64_t hash = 0xcbf29ce484222325ull ^ static_cast<std::uint64_t>(stage);
@@ -5103,22 +5112,61 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             mix(layout.data(), layout.size());
             {
                 const std::lock_guard lock(mutex);
-                if (const auto found = made.find(hash); found != made.end())
+                if (const auto found = made.find(hash); found != made.end()) {
+                    reason = stopped[hash];
                     return found->second;
+                }
             }
-            auto compiled = modules::console_program_shader(stage, program, root, layout);
+            auto compiled = modules::console_program_shader(stage, program, root, layout, &reason);
+            // a compiler's complaint is long and has the line in it: its first words tell
+            if (reason.size() > 90)
+                reason.resize(90);
             const std::lock_guard lock(mutex);
+            stopped[hash] = reason;
             return made.emplace(hash, std::move(compiled)).first->second;
         };
-        const auto real_vertex = shader(modules::ShaderStage::vertex, programs[0]);
-        const auto real_pixel = shader(modules::ShaderStage::pixel, programs[1]);
+        std::string why_vertex, why_pixel;
+        const auto real_vertex = shader(modules::ShaderStage::vertex, programs[0], why_vertex);
+        const auto real_pixel = shader(modules::ShaderStage::pixel, programs[1], why_pixel);
+        {
+            const std::lock_guard lock(mutex);
+            if (real_vertex.empty())
+                ++reasons["vertex: " + why_vertex];
+            if (real_pixel.empty())
+                ++reasons["pixel: " + why_pixel];
+        }
+        // XV_PSO_WHY=<text>: the parts of the first few pipelines that such a reason stops,
+        // as pso_w_<n>, with the reasons in pso_w_<n>.why
+        if (const auto *const wanted = std::getenv("XV_PSO_WHY"); wanted && dump) {
+            static std::atomic<int> dumped{0};
+            const auto both = "vertex: " + (real_vertex.empty() ? why_vertex : "made") +
+                              "; pixel: " + (real_pixel.empty() ? why_pixel : "made");
+            if (both.find(wanted) != std::string::npos && dumped < 400) {
+                // one of each pair of programs is enough
+                static std::set<std::pair<const void *, const void *>> seen;
+                bool fresh = false;
+                {
+                    const std::lock_guard lock(mutex);
+                    fresh = seen.insert({programs[0].data(), programs[1].data()}).second;
+                }
+                if (const int number = fresh ? dumped++ : 8; number < 8) {
+                    const auto name = std::string(dump) + "/pso_w_" + std::to_string(number);
+                    dump_parts(name);
+                    if (auto *const file = std::fopen((name + ".why").c_str(), "wb")) {
+                        std::fputs(both.c_str(), file);
+                        std::fclose(file);
+                    }
+                }
+            }
+        }
         const auto at32 = [&](std::size_t at) {
             std::uint32_t value = 0;
             if (at + 4 <= layout.size())
                 std::memcpy(&value, layout.data() + at, 4);
             return value;
         };
-        if (!real_vertex.empty() && !real_pixel.empty()) {
+        if (!real_vertex.empty() && (!real_pixel.empty() || programs[1].empty()) &&
+            layout.size() >= 0x50) {
             vertex = real_vertex, pixel = real_pixel;
             std::size_t at = 0x50;
             const auto count = std::min(at32(0x4c), 32u);
@@ -5137,8 +5185,11 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                 at += 24;
             }
             desc.InputLayout = {elements.data(), static_cast<UINT>(elements.size())};
-            desc.NumRenderTargets = 1;
-            desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.NumRenderTargets = std::min<UINT>(layout[0x25], 8);
+            for (UINT target = 0; target < desc.NumRenderTargets; ++target)
+                desc.RTVFormats[target] =
+                    target_format(host_format(static_cast<DXGI_FORMAT>(layout[0x10 + target])));
+            desc.DSVFormat = host_format(static_cast<DXGI_FORMAT>(layout[0x24]));
             for (auto &target : desc.BlendState.RenderTarget)
                 target.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
             ++real;
@@ -5150,6 +5201,9 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                          "[Runtime] pipelines of the title's cache so far: %u made of its "
                          "programs, %u that draw nothing%c",
                          real.load(), stood.load(), 10);
+            const std::lock_guard lock(mutex);
+            for (const auto &[reason, count] : reasons)
+                std::fprintf(stderr, "[Runtime]   %u: %s%c", count, reason.c_str(), 10);
             std::fflush(stderr);
         }
     }
@@ -5163,7 +5217,29 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
     desc.SampleDesc.Count = 1;
     using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *,
                                                 REFIID, void **);
-    const auto result = original<Create>(self, 10)(self, &desc, iid, pipeline);
+    auto result = original<Create>(self, 10)(self, &desc, iid, pipeline);
+    // one of the title's programs that the host turns down: the one that draws nothing
+    if (FAILED(result) && desc.InputLayout.NumElements) {
+        static std::atomic<unsigned> refused{0};
+        if (const auto count = ++refused; (count & (count - 1)) == 0) {
+            std::fprintf(stderr,
+                         "[Runtime] %u pipelines of the title's cache made of its programs "
+                         "are turned down by the host (0x%08lx): they draw nothing%c",
+                         count, static_cast<unsigned long>(result), 10);
+            report_messages();
+            std::fflush(stderr);
+        }
+        const auto empty_vertex = modules::empty_vertex_shader(),
+                   empty_pixel = modules::empty_pixel_shader();
+        desc.VS = {empty_vertex.data(), empty_vertex.size()};
+        desc.PS = {empty_pixel.data(), empty_pixel.size()};
+        desc.InputLayout = {};
+        desc.NumRenderTargets = 0;
+        for (auto &format : desc.RTVFormats)
+            format = DXGI_FORMAT_UNKNOWN;
+        desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+        result = original<Create>(self, 10)(self, &desc, iid, pipeline);
+    }
     // the title derives its pipelines from this one (CreateDerivedGraphicsPipelineStateX)
     if (SUCCEEDED(result))
         lost_pipeline("deserialized graphics", pipeline, signature);
