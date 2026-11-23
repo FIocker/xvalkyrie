@@ -214,6 +214,11 @@ constexpr Row rows[] = {
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
      6,
      {Inert::controllers}},
+    // GetControllersOrderedLeftToRight(filter, IVectorView<IController> **)
+    {L"Windows.Xbox.Input.Controller",
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     17,
+     {Inert::controllers, nullptr, 2}},
     {L"Windows.Xbox.Input.Controller", // ControllerAdded, ControllerRemoved
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
      7,

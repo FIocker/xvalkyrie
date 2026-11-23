@@ -339,7 +339,7 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             *static_cast<std::uint32_t *>(fourth) = 0;
             break;
         case Inert::controllers:
-            *static_cast<void **>(first) = controller_list();
+            *(at ? at : static_cast<void **>(first)) = controller_list();
             break;
         case Inert::event_add:
             *static_cast<std::int64_t *>(second) = ++tokens;

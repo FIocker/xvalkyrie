@@ -39,7 +39,8 @@ enum class Inert : std::uint8_t {
     one_item,       // HRESULT get(IVectorView<T> **): a view with one inert object of type `result`
     no_items,       // IVectorView::GetMany of an empty collection
     event_add,      // HRESULT add(handler, EventRegistrationToken *token); never raised
-    controllers,    // HRESULT get(IVectorView<IController> **): the one gamepad
+    controllers,    // HRESULT get(IVectorView<IController> **): the one gamepad; in
+                    // argument `argument` when that is set
     object_at,      // HRESULT make(..., T **) returning an inert `result` in argument `argument`
     vector,         // HRESULT get(IVector<T> **): a vector of the object's own, empty at first
     zero_operation_at,  // HRESULT start(..., IAsyncOperation<enum> **), finished at once with 0;
