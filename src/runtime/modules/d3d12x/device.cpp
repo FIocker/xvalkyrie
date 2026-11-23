@@ -5072,6 +5072,9 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
     if (!std::getenv("XV_PSO_STAND_IN")) {
         using Words = std::span<const std::uint32_t>;
         Words programs[2]{}; // vertex, pixel
+        // what each binds, which is the part after it: records of eight words under a
+        // header of four that begins with 2
+        std::span<const std::uint8_t> records[2];
         std::span<const std::uint8_t> layout;
         for (int word = 1;
              word + 1 < 32 && readable(reinterpret_cast<std::uint64_t>(state), 8 * (word + 2));
@@ -5085,6 +5088,12 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                 for (std::size_t n = 0; n + 1 < length / 4 && words[n] != 0xbf810000; ++n)
                     position |= words[n] >> 26 == 0x3e && (words[n] >> 4 & 0x3f) == 12;
                 programs[position ? 0 : 1] = {words, static_cast<std::size_t>(length / 4)};
+                if (word + 3 < 32 && state[word + 3] >= 16 && state[word + 3] < (1u << 20) &&
+                    readable(state[word + 2], state[word + 3]) &&
+                    *reinterpret_cast<const std::uint32_t *>(state[word + 2]) == 2)
+                    records[position ? 0 : 1] = {
+                        reinterpret_cast<const std::uint8_t *>(state[word + 2]),
+                        static_cast<std::size_t>(state[word + 3])};
             } else if (words[1] == 0x1000 && words[7] == ~0u) {
                 layout = {reinterpret_cast<const std::uint8_t *>(state[word]),
                           static_cast<std::size_t>(length)};
@@ -5093,6 +5102,33 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
         static std::mutex mutex;
         static std::map<std::uint64_t, std::vector<std::uint8_t>> made;
         static std::atomic<unsigned> real{0}, stood{0};
+        // XV_PSO_ALL: of every pipeline, its root signature's address and the records of
+        // its two programs, in <XV_SHADER_CODE>/pso_all.bin; each signature once, as
+        // sig_<address>.rts0
+        if (dump && std::getenv("XV_PSO_ALL")) {
+            static std::set<const void *> written;
+            const std::lock_guard lock(mutex);
+            if (auto *const file = std::fopen((std::string(dump) + "/pso_all.bin").c_str(), "ab")) {
+                const auto address = reinterpret_cast<std::uint64_t>(signature);
+                std::fwrite(&address, 8, 1, file);
+                for (const auto &part : records) {
+                    const auto size = static_cast<std::uint32_t>(part.size());
+                    std::fwrite(&size, 4, 1, file);
+                    std::fwrite(part.data(), 1, part.size(), file);
+                }
+                std::fclose(file);
+            }
+            if (written.insert(signature).second) {
+                char name[64];
+                std::snprintf(name, sizeof name, "/sig_%llx.rts0",
+                              reinterpret_cast<unsigned long long>(signature));
+                const auto part = signature_part(signature);
+                if (auto *const file = std::fopen((std::string(dump) + name).c_str(), "wb")) {
+                    std::fwrite(part.data(), 1, part.size(), file);
+                    std::fclose(file);
+                }
+            }
+        }
         // what stops each program, and how many pipelines each of those reasons stops
         static std::map<std::uint64_t, std::string> stopped;
         static std::map<std::string, unsigned> reasons;
