@@ -367,9 +367,9 @@ BOOL WINAPI xmem_allocate_physical_pages(ULONGLONG flags, ULONG_PTR *count, ULON
 BOOL WINAPI xmem_free_physical_pages(ULONG_PTR count, ULONG_PTR *pages) {
     return free_title_physical_pages(nullptr, count, pages);
 }
-BOOL WINAPI xmem_map_physical_pages(void *address, ULONG_PTR count, ULONG_PTR *pages) {
-    return map_title_physical_pages(address, count, mem_large_pages, PAGE_READWRITE, pages) !=
-           nullptr;
+// the address comes back, which a title goes on to use; null is failure either way
+void *WINAPI xmem_map_physical_pages(void *address, ULONG_PTR count, ULONG_PTR *pages) {
+    return map_title_physical_pages(address, count, mem_large_pages, PAGE_READWRITE, pages);
 }
 // XMEM_WORKING_SET_STATISTICS: what a title may use, from what the host has
 struct WorkingSet {
