@@ -94,7 +94,7 @@ the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 [+3 titles](COMPATIBILITY.md#xbox-series-xs)
 
-49 titles tried: **5** playable · **7** menu · **4** intro · **22** boots · **11** nothing
+49 titles tried: **8** playable · **10** menu · **3** intro · **20** boots · **8** nothing
 
 ## Status
 

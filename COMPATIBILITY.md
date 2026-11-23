@@ -25,40 +25,40 @@ further than its state says. Logs of a run are in `%APPDATA%\xvalkyrie\logs`.
 | Minecraft: Xbox One Edition              | `149E11AE` | **Menu**     | Direct3D 11.X. Main menu with the right picture                                                                              |
 | Terraria                                 | `1738CA2A` | **Playable** | Main menu with the right picture; writes its save                                                                            |
 | Puyo Puyo Champions                      | `62B3A350` | **Menu**     | Direct3D 11.X. The autosave notice, waiting for A; reads the gamepad                                                         |
-| Crash Bandicoot N. Sane Trilogy          | `044D0F74` | **Boots**    | Runs without a frame in 40 s; logs `app:/archives/update.pak not found`                                                      |
+| Crash Bandicoot N. Sane Trilogy          | `044D0F74` | **Menu**     | Title screen; the text under its logo is drawn without its transparency                                                      |
 | Mega Man 11                              | `1F337CFB` | **Boots**    | Direct3D 11.X. Presents frames, the picture is wrong: a few stray triangles on black                                         |
 | Overcooked                               | `145207D1` | **Boots**    | Unity. Presents frames, a plain blue picture                                                                                 |
 | Rock Band 4                              | `2DBB840F` | **Boots**    | Direct3D 11.X. Presents frames, the picture is black; its Xbox Live library throws on start                                  |
 | SPACE JAM: A NEW LEGACY - THE GAME       | `622B018E` | **Boots**    | GDK title on Direct3D 12. Creates its device, no frame                                                                       |
-| LEGO CITY UNDERCOVER                     | `27D78EC2` | **Intro**    | Loading screens with the right picture; the host refuses some of its input layouts                                           |
+| LEGO CITY UNDERCOVER                     | `27D78EC2` | **Menu**     | Main menu, reads the gamepad; the 3D scene behind it is black                                                                |
 | Minecraft (Bedrock)                      | `6CFA0C1E` | **Nothing**  | Direct3D 12. Faults right after its device is created                                                                        |
 | Rocket League                            | `214E91AC` | **Nothing**  | Unreal Engine 3 gives up with `Invalid DefaultMaterialName`                                                                  |
 | 1001 Spikes                              | `6B2E4F1B` | **Boots**    |                                                                                                                              |
 | 7 Days to Die                            | `039D30F6` | **Boots**    | Unity. Presents frames; picture not looked at yet                                                                            |
 | A KING'S TALE: FINAL FANTASY XV          | `05401907` | **Intro**    |                                                                                                                              |
 | Cyberpunk 2077                           | `0D42AD14` | **Nothing**  |                                                                                                                              |
-| Dance Central Spotlight                  | `295F3C44` | **Boots**    | Runs without a frame in 40 s                                                                                                 |
+| Dance Central Spotlight                  | `295F3C44` | **Boots**    | First kits. One frame; it needs the Kinect sensor                                                                            |
 | DARK SOULS: REMASTERED NETWORK TEST VER. | `27EDC966` | **Menu**     |                                                                                                                              |
-| FIFA 15                                  | `64B02253` | **Nothing**  | First kits. Calls a context method that is not there right after its swap chain                                              |
-| FRU                                      | `3C646A12` | **Boots**    | Unity. Presents frames, the picture is black                                                                                 |
+| FIFA 15                                  | `64B02253` | **Intro**    | First kits. Its opening screen with the right picture                                                                        |
+| FRU                                      | `3C646A12` | **Boots**    | Unity. Presents frames, the picture is black: the game is played with the Kinect sensor                                      |
 | FUSER Demo                               | `61BEB2FD` | **Boots**    | Unreal Engine 4 on Direct3D 12. One frame, then a fault                                                                      |
 | Just Dance 2020                          | `13E02891` | **Nothing**  |                                                                                                                              |
-| Minecraft Story Mode                     | `781521BD` | **Boots**    |                                                                                                                              |
-| Peggle 2                                 | `32966611` | **Intro**    | Launch kit, Direct3D 11. Its first notice, drawn larger than the window shows                                                |
+| Minecraft Story Mode                     | `781521BD` | **Boots**    | Presents frames, the picture is black; it asks for view formats with swizzles, which are not implemented                     |
+| Peggle 2                                 | `32966611` | **Playable** | Launch kit, Direct3D 11. Plays, with the right picture                                                                       |
 | Pixel Piracy                             | `30D1E0F7` | **Boots**    | Unity. Presents frames, the picture is black                                                                                 |
-| Project Spark                            | `60D19E14` | **Boots**    | Presents frames; then calls method 6 of `Windows.Kinect.Body`, which is not implemented                                      |
+| Project Spark                            | `60D19E14` | **Menu**     | Title screen with the right picture, after its screen calibration; not online                                                |
 | Promenade (Demo)                         | `6DBB4B4C` | **Boots**    |                                                                                                                              |
 | Rayman Legends                           | `27BDEA18` | **Menu**     | Launch kit, Direct3D 11. Title screen with the right picture                                                                 |
-| Saints Row Boss Factory                  | `65D9BC13` | **Boots**    | GDK title on Direct3D 12. Runs without a frame in 45 s                                                                       |
+| Saints Row Boss Factory                  | `65D9BC13` | **Nothing**  | GDK title on Direct3D 12. Faults while it waits for its files, before its device                                             |
 | Seasons after Fall                       | `30AD5A99` | **Boots**    | Unity. Presents frames, the picture is black                                                                                 |
-| Shadow of the Tomb Raider                | `36773C0D` | **Nothing**  | Imports `XGComputeTexture3DLayout`, which is not implemented                                                                 |
-| Slender - The Arrival                    | `458E04D7` | **Boots**    | Unity. Ten frames, then a fault in its own video plugin                                                                      |
-| SONIC FORCES                             | `07B5597E` | **Nothing**  | Its own allocator fails while it sets up memory                                                                              |
+| Shadow of the Tomb Raider                | `36773C0D` | **Boots**    | A few frames, then it faults: it composes its own resource descriptors, which is not implemented                             |
+| Slender - The Arrival                    | `458E04D7` | **Playable** | Unity. Plays from its opening on                                                                                             |
+| SONIC FORCES                             | `07B5597E` | **Playable** | Gets in game and plays; some textures of its HUD lack their transparency                                                     |
 | Infinity Blade Saga                      | `6346E6A1` | **Nothing**  | Unreal Engine 3. Ends with a C++ exception before its device                                                                 |
 | Plants vs. Zombies Garden Warfare        | `334CB9F9` | **Boots**    | Presents frames, the picture is black                                                                                        |
 | Sonic Mania                              | `34BA1DE0` | **Playable** |                                                                                                                              |
-| Stardew Valley                           | `1240B5DA` | **Nothing**  |                                                                                                                              |
-| Titanfall                                | `4D046B58` | **Nothing**  |                                                                                                                              |
+| Stardew Valley                           | `1240B5DA` | **Nothing**  | Faults in its own garbage collector before its device                                                                        |
+| Titanfall                                | `4D046B58` | **Boots**    | First kits, Source engine. Presents frames, the picture is black                                                             |
 | Trackmania                               | `700107ED` | **Boots**    | GDK title on Direct3D 12. Presents frames with nothing drawn: its shaders are Xbox One machine code, which is not translated |
 | UNDERTALE                                | `62F67ADD` | **Playable** | Plays from its opening on, with the right picture                                                                            |
 
