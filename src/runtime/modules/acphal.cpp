@@ -106,8 +106,35 @@ HRESULT WINAPI apu_heap_state(std::uint32_t *state, std::uint32_t) {
     return S_OK;
 }
 // chad.dll (XDsp, the Series console's audio DSP): its interface is in no public header,
-// so a title is told it is not there
+// so a title that asks with XDspConnect is told it is not there
 HRESULT WINAPI no_audio_dsp() { return E_NOTIMPL; }
+// XDspConnectWithMaximumStreamLimit, as a title calls it: three values of its own, the
+// number of streams, a flag, and where the connection goes, which it hands to the other
+// four functions as their first argument. A title that is refused stops at a breakpoint,
+// so it gets a connection that takes its commands and runs none of them.
+struct DspConnection {
+    UINT32 streams;
+};
+HRESULT WINAPI xdsp_connect_with_limit(void *, UINT32, UINT32, UINT32 streams, UINT32,
+                                       DspConnection **connection) {
+    if (!connection)
+        return E_INVALIDARG;
+    *connection = new DspConnection{streams};
+    std::fprintf(stderr,
+                 "[Runtime] audio DSP: connected for %u streams; its commands are taken, "
+                 "none is run\n",
+                 streams);
+    std::fflush(stderr);
+    return S_OK;
+}
+HRESULT WINAPI xdsp_disconnect(DspConnection *connection) {
+    if (!connection)
+        return E_NOTIMPL;
+    delete connection;
+    return S_OK;
+}
+// XDspActivate, XDspDeactivate and XDspSubmitCommand: without a connection, as before
+HRESULT WINAPI xdsp_command(DspConnection *connection) { return connection ? S_OK : E_NOTIMPL; }
 // IAudioStateMonitor, which says how loud the system lets the title be: always in full. A
 // title takes the object without looking at the result of asking for it.
 struct StateMonitor {
@@ -461,9 +488,11 @@ void install_acphal(Registry &registry) {
         {"XApuGetUtilization", erase(xapu_utilization)}};
     for (const auto &[name, function] : decoder)
         registry.add("xapu.dll", name, function);
-    for (const auto *name :
-         {"XDspConnect", "XDspDisconnect", "XDspActivate", "XDspDeactivate", "XDspSubmitCommand"})
-        registry.add("chad.dll", name, erase(no_audio_dsp));
+    registry.add("chad.dll", "XDspConnect", erase(no_audio_dsp));
+    registry.add("chad.dll", "XDspConnectWithMaximumStreamLimit", erase(xdsp_connect_with_limit));
+    registry.add("chad.dll", "XDspDisconnect", erase(xdsp_disconnect));
+    for (const auto *name : {"XDspActivate", "XDspDeactivate", "XDspSubmitCommand"})
+        registry.add("chad.dll", name, erase(xdsp_command));
     registry.add("windows.media.mediacontrol.dll",
                  "CreateRenderAudioStateMonitorForCategoryAndDeviceRole",
                  erase(create_state_monitor));

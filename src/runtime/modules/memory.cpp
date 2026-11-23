@@ -121,9 +121,12 @@ void *reserve(void *address, std::uintptr_t size, DWORD type) {
     MEM_EXTENDED_PARAMETER parameter{};
     parameter.Type = MemExtendedParameterAddressRequirements;
     parameter.Pointer = &requirements;
+    // over a placeholder the title made and split itself, the placeholder is the reservation
     auto *const base =
-        VirtualAlloc2(GetCurrentProcess(), address, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
-                      PAGE_NOACCESS, &parameter, 1);
+        type & MEM_REPLACE_PLACEHOLDER
+            ? address
+            : VirtualAlloc2(GetCurrentProcess(), address, size,
+                            MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, &parameter, 1);
     if (!base)
         return nullptr;
     const auto start = reinterpret_cast<std::uintptr_t>(base);
@@ -176,6 +179,10 @@ void *WINAPI virtual_alloc_ex(HANDLE process, void *address, SIZE_T size, DWORD 
         }
         if (type & MEM_COMMIT && commit(reinterpret_cast<std::uintptr_t>(address), size, protect))
             return address;
+        // a placeholder, which the title splits with VirtualFree and reserves piece by piece
+        if (type & MEM_RESERVE_PLACEHOLDER)
+            return VirtualAlloc2(process, address, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+                                 PAGE_NOACCESS, nullptr, 0);
     }
     const auto result =
         VirtualAllocEx(process, address, size, type & allocation_types, protect & protections);
@@ -377,6 +384,63 @@ BOOL WINAPI xmem_free_physical_pages(ULONG_PTR count, ULONG_PTR *pages) {
 void *WINAPI xmem_map_physical_pages(void *address, ULONG_PTR count, ULONG_PTR *pages) {
     return map_title_physical_pages(address, count, mem_large_pages, PAGE_READWRITE, pages);
 }
+// XMemMapPhysicalPagesScatter (xmem.h): each page at an address of its own; without pages,
+// what is at those addresses is unmapped
+BOOL WINAPI xmem_map_physical_pages_scatter(void **addresses, ULONG_PTR count, ULONG_PTR *pages) {
+    if (count && !addresses) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    auto &state = physical();
+    const std::lock_guard lock(state.mutex);
+    for (ULONG_PTR i = 0; i < count; ++i) {
+        const auto at = reinterpret_cast<std::uintptr_t>(addresses[i]);
+        std::uintptr_t base = 0;
+        auto *const reservation = at & (page - 1) ? nullptr : reservation_at(state, at, &base);
+        if (!reservation) {
+            SetLastError(ERROR_INVALID_ADDRESS);
+            return FALSE;
+        }
+        if (!pages)
+            unmap(state, *reservation, at);
+        else if (pages[i] >= state.used.size() ||
+                 !map(state, *reservation, at, pages[i], PAGE_READWRITE, false)) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+// XMEM_BASIC_INFORMATION (xmem.h): what VirtualQuery says, then the attributes and the tag
+// the memory was allocated with, which are not kept here
+struct BasicInformation {
+    void *base, *allocation_base;
+    DWORD allocation_protect;
+    SIZE_T region_size;
+    DWORD state, protect, type;
+    ULONGLONG flags;
+    DWORD tag;
+    char tag_name[4];
+};
+BOOL WINAPI xmem_virtual_query(HANDLE process, void *address, BasicInformation *information) {
+    MEMORY_BASIC_INFORMATION host;
+    if (!information || !VirtualQueryEx(process, address, &host, sizeof host)) {
+        if (!information)
+            SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *information = {host.BaseAddress,
+                    host.AllocationBase,
+                    host.AllocationProtect,
+                    host.RegionSize,
+                    host.State,
+                    host.Protect,
+                    host.Type,
+                    0,
+                    0,
+                    {}};
+    return TRUE;
+}
 // XMEM_WORKING_SET_STATISTICS: what a title may use, from what the host has
 struct WorkingSet {
     SIZE_T game_limit, game_used, tools_limit, tools_used;
@@ -454,9 +518,11 @@ void install_xmem(Registry &registry) {
             registry.add("xmem.dll", name, function);
     const std::pair<const char *, void *> more[] = {
         {"XMemVirtualAlloc", erase(xmem_virtual_alloc)},
+        {"XMemVirtualQuery", erase(xmem_virtual_query)},
         {"XMemAllocatePhysicalPages", erase(xmem_allocate_physical_pages)},
         {"XMemFreePhysicalPages", erase(xmem_free_physical_pages)},
         {"XMemMapPhysicalPages", erase(xmem_map_physical_pages)},
+        {"XMemMapPhysicalPagesScatter", erase(xmem_map_physical_pages_scatter)},
         {"XMemGetWorkingSetStatistics", erase(xmem_working_set_statistics)},
         {"XMemGetWin32HeapStatistics", erase(not_implemented)},
         {"XMemIsToolsMemAvailable", erase(no)},

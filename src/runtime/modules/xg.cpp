@@ -165,19 +165,149 @@ std::int32_t create_texture2d_computer(const TextureDescription *description, Co
     *computer = new Computer{computer_vtable, 1, *description};
     return 0;
 }
-std::int32_t create_texture_computer(const std::uint32_t *description, Computer **) {
-    std::fprintf(stderr, "[Runtime] XG_RESOURCE_DESC:");
-    for (int i = 0; i < 16; ++i)
-        std::fprintf(stderr, " %x", description[i]);
-    std::fprintf(stderr, "\n");
-    std::fflush(stderr);
-    return static_cast<std::int32_t>(0x80004001);
+// XGCreateTextureComputer of the Series console's xg_xs.dll: its XG_RESOURCE_DESC begins as
+// Direct3D 12's resource description does. The computer's methods are those of the later
+// xg_x.dll, in that order: after GetResourceLayout the size in bytes and in pages, the
+// alignment, where a mip level and a texel are, and the copies into and out of a
+// subresource. The one layout here is the linear one that a placed texture is read with:
+// array slice after array slice, each with its mip levels in turn, rows packed.
+struct ResourceDescription {
+    std::uint32_t dimension, pad;
+    std::uint64_t alignment, width;
+    std::uint32_t height;
+    std::uint16_t depth_or_array_size, mips;
+    std::uint32_t format, sample_count, sample_quality, layout, flags;
+};
+struct Level {
+    std::uint64_t offset;
+    std::uint32_t pitch, rows, slices;
+};
+std::uint32_t levels_of(const TextureDescription &d) {
+    if (d.mips)
+        return d.mips;
+    std::uint32_t mips = 0;
+    for (auto side = std::max(d.width, d.height); side; side >>= 1)
+        ++mips;
+    return std::max(mips, 1u);
+}
+// a volume (misc_flags says so here) has its depth in array_size
+Level level_of(const TextureDescription &d, std::uint32_t mip, std::uint32_t slice) {
+    const auto size = format_size(d.format);
+    const bool volume = d.misc_flags != 0;
+    const auto mips = levels_of(d);
+    const auto one = [&](std::uint32_t m) {
+        const std::uint32_t w = std::max(d.width >> m, 1u), h = std::max(d.height >> m, 1u);
+        Level level{};
+        level.pitch = size.blocks ? (w + 3) / 4 * size.bytes : w * size.bytes;
+        level.rows = size.blocks ? (h + 3) / 4 : h;
+        level.slices = volume ? std::max(d.array_size >> m, 1u) : 1;
+        return level;
+    };
+    std::uint64_t chain = 0, before = 0;
+    for (std::uint32_t m = 0; m < mips; ++m) {
+        const auto level = one(m);
+        const auto bytes = std::uint64_t{level.pitch} * level.rows * level.slices;
+        if (m < mip)
+            before += bytes;
+        chain += bytes;
+    }
+    auto level = one(std::min(mip, mips - 1));
+    level.offset = (volume ? 0 : chain * slice) + before;
+    return level;
+}
+std::uint64_t resource_bytes(Computer *self) {
+    const auto &d = self->description;
+    const auto all = level_of(d, levels_of(d), 0).offset; // one chain
+    const auto total = all * (d.misc_flags ? 1 : std::max(d.array_size, 1u));
+    return (total + 4095) & ~std::uint64_t{4095};
+}
+std::uint64_t resource_pages(Computer *self) { return resource_bytes(self) >> 12; }
+std::uint64_t resource_alignment(Computer *) { return 0x10000; }
+std::uint64_t mip_offset(Computer *self, std::uint32_t, std::uint32_t mip) {
+    return level_of(self->description, mip, 0).offset;
+}
+std::uint64_t texel_offset(Computer *self, std::uint32_t, std::uint32_t mip, std::uint64_t x,
+                           std::uint32_t y, std::uint32_t slice, std::uint32_t) {
+    const auto &d = self->description;
+    const auto size = format_size(d.format);
+    const bool volume = d.misc_flags != 0;
+    const auto level = level_of(d, mip, volume ? 0 : slice);
+    const std::uint64_t across = size.blocks ? x / 4 : x, down = size.blocks ? y / 4 : y;
+    return level.offset + (volume ? std::uint64_t{level.pitch} * level.rows * slice : 0) +
+           down * level.pitch + across * size.bytes;
+}
+// rows of `pitch` bytes each on the title's side, packed on the resource's
+std::int32_t copy_subresource(Computer *self, std::uint8_t *resource, std::uint32_t subresource,
+                              std::uint8_t *data, std::uint32_t pitch, std::uint32_t slice_pitch,
+                              bool into) {
+    if (!resource || !data)
+        return static_cast<std::int32_t>(0x80070057); // E_INVALIDARG
+    const auto &d = self->description;
+    const auto mips = levels_of(d);
+    const auto level = level_of(d, subresource % mips, subresource / mips);
+    const auto bytes = std::min(pitch ? pitch : level.pitch, level.pitch);
+    for (std::uint32_t slice = 0; slice < level.slices; ++slice)
+        for (std::uint32_t row = 0; row < level.rows; ++row) {
+            auto *const packed =
+                resource + level.offset + (std::uint64_t{slice} * level.rows + row) * level.pitch;
+            auto *const titles = data + std::uint64_t{slice} * slice_pitch +
+                                 std::uint64_t{row} * (pitch ? pitch : level.pitch);
+            std::memcpy(into ? packed : titles, into ? titles : packed, bytes);
+        }
+    return 0;
+}
+std::int32_t copy_into_subresource(Computer *self, void *resource, std::uint32_t,
+                                   std::uint32_t subresource, const void *data, std::uint32_t pitch,
+                                   std::uint32_t slice_pitch) {
+    return copy_subresource(self, static_cast<std::uint8_t *>(resource), subresource,
+                            const_cast<std::uint8_t *>(static_cast<const std::uint8_t *>(data)),
+                            pitch, slice_pitch, true);
+}
+std::int32_t copy_from_subresource(Computer *self, void *data, std::uint32_t,
+                                   std::uint32_t subresource, const void *resource,
+                                   std::uint32_t pitch, std::uint32_t slice_pitch) {
+    return copy_subresource(
+        self, const_cast<std::uint8_t *>(static_cast<const std::uint8_t *>(resource)), subresource,
+        static_cast<std::uint8_t *>(data), pitch, slice_pitch, false);
+}
+void *const resource_computer_vtable[] = {
+    reinterpret_cast<void *>(&add_ref),
+    reinterpret_cast<void *>(&release),
+    reinterpret_cast<void *>(&resource_layout),
+    reinterpret_cast<void *>(&resource_bytes),
+    reinterpret_cast<void *>(&resource_pages),
+    reinterpret_cast<void *>(&resource_alignment),
+    reinterpret_cast<void *>(&mip_offset),
+    reinterpret_cast<void *>(&texel_offset),
+    reinterpret_cast<void *>(&copy_into_subresource),
+    reinterpret_cast<void *>(&copy_from_subresource),
+    reinterpret_cast<void *>(&unknown<10>),
+    reinterpret_cast<void *>(&unknown<11>),
+    reinterpret_cast<void *>(&unknown<12>),
+};
+std::int32_t create_texture_computer(const ResourceDescription *description, Computer **computer) {
+    if (!description || !computer)
+        return static_cast<std::int32_t>(0x80070057); // E_INVALIDARG
+    const auto &d = *description;
+    TextureDescription texture{};
+    texture.width = static_cast<std::uint32_t>(std::max<std::uint64_t>(d.width, 1));
+    texture.height = d.dimension >= 3 ? std::max(d.height, 1u) : 1;
+    texture.mips = d.mips;
+    texture.array_size = std::max<std::uint32_t>(d.depth_or_array_size, 1);
+    texture.format = d.format;
+    texture.sample_count = 1;
+    texture.misc_flags = d.dimension == 4; // a volume
+    *computer = new Computer{resource_computer_vtable, 1, texture};
+    return 0;
 }
 // There is one layout, so one tile mode: 0.
 std::uint32_t optimal_tile_mode(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
                                 std::uint32_t, std::uint32_t, std::uint32_t) {
     return 0;
 }
+// XGSuggestSwizzleMode of later kits' xg_xs.dll, whose arguments are in no header here: a
+// title takes an XG_SWIZZLE_MODE from it, and the one layout there is is the linear one
+std::uint32_t suggest_swizzle_mode() { return 0; }
 // format, width, height, depth or layers, samples, then whether it is compressed, a tiled
 // resource, and read as a texture
 void optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
@@ -198,6 +328,7 @@ void install_xg(Registry &registry, std::string_view module) {
     registry.add(module, "XGComputeTexture2DLayout", reinterpret_cast<void *>(&texture2d_layout));
     registry.add(module, "XGComputeTexture3DLayout", reinterpret_cast<void *>(&texture3d_layout));
     registry.add(module, "XGComputeOptimalTileMode", reinterpret_cast<void *>(&optimal_tile_mode));
+    registry.add(module, "XGSuggestSwizzleMode", reinterpret_cast<void *>(&suggest_swizzle_mode));
     registry.add(module, "XGComputeOptimalDepthStencilTileModes",
                  reinterpret_cast<void *>(&optimal_depth_stencil_tile_modes));
 }

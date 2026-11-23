@@ -701,6 +701,20 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
                          at_rdx[0], at_rdx[1], at_rdx[2], at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
                          at_r8[3], at_r8[4],
                          detail::guest_location(*reinterpret_cast<void **>(context.Rsp)).c_str());
+            // XV_BREAK_RAX=<offset>[,<offset>...]: the 16 qwords [[rax + offset]] leads to
+            if (const char *list = std::getenv("XV_BREAK_RAX"))
+                for (char *end = nullptr; *list; list = *end ? end + 1 : end) {
+                    const auto offset = std::strtoull(list, &end, 16);
+                    if (end == list)
+                        break;
+                    std::uint64_t pointer = 0, words[16]{};
+                    read(context.Rax + offset, &pointer, sizeof pointer);
+                    read(pointer, words, sizeof words);
+                    std::fprintf(stderr, "[Break]   [[rax+0x%llx]] = %llx:", offset, pointer);
+                    for (const auto word : words)
+                        std::fprintf(stderr, " %llx", word);
+                    std::fprintf(stderr, "\n");
+                }
             std::fflush(stderr);
         }
         poke(point.address, point.original);
@@ -709,6 +723,22 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     return EXCEPTION_CONTINUE_SEARCH;
+}
+// CLWB (66 0F AE /6), which the Series console's processor has and not every host's: where
+// one stops the title it is made a CLFLUSH (0F AE /7 under a prefix that does nothing),
+// which writes the line back as well.
+LONG WINAPI missing_instruction(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION)
+        return EXCEPTION_CONTINUE_SEARCH;
+    auto *const at = reinterpret_cast<std::uint8_t *>(info->ContextRecord->Rip);
+    if (!detail::title_image_base(at) || at[0] != 0x66)
+        return EXCEPTION_CONTINUE_SEARCH;
+    auto *const opcode = at + ((at[1] & 0xf0) == 0x40 ? 2 : 1);
+    if (opcode[0] != 0x0f || opcode[1] != 0xae || (opcode[2] >> 3 & 7) != 6 || opcode[2] >> 6 == 3)
+        return EXCEPTION_CONTINUE_SEARCH;
+    poke(opcode + 2, opcode[2] | 8);
+    poke(at, 0x3e);
+    return EXCEPTION_CONTINUE_EXECUTION;
 }
 void set_breakpoints(std::uint8_t *base) {
     const char *text = std::getenv("XV_BREAK");
@@ -1031,6 +1061,7 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     }
 #ifdef _MSC_VER
     SetUnhandledExceptionFilter(&unhandled);
+    AddVectoredExceptionHandler(1, &missing_instruction);
     if (std::getenv("XV_FIRST_CHANCE"))
         AddVectoredExceptionHandler(0, &first_chance);
     set_breakpoints(reinterpret_cast<std::uint8_t *>(state.base));
