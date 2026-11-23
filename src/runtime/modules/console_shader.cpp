@@ -807,6 +807,90 @@ std::string console_shader_probe(std::span<const std::uint32_t> words, bool comp
     return why;
 }
 
+// A program as a pipeline of the console's cache has it: the machine code alone, with no
+// file around it and no signatures. The file is the least of one (see console_shader_probe)
+// and the signatures are what the code itself exports and interpolates: a vertex shader
+// takes its vertex's number and gives its position and parameters, a pixel shader takes
+// those and gives its targets.
+std::optional<std::string> console_program_source(ShaderStage stage,
+                                                  std::span<const std::uint32_t> words,
+                                                  Bytes root_signature, std::string *why) {
+    // before the code, three words at a time: hashes, as instructions that do nothing
+    while (words.size() >= 3 && words[0] >> 16 == 0xd580)
+        words = words.subspan(3);
+    std::size_t count = 0;
+    while (count < words.size() && words[count] != 0xbf810000)
+        ++count;
+    if (count == words.size() || (stage != ShaderStage::vertex && stage != ShaderStage::pixel)) {
+        if (why)
+            *why = "no code";
+        return std::nullopt;
+    }
+    ++count;
+    constexpr std::size_t region = 0x140, start = region + 0x28;
+    std::vector<std::uint8_t> file(start + 4 * count + 20, 0);
+    const auto put = [&](std::size_t at, std::uint32_t value) {
+        std::memcpy(file.data() + at, &value, 4);
+    };
+    std::memcpy(file.data(), "FSSM", 4);
+    put(0xc0, static_cast<std::uint32_t>(region));
+    put(0xc8, static_cast<std::uint32_t>(0x28 + 4 * count));
+    for (std::size_t n = 0; n < count; ++n)
+        put(start + 4 * n, words[n]);
+    put(start + 4 * count + 8, ~0u);
+    rdna::Shader shader;
+    shader.file = file;
+    shader.root_signature = root_signature;
+    const auto element = [](const char *name, std::uint32_t index, std::uint32_t reg, bool system) {
+        rdna::Element made;
+        made.name = name;
+        made.index = index;
+        made.reg = reg;
+        made.mask = 0xf;
+        made.read = 0xf;
+        made.system_value = system;
+        return made;
+    };
+    std::set<std::uint32_t> parameters, targets;
+    bool depth = false;
+    for (std::size_t n = 0; n < count; ++n) {
+        const auto word = words[n];
+        if (word >> 26 == 0x3e) { // an export
+            const auto target = word >> 4 & 0x3f;
+            if (stage == ShaderStage::vertex && target >= 32)
+                parameters.insert(target - 32);
+            else if (stage == ShaderStage::pixel && target < 8)
+                targets.insert(target);
+            else if (stage == ShaderStage::pixel && target == 8)
+                depth = true;
+            ++n;                                                        // its registers
+        } else if (word >> 26 == 0x32 && stage == ShaderStage::pixel) { // an interpolation
+            parameters.insert(word >> 10 & 0x3f);
+        }
+    }
+    std::uint32_t reg = 0;
+    if (stage == ShaderStage::vertex) {
+        shader.inputs.push_back(element("SV_VertexID", 0, 0, true));
+        shader.inputs.back().type = 1;
+        shader.inputs.back().width = 1;
+        shader.inputs.back().mask = shader.inputs.back().read = 1;
+        shader.outputs.push_back(element("SV_Position", 0, reg++, true));
+        for (const auto parameter : parameters)
+            shader.outputs.push_back(element("TEXCOORD", parameter, reg++, false));
+    } else {
+        shader.inputs.push_back(element("SV_Position", 0, reg++, true));
+        for (const auto parameter : parameters)
+            shader.inputs.push_back(element("TEXCOORD", parameter, reg++, false));
+        for (const auto target : targets)
+            shader.outputs.push_back(element("SV_Target", target, target, true));
+        if (depth) {
+            shader.outputs.push_back(element("SV_Depth", 0, 8, true));
+            shader.outputs.back().width = 1;
+        }
+    }
+    return rdna::translate(stage, shader, why);
+}
+
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
     // with console code may have its bitcode as well, and then the host runs that.

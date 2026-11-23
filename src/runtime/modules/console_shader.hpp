@@ -41,6 +41,12 @@ std::string console_shader_errors(ShaderStage stage, const std::string &source);
 // says against it is the answer. `source` gets the translation.
 std::string console_shader_probe(std::span<const std::uint32_t> words, bool compiled = false,
                                  std::string *source = nullptr);
+// The HLSL for a vertex or pixel program of a pipeline of the console's cache, which is the
+// machine code alone; `why` says what stops it.
+std::optional<std::string> console_program_source(ShaderStage stage,
+                                                  std::span<const std::uint32_t> words,
+                                                  std::span<const std::uint8_t> root_signature,
+                                                  std::string *why = nullptr);
 // A geometry shader that makes the rectangles of a rectangle list: it is given the three
 // corners the title draws as a triangle, and adds the fourth, opposite the first, as the
 // console's GPU does. `vertex` is the pipeline's vertex shader as the host has it, whose
