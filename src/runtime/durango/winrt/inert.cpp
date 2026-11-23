@@ -297,6 +297,7 @@ constexpr Row rows[] = {
     {kinect, direct, 10, {Inert::true8}}, // IsOpen
     {kinect, direct, 11, {Inert::zero8}}, // IsAvailable
     {kinect, direct, 14, {Inert::object, L"Windows.Kinect.BodyFrameSource"}},
+    {L"Windows.Kinect.BodyFrameSource", direct, 9, {Inert::number32, nullptr, 6}}, // BodyCount
     {L"Windows.Kinect.BodyFrameSource",
      direct,
      10,
@@ -768,7 +769,8 @@ constexpr Row rows[] = {
     // IsChunkInstalled(chunk, bool *): the whole package is there
     {transfer_manager, direct, 7, {Inert::true8_at, nullptr, 2}},
     {transfer_manager, direct, 8, {Inert::event_add}},
-    {transfer_manager, direct, 9, {Inert::zero32_at, nullptr, 2}}, // FindChunkFromFile: the first
+    // FindChunkFromFile: the first, which a title counts from 1
+    {transfer_manager, direct, 9, {Inert::one32_at, nullptr, 2}},
     // IPackageTransferManagerForChunkSpecifiers::GetInstallationState, by chunks and by
     // specifiers: what is asked about is installed
     {transfer_manager,
