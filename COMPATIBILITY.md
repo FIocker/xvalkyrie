@@ -24,8 +24,8 @@ the gamepad), so a title may get further than its state says. Logs of a run are 
 | DRAGON BALL FighterZ                     | `00F385F6` | **Menu**     | Unreal Engine 4. The lobby, a 3D scene, with the right picture                                                    |
 | Forza Motorsport 6 Demo                  | `132D50F5` | **Menu**     | Direct3D 11.X. Main menu after about a minute; its text and logo are right, the background behind them is striped |
 | Minecraft: Xbox One Edition              | `149E11AE` | **Menu**     | Direct3D 11.X. Main menu with the right picture                                                                   |
-| Terraria                                 | `1738CA2A` | **Menu**     | Main menu with the right picture; writes its save                                                                 |
-| Puyo Puyo Champions                      | `62B3A350` | **Intro**    | Direct3D 11.X. The autosave notice, waiting for A; reads the gamepad                                              |
+| Terraria                                 | `1738CA2A` | **Playable** | Main menu with the right picture; writes its save                                                                 |
+| Puyo Puyo Champions                      | `62B3A350` | **Menu**     | Direct3D 11.X. The autosave notice, waiting for A; reads the gamepad                                              |
 | Crash Bandicoot N. Sane Trilogy          | `044D0F74` | **Boots**    | Runs without a frame in 40 s; logs `app:/archives/update.pak not found`                                           |
 | Mega Man 11                              | `1F337CFB` | **Boots**    | Direct3D 11.X. Presents frames, the picture is wrong: a few stray triangles on black                              |
 | Overcooked                               | `145207D1` | **Boots**    | Unity. One frame, then its Mono runtime stops on a thread it does not know                                        |
@@ -63,16 +63,16 @@ the gamepad), so a title may get further than its state says. Logs of a run are 
 
 ## Xbox Series X|S
 
-| Title                                             | ID         | State       | Notes                                                                                                       |
-| ------------------------------------------------- | ---------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| Minecraft Preview                                 | `639AA8DD` | **Menu**    | Main menu with the right picture                                                                            |
-| Unicorn Overlord                                  | `6897AC80` | **Menu**    | Title screen with the right picture, at "Press Any Button"                                                  |
-| Fortnite                                          | `0FF4B5BD` | **Intro**   | Unreal Engine. Loading screen with the right picture, at "connecting"; it needs its servers to go on        |
-| Psychonauts 2                                     | `68076383` | **Boots**   | Unreal Engine 4. First frames, then the host drops the Direct3D 12 device                                   |
-| XDefiant                                          | `799B973E` | **Boots**   | First frames, then the host drops the Direct3D 12 device (`0x887a0005`). 1966 of its 2004 shaders translate |
-| Concept Destruction                               | `72A634A4` | **Nothing** |                                                                                                             |
-| Dynacat                                           | `6322C08F` | **Nothing** |                                                                                                             |
-| The Matrix Awakens: An Unreal Engine 5 Experience | `7D3CD3FE` | **Boots**   |                                                                                                             |
+| Title                                             | ID         | State        | Notes                                                                                                       |
+| ------------------------------------------------- | ---------- | ------------ | ----------------------------------------------------------------------------------------------------------- |
+| Minecraft Preview                                 | `639AA8DD` | **Playable** | Main menu with the right picture                                                                            |
+| Unicorn Overlord                                  | `6897AC80` | **Menu**     | Title screen with the right picture, at "Press Any Button"                                                  |
+| Fortnite                                          | `0FF4B5BD` | **Intro**    | Unreal Engine. Loading screen with the right picture, at "connecting"; it needs its servers to go on        |
+| Psychonauts 2                                     | `68076383` | **Intro**    | Unreal Engine 4. First frames, then the host drops the Direct3D 12 device                                   |
+| XDefiant                                          | `799B973E` | **Boots**    | First frames, then the host drops the Direct3D 12 device (`0x887a0005`). 1966 of its 2004 shaders translate |
+| Concept Destruction                               | `72A634A4` | **Nothing**  |                                                                                                             |
+| Dynacat                                           | `6322C08F` | **Nothing**  |                                                                                                             |
+| The Matrix Awakens: An Unreal Engine 5 Experience | `7D3CD3FE` | **Boots**    |                                                                                                             |
 
 The 40 public GDK samples that build for Series all draw their picture; they are samples, not
 games, and are not listed.

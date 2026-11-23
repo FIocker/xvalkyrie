@@ -58,8 +58,8 @@ the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
   <tr>
     <td align="center">Boots</td>
     <td align="center">Menu</td>
+    <td align="center">Playable</td>
     <td align="center">Menu</td>
-    <td align="center">Intro</td>
     <td align="center">Boots</td>
   </tr>
 </table>
@@ -86,9 +86,9 @@ the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
   <tr>
     <td align="center">Intro</td>
     <td align="center">Menu</td>
-    <td align="center">Menu</td>
+    <td align="center">Playable</td>
     <td align="center">Boots</td>
-    <td align="center">Boots</td>
+    <td align="center">Intro</td>
   </tr>
 </table>
 
@@ -99,6 +99,7 @@ the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
 The project is experimental. What it implements of each console, counted from the code:
 
 <!-- status:begin -->
+
 [![status map](docs/img/status.svg)](docs/STATUS.md)
 
 Every function and instruction behind these numbers is listed in [docs/STATUS.md](docs/STATUS.md).
@@ -141,13 +142,13 @@ build.cmd --test
 
 This leaves `xvalkyrie.exe` and `xvboot.exe` in `build\win\Release`.
 
-| Argument | Effect |
-|---|---|
-| `Debug` | A debug build instead of Release |
-| `--test` | Runs CTest after building |
-| `--vulkan` | Also builds Direct3D 11 on Vulkan (needs [Meson](https://mesonbuild.com) and `glslang`) |
-| `--target NAME` | Builds one target |
-| `--reconfigure` | Runs CMake's configure step again |
+| Argument        | Effect                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------- |
+| `Debug`         | A debug build instead of Release                                                        |
+| `--test`        | Runs CTest after building                                                               |
+| `--vulkan`      | Also builds Direct3D 11 on Vulkan (needs [Meson](https://mesonbuild.com) and `glslang`) |
+| `--target NAME` | Builds one target                                                                       |
+| `--reconfigure` | Runs CMake's configure step again                                                       |
 
 `JOBS` in the environment sets the number of parallel compilations.
 
@@ -170,20 +171,20 @@ trust.
 
 The commands that look at a title without running it print JSON:
 
-| Command | Prints |
-|---|---|
-| `xvboot inspect FILE` | PE headers and directories |
-| `xvboot assess FILE` | The imports by kind, and the console the build is for |
-| `xvboot bind FILE` | Where each import would be bound |
-| `xvboot map FILE [--base HEX]` | The layout of the mapped image |
-| `xvboot properties FILE` | All of the above in one report |
-| `xvboot inspect-config FILE` | A `MicrosoftGame.config` |
-| `xvboot inspect-manifest FILE` | An `AppxManifest.xml` |
-| `xvboot inspect-package FILE` | The header of an XVD/XVC package |
-| `xvboot modules durango\|scarlett` | The console modules and functions implemented |
-| `xvboot shader-probe [--compile]` | For each line of machine code words on the input, what stops its translation |
+| Command                                   | Prints                                                                                               |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `xvboot inspect FILE`                     | PE headers and directories                                                                           |
+| `xvboot assess FILE`                      | The imports by kind, and the console the build is for                                                |
+| `xvboot bind FILE`                        | Where each import would be bound                                                                     |
+| `xvboot map FILE [--base HEX]`            | The layout of the mapped image                                                                       |
+| `xvboot properties FILE`                  | All of the above in one report                                                                       |
+| `xvboot inspect-config FILE`              | A `MicrosoftGame.config`                                                                             |
+| `xvboot inspect-manifest FILE`            | An `AppxManifest.xml`                                                                                |
+| `xvboot inspect-package FILE`             | The header of an XVD/XVC package                                                                     |
+| `xvboot modules durango\|scarlett`        | The console modules and functions implemented                                                        |
+| `xvboot shader-probe [--compile]`         | For each line of machine code words on the input, what stops its translation                         |
 | `xvboot shader-corpus FOLDER [--compile]` | How many of the shaders a run left in a folder (`XV_SHADER_CODE`) translate, and what stops the rest |
-| `xvboot shader-source FILE` | The HLSL made for one shader of such a folder |
+| `xvboot shader-source FILE`               | The HLSL made for one shader of such a folder                                                        |
 
 In the window, Options > Input binds the gamepad to keys or to the host's gamepad,
 Options > Graphics picks the backend and what F11 does, Options > Console sets the signed-in
@@ -200,11 +201,11 @@ Development switches are environment variables, described where they are used in
 
 ## Tools
 
-| Script | What it writes |
-|---|---|
-| `tools/status.py` | The status block above, `docs/STATUS.md` and `docs/img/status.svg` |
-| `tools/rdna_ops.py` | The instruction table of the shader translator, from LLVM's disassembler |
-| `tools/import_xbdepends.py` | The lists of system DLLs and APIs a console title may use |
+| Script                                 | What it writes                                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `tools/status.py`                      | The status block above, `docs/STATUS.md` and `docs/img/status.svg`                       |
+| `tools/rdna_ops.py`                    | The instruction table of the shader translator, from LLVM's disassembler                 |
+| `tools/import_xbdepends.py`            | The lists of system DLLs and APIs a console title may use                                |
 | `tools/compat_images.py check\|fixall` | Nothing, or the screenshots of the table above made alike: 640x360 WebP, 100 KiB at most |
 
 ## FAQ
