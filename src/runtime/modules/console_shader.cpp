@@ -238,7 +238,8 @@ class Inflate {
 };
 
 // The XDAT block of the DXIL part: after the program header, a table of sections as (type,
-// offset, size). Section 0x0d is the zlib stream with the code.
+// offset, size). Section 0x0d is the zlib stream with the code. An Xbox One shader has it in
+// section 0, after 8 bytes: what is in it starts with its size and has 5 at 0x18.
 std::vector<std::uint8_t> code_container(Bytes container) {
     const auto dxil = part(container, "DXIL");
     constexpr std::size_t xdat = 24;
@@ -249,7 +250,17 @@ std::vector<std::uint8_t> code_container(Bytes container) {
          entry += 12) {
         const auto type = word(block, entry), offset = word(block, entry + 4),
                    size = word(block, entry + 8);
-        if (!type || type > 0xff || offset > block.size() || size > block.size() - offset)
+        if (type > 0xff || offset > block.size() || size > block.size() - offset)
+            break;
+        // that one's place is counted from the start of the part
+        if (!type && size > 8 && offset <= dxil.size() && size <= dxil.size() - offset) {
+            std::vector<std::uint8_t> out;
+            if (Inflate(dxil.subspan(offset + 8, size - 8)).run(out) && out.size() >= 0x1e0 &&
+                word(out, 0) == out.size() && word(out, 0x18) == 5)
+                return out;
+            return {};
+        }
+        if (!type)
             break;
         if (type != 0x0d)
             continue;
