@@ -2261,7 +2261,14 @@ class Translator {
                 if (element.mask >> channel & 1) {
                     const auto name =
                         field + (element.width > 1 ? std::string(".") + "xyzw"[component] : "");
-                    line(v(reg) + " = " + (element.type == 3 ? u(name) : "(uint)" + name) + ";");
+                    // a signed 10-bit field the host hands over as an unsigned one
+                    const bool packed = i < 32 && shader_.signed_inputs >> i & 1 &&
+                                        element.type == 3 && component < 3;
+                    line(v(reg) + " = " +
+                         (packed              ? u("snorm10(" + name + ")")
+                          : element.type == 3 ? u(name)
+                                              : "(uint)" + name) +
+                         ";");
                     ++component;
                 } else if (element.mask ==
                                (element.mask & -element.mask) * ((1u << element.width) - 1) &&
@@ -4232,6 +4239,8 @@ class Translator {
 
     static constexpr const char *helpers =
         "float mul_legacy(float a, float b) { return (a == 0.0 || b == 0.0) ? 0.0 : a * b; }\n"
+        "float snorm10(float x) { float r = round(x * 1023.0); return max((r >= 512.0 ? r - "
+        "1024.0 : r) / 511.0, -1.0); }\n"
         "uint mul_hi(uint a, uint b) { uint al = a & 0xffffu, ah = a >> 16, bl = b & 0xffffu, bh = "
         "b >> 16;\n"
         "    uint ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;\n"

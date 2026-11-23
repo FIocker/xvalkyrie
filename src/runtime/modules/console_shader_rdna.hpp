@@ -25,6 +25,9 @@ struct Shader {
     std::span<const std::uint8_t> root_signature; // the RTS0 part
     std::vector<Element> inputs, outputs;
     std::span<const std::uint8_t> bindings; // of an Xbox One shader: what it binds, by kind
+    // the inputs, by their place in `inputs`, that come as unsigned 10-bit fields of what
+    // the title has as signed ones
+    std::uint32_t signed_inputs = 0;
 };
 // The HLSL for the code: what the shader declares and its `main`. A vertex or pixel shader's
 // takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing

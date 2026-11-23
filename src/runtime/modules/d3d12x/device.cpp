@@ -1673,11 +1673,12 @@ std::span<const std::uint8_t> shader_bytes(const D3D12_SHADER_BYTECODE &code) {
     return {static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength};
 }
 bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code,
-                   modules::HostShaderModel model = modules::HostShaderModel::sm5) {
+                   modules::HostShaderModel model = modules::HostShaderModel::sm5,
+                   std::span<const modules::PackedInput> packed = {}) {
     const auto container = shader_bytes(code);
     if (!code.pShaderBytecode || !modules::console_only_shader(container))
         return false;
-    const auto made = modules::host_shader(stage, container, model);
+    const auto made = modules::host_shader(stage, container, model, packed);
     if (made.empty())
         return false;
     code = {made.data(), made.size()};
@@ -1685,7 +1686,7 @@ bool host_bytecode(modules::ShaderStage stage, D3D12_SHADER_BYTECODE &code,
 }
 
 bool host_graphics_pair(ID3D12Device *device, D3D12_SHADER_BYTECODE &vs, D3D12_SHADER_BYTECODE &ps,
-                        bool allow_sm6) {
+                        bool allow_sm6, std::span<const modules::PackedInput> packed = {}) {
     using modules::HostShaderModel;
     using modules::ShaderStage;
     if (allow_sm6 && vs.pShaderBytecode && ps.pShaderBytecode) {
@@ -1693,7 +1694,7 @@ bool host_graphics_pair(ID3D12Device *device, D3D12_SHADER_BYTECODE &vs, D3D12_S
         if (host_bytecode(ShaderStage::pixel, pixel, HostShaderModel::automatic)) {
             if (!modules::shader_has_dxil(shader_bytes(pixel))) {
                 ps = pixel;
-                host_bytecode(ShaderStage::vertex, vs);
+                host_bytecode(ShaderStage::vertex, vs, HostShaderModel::sm5, packed);
                 return true;
             }
             // A graphics pipeline cannot mix DXBC and DXIL on all supported drivers.
@@ -1707,14 +1708,14 @@ bool host_graphics_pair(ID3D12Device *device, D3D12_SHADER_BYTECODE &vs, D3D12_S
                                                       sizeof model)) &&
                 model.HighestShaderModel >= D3D_SHADER_MODEL_6_6 &&
                 (modules::shader_has_dxil(shader_bytes(vertex)) ||
-                 host_bytecode(ShaderStage::vertex, vertex, HostShaderModel::sm6))) {
+                 host_bytecode(ShaderStage::vertex, vertex, HostShaderModel::sm6, packed))) {
                 vs = vertex;
                 ps = pixel;
                 return true;
             }
         }
     }
-    const bool vertex = host_bytecode(ShaderStage::vertex, vs);
+    const bool vertex = host_bytecode(ShaderStage::vertex, vs, HostShaderModel::sm5, packed);
     const bool pixel = host_bytecode(ShaderStage::pixel, ps);
     return vertex || pixel;
 }
@@ -1863,17 +1864,22 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     D3D12_GRAPHICS_PIPELINE_STATE_DESC host{};
     ID3D12RootSignature *from_shader = nullptr;
     std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
+    std::vector<modules::PackedInput> packed;
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
         // The console's R10G10B10_SNORM_A2_UNORM (189), what packed normals are in, is no
-        // vertex format of the host's: its bits are read unsigned there
+        // vertex format of the host's: its bits are read unsigned there, and a vertex shader
+        // made here makes them signed again
         if (host.InputLayout.pInputElementDescs) {
             elements.assign(host.InputLayout.pInputElementDescs,
                             host.InputLayout.pInputElementDescs + host.InputLayout.NumElements);
             for (auto &element : elements)
-                if (element.Format == static_cast<DXGI_FORMAT>(189))
+                if (element.Format == static_cast<DXGI_FORMAT>(189)) {
                     element.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+                    if (element.SemanticName)
+                        packed.push_back({element.SemanticName, element.SemanticIndex});
+                }
             host.InputLayout.pInputElementDescs = elements.data();
         }
         host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
@@ -1885,7 +1891,7 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         const bool simple = desc->PrimitiveTopologyType != rectangle_type &&
                             !host.GS.pShaderBytecode && !host.HS.pShaderBytecode &&
                             !host.DS.pShaderBytecode;
-        const bool pair = host_graphics_pair(self, host.VS, host.PS, simple);
+        const bool pair = host_graphics_pair(self, host.VS, host.PS, simple, packed);
         const bool made = host_bytecode(geometry, host.GS) || pair;
         if (made && !host.pRootSignature)
             host.pRootSignature = from_shader =

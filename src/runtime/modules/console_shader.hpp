@@ -50,7 +50,15 @@ std::string shader_signature(std::span<const std::uint8_t> container);
 // The host's shader for it, from the cache or made now. It stays where it is for as long
 // as the process runs. Empty if none could be made.
 enum class HostShaderModel { sm5, sm6, automatic };
+// An input of a vertex shader that the title's input layout has in the Xbox One's
+// R10G10B10_SNORM_A2_UNORM, by semantic. The host reads those bits unsigned, and the shader
+// made for such a layout makes the three signed again.
+struct PackedInput {
+    std::string name;
+    unsigned index = 0;
+};
 std::span<const std::uint8_t> host_shader(ShaderStage stage,
                                           std::span<const std::uint8_t> container,
-                                          HostShaderModel model = HostShaderModel::sm5);
+                                          HostShaderModel model = HostShaderModel::sm5,
+                                          std::span<const PackedInput> packed = {});
 } // namespace xv::runtime::modules

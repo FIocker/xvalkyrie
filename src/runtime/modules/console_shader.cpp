@@ -412,8 +412,8 @@ std::string stand_in(ShaderStage stage, Bytes container) {
 // `why` says what stopped it
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
                                              std::string *why = nullptr,
-                                             std::uint32_t *at = nullptr,
-                                             bool *needs_sm6 = nullptr) {
+                                             std::uint32_t *at = nullptr, bool *needs_sm6 = nullptr,
+                                             std::uint32_t signed_inputs = 0) {
     if (stage != ShaderStage::vertex && stage != ShaderStage::pixel &&
         stage != ShaderStage::compute)
         return std::nullopt;
@@ -424,6 +424,7 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     shader.bindings = bindings_section(container);
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
+    shader.signed_inputs = signed_inputs;
     return rdna::translate(stage, shader, why, at, needs_sm6);
 }
 
@@ -848,9 +849,20 @@ std::vector<std::uint32_t> console_shader_code(Bytes container) {
 
 namespace {
 std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes container,
-                                               HostShaderModel model) {
+                                               HostShaderModel model,
+                                               std::span<const PackedInput> packed) {
     const char letter = "vpc123"[static_cast<int>(stage)];
     const auto hash = hash_name(container);
+    // a vertex shader for a layout with packed signed inputs is another shader
+    std::uint32_t signed_inputs = 0;
+    if (stage == ShaderStage::vertex && !packed.empty()) {
+        const auto inputs = signature(container, "ISG1");
+        for (std::size_t i = 0; i < inputs.size() && i < 32; ++i)
+            for (const auto &one : packed)
+                if (one.index == inputs[i].index &&
+                    !_stricmp(one.name.c_str(), inputs[i].name.c_str()))
+                    signed_inputs |= 1u << i;
+    }
     // XV_SHADER_STAND_INS: no translation, to tell what a translated shader breaks; with a
     // value, the letters of the stages that are still translated (v, p, c)
     static const char *const stand_ins = std::getenv("XV_SHADER_STAND_INS");
@@ -860,6 +872,7 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                                    : model == HostShaderModel::automatic ? "-auto"
                                                                          : "";
     const auto name = hash + "-" + letter + "-v" + std::to_string(translator_version) + model_name +
+                      (signed_inputs ? "-s" + std::to_string(signed_inputs) : "") +
                       (stand_ins_only ? "-stand-in" : "") + ".dxbc";
     // one thread makes a shader, and the others that want the same one wait for it: titles
     // make their pipelines on many threads, and the host's compiler is slow
@@ -891,9 +904,9 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     if (shader.empty()) {
         std::string why = "stand-ins asked for";
         bool needs_sm6 = false;
-        auto source = stand_ins_only
-                          ? std::nullopt
-                          : translated_source(stage, container, &why, nullptr, &needs_sm6);
+        auto source = stand_ins_only ? std::nullopt
+                                     : translated_source(stage, container, &why, nullptr,
+                                                         &needs_sm6, signed_inputs);
         const bool sm6 =
             model == HostShaderModel::sm6 || (model == HostShaderModel::automatic && needs_sm6);
         if (needs_sm6 && !sm6) {
@@ -955,11 +968,11 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
 }
 } // namespace
 
-std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container,
-                                          HostShaderModel model) {
+std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container, HostShaderModel model,
+                                          std::span<const PackedInput> packed) {
     if (model != HostShaderModel::sm5 && stage != ShaderStage::vertex &&
         stage != ShaderStage::pixel)
         return {};
-    return make_host_shader(stage, container, model);
+    return make_host_shader(stage, container, model, packed);
 }
 } // namespace xv::runtime::modules
