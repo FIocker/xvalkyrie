@@ -347,6 +347,16 @@ class Translator {
                          [](const Ins &ins) { return ins.name == "s_swappc_b64"; }) &&
             std::all_of(shader_.inputs.begin(), shader_.inputs.end(), generated))
             fetch_inputs();
+        // a cached pipeline's vertex program: the vertex's number is in v0, and the rest it
+        // reads from its streams
+        if (shader_.streams && stage_ == Stage::vertex) {
+            for (std::size_t i = 0; i < shader_.inputs.size(); ++i)
+                if (!_stricmp(shader_.inputs[i].name.c_str(), "SV_VertexID")) {
+                    line(v(0) + " = input.f" + std::to_string(i) + ";");
+                    vertex_id_ = true;
+                }
+            fetched_ = true;
+        }
         for (std::size_t block = 0; block < blocks_.size(); ++block)
             emit_block(block);
         // a descriptor whose words the shader reads, met before what it is was known
