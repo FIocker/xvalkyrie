@@ -435,6 +435,11 @@ HRESULT WINAPI allocate_graphics_memory(SIZE_T size, UINT64 alignment, UINT64 ad
 }
 HRESULT WINAPI free_graphics_memory(void *address) { return d3d_free_graphics_memory(address); }
 
+namespace {
+// XMemSetOption(option, value): tuning of the console's allocator, which is not this one
+HRESULT WINAPI xmem_set_option(UINT, std::uint64_t) { return S_OK; }
+} // namespace
+
 void install_xmem(Registry &registry) {
     for (const auto &[name, function] : functions)
         if (std::string_view(name).starts_with("XMem") &&
@@ -449,6 +454,7 @@ void install_xmem(Registry &registry) {
         {"XMemGetWorkingSetStatistics", erase(xmem_working_set_statistics)},
         {"XMemGetWin32HeapStatistics", erase(not_implemented)},
         {"XMemIsToolsMemAvailable", erase(no)},
+        {"XMemSetOption", erase(xmem_set_option)},
         {"XMemTransferMemory", erase(xmem_transfer_memory)},
         {"XMemMakeTag", erase(xmem_make_tag)}};
     for (const auto &[name, function] : more)

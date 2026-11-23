@@ -23,6 +23,13 @@ void install(Registry &registry) {
     // ERA titles are WinRT applications and use more of these than the GDK allows
     registry.forward("combase.dll", "combase.dll");
     registry.forward("ws2_32.dll", "ws2_32.dll");
+    registry.forward("oleaut32.dll", "oleaut32.dll");
+    // the same functions by their API sets, which the title's own WinRT DLLs import
+    for (const auto *set :
+         {"api-ms-win-core-winrt-string-l1-1-0.dll", "api-ms-win-core-winrt-l1-1-0.dll",
+          "api-ms-win-core-winrt-error-l1-1-0.dll", "api-ms-win-core-winrt-error-l1-1-1.dll",
+          "api-ms-win-core-com-l1-1-0.dll", "api-ms-win-core-com-l1-1-1.dll"})
+        registry.forward(set, "combase.dll");
     // the shader compiler is the desktop one
     registry.forward("d3dcompiler_47.dll", "d3dcompiler_47.dll");
     registry.forward("d3dcompiler_46.dll", "d3dcompiler_47.dll");
