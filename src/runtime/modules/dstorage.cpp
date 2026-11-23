@@ -303,8 +303,35 @@ class Queue final : public Object<QueueInterface> {
         // one submission at a time, so that marks follow the requests before them
         const std::lock_guard running(running_);
         HRESULT since_mark = S_OK;
+        // XV_DS_TIME: when each submission starts, how much it reads and how long it takes
+        const bool timed = std::getenv("XV_DS_TIME");
+        const auto started = GetTickCount64();
+        std::uint64_t requests = 0, packed = 0, plain = 0, first_offset = 0;
+        struct Timed {
+            bool on;
+            const char *name;
+            ULONGLONG started;
+            std::uint64_t &requests, &packed, &plain, &first_offset;
+            std::size_t entries;
+            ~Timed() {
+                if (!on || !entries)
+                    return;
+                std::fprintf(stderr,
+                             "[Time] at %llu ms thread %lu DirectStorage submit on %s: %zu "
+                             "entries, %llu requests from offset %llu, %llu -> %llu bytes, %llu "
+                             "ms\n",
+                             started, GetCurrentThreadId(), name, entries, requests, first_offset,
+                             packed, plain, GetTickCount64() - started);
+                std::fflush(stderr);
+            }
+        } const report{timed,  name_.c_str(), started,      requests,
+                       packed, plain,         first_offset, work.size()};
         for (auto &entry : work) {
             if (auto *const request = std::get_if<Request>(&entry)) {
+                if (!requests++)
+                    first_offset = request->file_offset;
+                packed += request->source_size;
+                plain += request->destination_size;
                 const auto result = read(*request);
                 // XV_FILE_TRACE: the first requests, and every one that fails
                 if (static std::atomic<int> shown{0};

@@ -24,6 +24,8 @@
 #include <vector>
 #include <windows.h>
 
+#include <tlhelp32.h> // after windows.h
+
 // One guest per process, running on its own thread. Same ABI as the host,
 // so an import is just a function pointer.
 namespace xv::runtime {
@@ -535,6 +537,38 @@ void report_unwound_stack(const CONTEXT *fault) {
     }
     std::fprintf(stderr, "\n");
 }
+// what is on a stopped thread's stack from `from` up
+int copy_stack(DWORD64 from, DWORD64 *into, int most) {
+    int count = 0;
+    __try {
+        for (; count < most; ++count)
+            into[count] = reinterpret_cast<const DWORD64 *>(from & ~DWORD64{7})[count];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return count;
+}
+// the return addresses of a thread that is suspended, innermost first
+int unwind_frames(CONTEXT context, DWORD64 *frames, int most) {
+    int count = 0;
+    __try {
+        while (count < most && context.Rip) {
+            frames[count++] = context.Rip;
+            DWORD64 base = 0;
+            auto *const function = RtlLookupFunctionEntry(context.Rip, &base, nullptr);
+            if (!function) {
+                context.Rip = *reinterpret_cast<DWORD64 *>(context.Rsp);
+                context.Rsp += 8;
+                continue;
+            }
+            void *handler_data = nullptr;
+            DWORD64 frame = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, context.Rip, function, &context,
+                             &handler_data, &frame, nullptr);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return count;
+}
 int report_fault(EXCEPTION_POINTERS *info, bool last = true) {
     const auto *record = info->ExceptionRecord;
     const auto address = reinterpret_cast<std::uint64_t>(record->ExceptionAddress);
@@ -663,9 +697,60 @@ void poke(std::uint8_t *address, std::uint8_t value) {
     VirtualProtect(address, 1, previous, &previous);
     FlushInstructionCache(GetCurrentProcess(), address, 1);
 }
+// XV_WATCH=<offset>[+<more>]: when the first breakpoint of XV_BREAK is hit, the 8 bytes at
+// [rax + offset] + more are watched for writes with a debug register, on every thread there
+// is then, and each write says where it came from.
+std::atomic<int> watch_reports{0}, all_hits{0};
+void watch(std::uint64_t address, CONTEXT &own) {
+    const auto arm = [&](CONTEXT &context) {
+        context.Dr0 = address;
+        context.Dr7 = (context.Dr7 & ~0xf0003ull) | 1 | 1ull << 16 | 2ull << 18;
+    };
+    own.ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+    arm(own);
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 entry{sizeof entry};
+    int armed = 1;
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID != GetCurrentProcessId() ||
+            entry.th32ThreadID == GetCurrentThreadId())
+            continue;
+        const auto thread =
+            OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE,
+                       entry.th32ThreadID);
+        if (!thread)
+            continue;
+        if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
+            CONTEXT context{};
+            context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (GetThreadContext(thread, &context)) {
+                arm(context);
+                armed += SetThreadContext(thread, &context) != 0;
+            }
+            ResumeThread(thread);
+        }
+        CloseHandle(thread);
+    }
+    CloseHandle(snapshot);
+    std::fprintf(stderr, "[Watch] writes to %llx are watched on %d threads\n", address, armed);
+    std::fflush(stderr);
+}
 LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
     auto &context = *info->ContextRecord;
     const auto code = info->ExceptionRecord->ExceptionCode;
+    if (code == EXCEPTION_SINGLE_STEP && context.Dr6 & 1) {
+        context.Dr6 = 0;
+        if (watch_reports++ < 40) {
+            std::uint64_t value = 0;
+            std::memcpy(&value, reinterpret_cast<const void *>(context.Dr0), sizeof value);
+            std::fprintf(stderr, "[Watch] thread %lu wrote %llx before %s, called from %s\n",
+                         GetCurrentThreadId(), value,
+                         detail::guest_location(reinterpret_cast<void *>(context.Rip)).c_str(),
+                         detail::guest_location(*reinterpret_cast<void **>(context.Rsp)).c_str());
+            std::fflush(stderr);
+        }
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
     if (code == EXCEPTION_SINGLE_STEP && stepping) {
         if (stepping->hits < break_limit)
             poke(stepping->address, 0xcc);
@@ -689,10 +774,11 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
             read(context.Rdx, at_rdx, sizeof at_rdx);
             read(context.R8, at_r8, sizeof at_r8);
             std::fprintf(stderr,
-                         "[Break] image+0x%llx thread %lu rax %llx (image at %llx) rcx %llx rdx "
-                         "%llx r8 %llx r9 %llx "
+                         "[Break] at %llu ms image+0x%llx thread %lu rax %llx (image at %llx) rcx "
+                         "%llx rdx %llx r8 %llx r9 %llx "
                          "[rcx] %llx %llx %llx %llx [rdx] %llx %llx %llx %llx [r8] %llx %llx %llx "
                          "%llx %llx from %s\n",
+                         GetTickCount64(),
                          static_cast<unsigned long long>(
                              reinterpret_cast<std::uint64_t>(point.address) - guest->base),
                          GetCurrentThreadId(), context.Rax,
@@ -701,6 +787,65 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
                          at_rdx[0], at_rdx[1], at_rdx[2], at_rdx[3], at_r8[0], at_r8[1], at_r8[2],
                          at_r8[3], at_r8[4],
                          detail::guest_location(*reinterpret_cast<void **>(context.Rsp)).c_str());
+            // XV_BREAK_AT=1: the 8 qwords at rax itself, and rbx, r14, r15
+            if (std::getenv("XV_BREAK_AT")) {
+                std::uint64_t words[8]{};
+                read(context.Rax, words, sizeof words);
+                std::fprintf(stderr, "[Break]   rbx %llx r14 %llx r15 %llx [rax]:", context.Rbx,
+                             context.R14, context.R15);
+                for (const auto word : words)
+                    std::fprintf(stderr, " %016llx", word);
+                std::fprintf(stderr, "\n");
+                read(context.R15, words, sizeof words);
+                std::fprintf(stderr, "[Break]   [r15]:");
+                for (const auto word : words)
+                    std::fprintf(stderr, " %016llx", word);
+                std::fprintf(stderr, "\n");
+                read(context.R14, words, sizeof words);
+                std::fprintf(stderr, "[Break]   [r14]:");
+                for (const auto word : words)
+                    std::fprintf(stderr, " %016llx", word);
+                std::fprintf(stderr, "\n");
+            }
+            // XV_BREAK_MEM=<register>[-<back>]:<length>[,...]: the bytes at a register's value
+            // (rax rcx rdx rbx rsi rdi r8 r14 r15), from <back> bytes before it, in hexadecimal
+            if (const char *list = std::getenv("XV_BREAK_MEM"))
+                while (*list) {
+                    static const struct {
+                        const char *name;
+                        DWORD64 CONTEXT::*value;
+                    } registers[] = {
+                        {"rax", &CONTEXT::Rax}, {"rcx", &CONTEXT::Rcx}, {"rdx", &CONTEXT::Rdx},
+                        {"rbx", &CONTEXT::Rbx}, {"rsi", &CONTEXT::Rsi}, {"rdi", &CONTEXT::Rdi},
+                        {"r8", &CONTEXT::R8},   {"r12", &CONTEXT::R12}, {"r13", &CONTEXT::R13},
+                        {"r14", &CONTEXT::R14}, {"r15", &CONTEXT::R15}};
+                    std::uint64_t base = 0;
+                    const char *name = "?";
+                    for (const auto &entry : registers)
+                        if (!std::strncmp(list, entry.name, std::strlen(entry.name))) {
+                            base = context.*entry.value;
+                            name = entry.name;
+                            list += std::strlen(entry.name);
+                            break;
+                        }
+                    char *end = nullptr;
+                    const auto back = *list == '-' ? std::strtoull(list + 1, &end, 16) : 0;
+                    if (end)
+                        list = end;
+                    const auto length =
+                        *list == ':'
+                            ? std::min<std::uint64_t>(std::strtoull(list + 1, &end, 16), 0x1000)
+                            : 0;
+                    if (!length)
+                        break;
+                    list = *end ? end + 1 : end;
+                    std::vector<std::uint8_t> bytes(length);
+                    read(base - back, bytes.data(), bytes.size());
+                    std::fprintf(stderr, "[Break]   %s %llx - %llx:", name, base, back);
+                    for (std::size_t at = 0; at < bytes.size(); ++at)
+                        std::fprintf(stderr, at % 4 ? "%02x" : " %02x", bytes[at]);
+                    std::fprintf(stderr, "\n");
+                }
             // XV_BREAK_RAX=<offset>[,<offset>...]: the 16 qwords [[rax + offset]] leads to
             if (const char *list = std::getenv("XV_BREAK_RAX"))
                 for (char *end = nullptr; *list; list = *end ? end + 1 : end) {
@@ -708,7 +853,8 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
                     if (end == list)
                         break;
                     std::uint64_t pointer = 0, words[16]{};
-                    read(context.Rax + offset, &pointer, sizeof pointer);
+                    read((std::getenv("XV_BREAK_R8") ? context.R8 : context.Rax) + offset, &pointer,
+                         sizeof pointer);
                     read(pointer, words, sizeof words);
                     std::fprintf(stderr, "[Break]   [[rax+0x%llx]] = %llx:", offset, pointer);
                     for (const auto word : words)
@@ -716,6 +862,26 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
                     std::fprintf(stderr, "\n");
                 }
             std::fflush(stderr);
+            if (const char *text = std::getenv("XV_WATCH");
+                text &&
+                // XV_WATCH_ANY: at that hit of all the breakpoints together, not of the first
+                (std::getenv("XV_WATCH_ANY")      ? ++all_hits
+                 : &point == &breakpoints.front() ? static_cast<int>(point.hits)
+                                                  : 0) ==
+                    (std::getenv("XV_WATCH_HIT") ? std::atoi(std::getenv("XV_WATCH_HIT")) : 1)) {
+                char *end = nullptr;
+                const auto offset = std::strtoull(text, &end, 16);
+                const auto more = *end == '+' ? std::strtoull(end + 1, nullptr, 16) : 0;
+                std::uint64_t pointer = 0;
+                // XV_WATCH_RCX: from rcx instead of rax
+                read((std::getenv("XV_WATCH_RCX") ? context.Rcx : context.Rax) + offset, &pointer,
+                     sizeof pointer);
+                // XV_WATCH_DIRECT: the register's value + offset itself, not what it leads to
+                if (std::getenv("XV_WATCH_DIRECT"))
+                    pointer = (std::getenv("XV_WATCH_RCX") ? context.Rcx : context.Rax) + offset;
+                if (pointer)
+                    watch(pointer + more, context);
+            }
         }
         poke(point.address, point.original);
         stepping = &point;
@@ -727,7 +893,33 @@ LONG WINAPI at_breakpoint(EXCEPTION_POINTERS *info) {
 // CLWB (66 0F AE /6), which the Series console's processor has and not every host's: where
 // one stops the title it is made a CLFLUSH (0F AE /7 under a prefix that does nothing),
 // which writes the line back as well.
+// A title also writes back the lines of memory that is its own only on the console (what a
+// resource of the GPU's is made of, which the host keeps elsewhere): there is nothing to
+// write back, and the instruction is passed over (7952987A at image+0x532f230).
+bool passed_over_flush(CONTEXT &context) {
+    const auto *at = reinterpret_cast<const std::uint8_t *>(context.Rip);
+    if (!detail::title_image_base(at))
+        return false;
+    const auto *opcode = at;
+    while (*opcode == 0x3e || *opcode == 0x66)
+        ++opcode;
+    if ((*opcode & 0xf0) == 0x40)
+        ++opcode;
+    const auto modrm = opcode[2];
+    if (opcode[0] != 0x0f || opcode[1] != 0xae || (modrm >> 3 & 7) < 6 || modrm >> 6 == 3)
+        return false;
+    std::size_t length = 3;
+    const auto mod = modrm >> 6, rm = modrm & 7;
+    if (rm == 4)
+        length += 1 + (mod == 0 && (opcode[3] & 7) == 5 ? 4 : 0);
+    length += mod == 1 ? 1 : mod == 2 || (mod == 0 && rm == 5) ? 4 : 0;
+    context.Rip = reinterpret_cast<DWORD64>(opcode + length);
+    return true;
+}
 LONG WINAPI missing_instruction(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        passed_over_flush(*info->ContextRecord))
+        return EXCEPTION_CONTINUE_EXECUTION;
     if (info->ExceptionRecord->ExceptionCode != EXCEPTION_ILLEGAL_INSTRUCTION)
         return EXCEPTION_CONTINUE_SEARCH;
     auto *const at = reinterpret_cast<std::uint8_t *>(info->ContextRecord->Rip);
@@ -1080,5 +1272,77 @@ std::uint32_t execute(const std::filesystem::path &path, std::span<const std::ui
     if (count)
         RtlDeleteFunctionTable(functions);
     return code;
+}
+// Where every other thread is, for something one of them has just done and no call says
+// which: each is stopped for as long as its stack is read.
+void detail::report_thread_stacks(std::uint64_t own_stack) {
+    static std::atomic<bool> once{false};
+    if (once.exchange(true))
+        return;
+    // Every other thread is stopped first and stays so: the title ends the process when it
+    // sees the device gone. Nothing here takes a lock one of them may hold: the addresses
+    // go out as they are, each with the base of what it is in.
+    static HANDLE threads[512];
+    static DWORD ids[512];
+    int count = 0;
+    // the process's threads straight from the system: a snapshot of every thread there is
+    // takes longer than the title does to end
+    using Next = LONG(NTAPI *)(HANDLE, HANDLE, ACCESS_MASK, ULONG, ULONG, HANDLE *);
+    const auto next =
+        reinterpret_cast<Next>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtGetNextThread"));
+    HANDLE thread = nullptr;
+    while (next && count < 512 &&
+           next(GetCurrentProcess(), thread,
+                THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, 0, 0,
+                &thread) >= 0) {
+        const auto id = GetThreadId(thread);
+        if (id == GetCurrentThreadId() || SuspendThread(thread) == static_cast<DWORD>(-1))
+            continue;
+        ids[count] = id;
+        threads[count++] = thread;
+    }
+    const auto out = GetStdHandle(STD_ERROR_HANDLE);
+    const auto say = [&](const char *text, int length) {
+        DWORD written = 0;
+        WriteFile(out, text, static_cast<DWORD>(length), &written, nullptr);
+    };
+    static DWORD64 stack[600];
+    static char line[8192];
+    // the calling thread's own first, from where it says its stack is
+    for (int index = own_stack ? -1 : 0; index < count; ++index) {
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_CONTROL;
+        if (index < 0)
+            context.Rsp = own_stack;
+        else if (!GetThreadContext(threads[index], &context))
+            continue;
+        const int words = copy_stack(context.Rsp, stack, static_cast<int>(std::size(stack)));
+        int length =
+            std::snprintf(line, sizeof line,
+                          "[Stacks] thread %lu%s:", index < 0 ? GetCurrentThreadId() : ids[index],
+                          index < 0 ? " (the caller)" : "");
+        const auto place = [&](DWORD64 address) {
+            MEMORY_BASIC_INFORMATION region{};
+            if (address < 0x10000 ||
+                !VirtualQuery(reinterpret_cast<void *>(address), &region, sizeof region) ||
+                region.State != MEM_COMMIT ||
+                !(region.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                    PAGE_EXECUTE_WRITECOPY)))
+                return false;
+            length += std::snprintf(
+                line + length, sizeof line - length, " %llx+%llx",
+                static_cast<unsigned long long>(reinterpret_cast<DWORD64>(region.AllocationBase)),
+                static_cast<unsigned long long>(address -
+                                                reinterpret_cast<DWORD64>(region.AllocationBase)));
+            return true;
+        };
+        place(context.Rip);
+        for (int i = 0, shown = 0; i < words && shown < (index < 0 ? 90 : 40) && length < 7000; ++i)
+            shown += place(stack[i]);
+        line[length++] = 10;
+        say(line, length);
+    }
+    for (int index = 0; index < count; ++index)
+        ResumeThread(threads[index]);
 }
 } // namespace xv::runtime

@@ -985,6 +985,16 @@ std::span<const std::uint8_t> empty_compute_shader() {
     return shader;
 }
 
+std::span<const std::uint8_t> empty_vertex_shader() {
+    static const auto shader = compile(
+        ShaderStage::vertex, "float4 main() : SV_Position { return float4(0.0, 0.0, 0.0, 0.0); }");
+    return shader;
+}
+std::span<const std::uint8_t> empty_pixel_shader() {
+    static const auto shader = compile(ShaderStage::pixel, "void main() {}");
+    return shader;
+}
+
 std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container, HostShaderModel model,
                                           std::span<const PackedInput> packed,
                                           Bytes root_signature) {

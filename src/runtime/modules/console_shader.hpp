@@ -69,4 +69,8 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage,
 // A compute shader that does nothing, for a pipeline whose own shader the host's driver
 // cannot make. Empty if the host's compiler gives none.
 std::span<const std::uint8_t> empty_compute_shader();
+// A vertex shader that puts every vertex at the origin and a pixel shader that writes
+// nothing: a pipeline of the two exists and draws nothing.
+std::span<const std::uint8_t> empty_vertex_shader();
+std::span<const std::uint8_t> empty_pixel_shader();
 } // namespace xv::runtime::modules

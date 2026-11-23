@@ -21,6 +21,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #include <wrl/implements.h>
@@ -698,6 +699,7 @@ struct ShadowHeap {
     UINT host_stride;
     void *owner;           // the heap the title holds
     bool borrowed = false; // the memory is the title's own, from its allocation hooks
+    UINT host_count = ~0u; // the host's descriptors, where it has fewer than the title
 };
 // The console's descriptor sizes, which titles also have compiled in: the device's inline
 // methods copy descriptors of these sizes themselves
@@ -730,15 +732,19 @@ const ShadowHeap *shadow_heap(std::uintptr_t address) {
     --found;
     return address < found->second.end ? &found->second : nullptr;
 }
+// A descriptor the host's heap is too short for lands on its last one, which is given up
+// for that: the host drops the device over a handle outside its heap.
+D3D12_CPU_DESCRIPTOR_HANDLE host_slot(const ShadowHeap &heap, std::uintptr_t at) {
+    const auto index =
+        std::min<std::uintptr_t>((at - heap.base) / heap.stride, heap.host_count - 1);
+    return {heap.host.ptr + index * heap.host_stride};
+}
 // the host's handle for a console one; others are the host's already
 D3D12_CPU_DESCRIPTOR_HANDLE host_handle(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     const std::lock_guard lock(shadow_mutex);
     if (const auto *heap = shadow_heap(handle.ptr))
-        return {heap->host.ptr + (handle.ptr - heap->base) / heap->stride * heap->host_stride};
+        return host_slot(*heap, handle.ptr);
     return handle;
-}
-D3D12_CPU_DESCRIPTOR_HANDLE host_slot(const ShadowHeap &heap, std::uintptr_t at) {
-    return {heap.host.ptr + (at - heap.base) / heap.stride * heap.host_stride};
 }
 // The mark of a host descriptor, and the host's handle of the slot that holds it: a title
 // that copies descriptors itself (the device's inline CopyDescriptorsSimple) carries both
@@ -894,7 +900,7 @@ void *title_heap_memory(const void *caller, std::size_t bytes) {
 }
 void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HEAP_DESC &desc,
                      D3D12_CPU_DESCRIPTOR_HANDLE host, std::uint64_t gpu,
-                     void *title_memory = nullptr) {
+                     void *title_memory = nullptr, UINT host_count = ~0u) {
     const UINT stride = console_stride(desc.Type);
     auto *const memory =
         title_memory ? title_memory : low_memory(std::size_t{desc.NumDescriptors} * stride);
@@ -914,7 +920,8 @@ void register_shadow(ID3D12Device *device, void *heap, const D3D12_DESCRIPTOR_HE
                           gpu,
                           device->GetDescriptorHandleIncrementSize(desc.Type),
                           heap,
-                          title_memory != nullptr};
+                          title_memory != nullptr,
+                          host_count};
     shadow_of[heap] = base;
 }
 // Before the GPU runs: what the title wrote straight into a shader-visible heap since last
@@ -1143,6 +1150,7 @@ struct TableRange {
 };
 std::mutex signature_mutex;
 std::map<const void *, std::vector<std::vector<TableRange>>> tables_of; // per parameter
+std::map<const void *, std::string> signature_text; // XV_D3D_LOST: its parameters, in words
 void read_root_signature(const void *signature, const void *blob, SIZE_T size) {
     using Create = HRESULT(WINAPI *)(const void *, SIZE_T, REFIID, void **);
     static const auto create = host_d3d12<Create>("D3D12CreateVersionedRootSignatureDeserializer");
@@ -1172,8 +1180,34 @@ void read_root_signature(const void *signature, const void *blob, SIZE_T size) {
             next = offset + count;
         }
     }
+    std::string text = "flags " + std::to_string(desc->Desc_1_1.Flags) + ", " +
+                       std::to_string(desc->Desc_1_1.NumStaticSamplers) + " static samplers";
+    for (UINT i = 0; i < desc->Desc_1_1.NumParameters; ++i) {
+        const auto &parameter = desc->Desc_1_1.pParameters[i];
+        static const char *const kinds[] = {"table", "constants", "CBV", "SRV", "UAV"};
+        text += std::string("; ") +
+                (parameter.ParameterType < 5 ? kinds[parameter.ParameterType] : "?");
+        if (parameter.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+            for (UINT r = 0; r < parameter.DescriptorTable.NumDescriptorRanges; ++r) {
+                const auto &range = parameter.DescriptorTable.pDescriptorRanges[r];
+                text += " [type " + std::to_string(range.RangeType) + " x" +
+                        std::to_string(static_cast<int>(range.NumDescriptors)) + " r" +
+                        std::to_string(range.BaseShaderRegister) + " space " +
+                        std::to_string(range.RegisterSpace) + " flags " +
+                        std::to_string(range.Flags) + "]";
+            }
+        else if (parameter.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+            text += " r" + std::to_string(parameter.Constants.ShaderRegister) + " x" +
+                    std::to_string(parameter.Constants.Num32BitValues);
+        else
+            text += " r" + std::to_string(parameter.Descriptor.ShaderRegister) + " space " +
+                    std::to_string(parameter.Descriptor.RegisterSpace) + " flags " +
+                    std::to_string(parameter.Descriptor.Flags);
+        text += " visibility " + std::to_string(parameter.ShaderVisibility);
+    }
     reader->Release();
     const std::lock_guard lock(signature_mutex);
+    signature_text[signature] = std::move(text);
     tables_of[signature] = std::move(tables);
 }
 
@@ -1362,6 +1396,47 @@ void decode_table(const void *signature, UINT parameter, std::uint64_t gpu) {
 
 // The device's methods that take CPU handles: the host's handle, and the shadow marked
 using Handle = D3D12_CPU_DESCRIPTOR_HANDLE;
+// The console's 16-bit depth with stencil (D16_UNORM_S8_UINT 118, and 119 and 120 to read its
+// depth and its stencil) is no format of the host's, whose nearest is 24-bit depth with
+// stencil. `resource`: what a texture is made as, which is typeless so that it can be read.
+DXGI_FORMAT host_format(DXGI_FORMAT format, bool resource = false) {
+    switch (static_cast<int>(format)) {
+    case 118:
+        return resource ? DXGI_FORMAT_R24G8_TYPELESS : DXGI_FORMAT_D24_UNORM_S8_UINT;
+    case 119:
+        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case 120:
+        return DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+    default:
+        return format;
+    }
+}
+// B5G5R5A1_UNORM (86) and B4G4R4A4_UNORM (115) are a texture's formats on the host and
+// nothing it draws or computes into, as a title of the console does: such a target is made
+// in R8G8B8A8_UNORM, which holds all they can, and its views and the pipelines that draw to
+// it follow.
+bool packed_16(DXGI_FORMAT format) {
+    return format == DXGI_FORMAT_B5G5R5A1_UNORM || format == DXGI_FORMAT_B4G4R4A4_UNORM;
+}
+DXGI_FORMAT target_format(DXGI_FORMAT format) {
+    return packed_16(format) ? DXGI_FORMAT_R8G8B8A8_UNORM : format;
+}
+DXGI_FORMAT view_format(ID3D12Resource *resource, DXGI_FORMAT format) {
+    format = host_format(format);
+    return packed_16(format) && resource && resource->GetDesc().Format == DXGI_FORMAT_R8G8B8A8_UNORM
+               ? DXGI_FORMAT_R8G8B8A8_UNORM
+               : format;
+}
+// the value a target is cleared to names its format as well
+const D3D12_CLEAR_VALUE *host_clear(const D3D12_CLEAR_VALUE *clear, D3D12_CLEAR_VALUE &host) {
+    if (!clear || target_format(host_format(clear->Format)) == clear->Format)
+        return clear;
+    host = *clear;
+    host.Format = target_format(host_format(clear->Format));
+    return &host;
+}
+std::uint64_t root_address(std::uint64_t address);
+std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most = 64 << 10);
 void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc,
                                   Handle handle) {
     D3D12_CONSTANT_BUFFER_VIEW_DESC host{};
@@ -1377,7 +1452,33 @@ void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFE
                                        room < rounded && room >= 256
                                    ? static_cast<UINT>(room & ~255ull)
                                    : rounded;
-        host.BufferLocation = host_address(host.BufferLocation);
+        // On the Series console the view may be of any memory the title has, a buffer or
+        // not, and start anywhere: the host drops the device over an address that is in no
+        // buffer of its own. Such constants are copied to where the host takes them, as
+        // they are when the view is made (7952987A makes its views as it draws, at
+        // image+0x4da8f5c).
+        const auto given = host.BufferLocation;
+        host.BufferLocation =
+            console == Target::scarlett ? root_address(given) : host_address(given);
+        MEMORY_BASIC_INFORMATION info{};
+        if (console == Target::scarlett && host.BufferLocation & 255 &&
+            VirtualQuery(reinterpret_cast<void *>(given), &info, sizeof info) &&
+            info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            const auto room =
+                reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize - given;
+            if (const auto copy = ring_copy(reinterpret_cast<const void *>(given),
+                                            std::min<std::uint64_t>(room, host.SizeInBytes)))
+                host.BufferLocation = copy;
+        }
+        if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 12) {
+            std::fprintf(stderr,
+                         "[Lost] CreateConstantBufferView(%llx, %u bytes) -> %llx, %u bytes, "
+                         "from %s%c",
+                         static_cast<unsigned long long>(given), desc->SizeInBytes,
+                         static_cast<unsigned long long>(host.BufferLocation), host.SizeInBytes,
+                         detail::guest_location(_ReturnAddress()).c_str(), 10);
+            std::fflush(stderr);
+        }
     }
     original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 17)(
         self, desc ? &host : nullptr, host_handle(handle));
@@ -1443,6 +1544,10 @@ void STDMETHODCALLTYPE create_srv(ID3D12Device *self, ID3D12Resource *resource, 
     if (resource && desc) {
         std::memcpy(&view, desc, sizeof view);
         const auto of = resource->GetDesc();
+        if (view_format(resource, view.Format) != view.Format) {
+            view.Format = view_format(resource, view.Format);
+            desc = &view;
+        }
         if (of.SampleDesc.Count > 1 && view.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D) {
             view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
             desc = &view;
@@ -1463,8 +1568,98 @@ void STDMETHODCALLTYPE create_srv(ID3D12Device *self, ID3D12Resource *resource, 
         self, resource, desc, host_handle(handle));
     mark_host(handle);
 }
+// XV_D3D_LOST: the last view each thread made, said when the host drops the device there
+thread_local char lost_last[640];
 void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
                                   ID3D12Resource *counter, const void *desc, Handle handle) {
+    // A resource the host could not make writable this way (a depth buffer that is one on
+    // the console, see host_rules): the host drops the device over a view of it. The
+    // descriptor is one of nothing, which reads zeros and takes writes.
+    if (resource && !(resource->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) {
+        if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+            std::fprintf(stderr, "[Runtime] an unordered access view of a resource the host "
+                                 "does not write that way is a view of nothing\n");
+            std::fflush(stderr);
+        }
+        D3D12_UNORDERED_ACCESS_VIEW_DESC nothing{};
+        if (desc)
+            std::memcpy(&nothing, desc, sizeof nothing);
+        const auto of = resource->GetDesc();
+        if (!desc || nothing.ViewDimension == D3D12_UAV_DIMENSION_UNKNOWN)
+            nothing.ViewDimension =
+                of.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER      ? D3D12_UAV_DIMENSION_BUFFER
+                : of.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? D3D12_UAV_DIMENSION_TEXTURE3D
+                : of.DepthOrArraySize > 1 ? D3D12_UAV_DIMENSION_TEXTURE2DARRAY
+                                          : D3D12_UAV_DIMENSION_TEXTURE2D;
+        nothing.Format = DXGI_FORMAT_R32_FLOAT;
+        // the plane a view of the stencil names is none of this format's
+        if (nothing.ViewDimension == D3D12_UAV_DIMENSION_TEXTURE2D)
+            nothing.Texture2D.PlaneSlice = 0;
+        else if (nothing.ViewDimension == D3D12_UAV_DIMENSION_TEXTURE2DARRAY)
+            nothing.Texture2DArray.PlaneSlice = 0;
+        if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr; checking) {
+            std::uint32_t words[10]{};
+            if (desc)
+                std::memcpy(words, desc, sizeof words);
+            std::snprintf(lost_last, sizeof lost_last,
+                          "[Lost] thread %lu a view of nothing for a resource of format %d "
+                          "flags 0x%x %llux%ux%u; the title's view%s: %u %u %x %x %x %x%c",
+                          GetCurrentThreadId(), of.Format, of.Flags, of.Width, of.Height,
+                          of.DepthOrArraySize, desc ? "" : " (none)", words[0], words[1], words[2],
+                          words[3], words[4], words[5], 10);
+        }
+        original<void(STDMETHODCALLTYPE *)(void *, void *, void *, const void *, Handle)>(self, 19)(
+            self, nullptr, nullptr, &nothing, host_handle(handle));
+        mark_host(handle);
+        return;
+    }
+    D3D12_UNORDERED_ACCESS_VIEW_DESC view{};
+    if (resource && desc) {
+        std::memcpy(&view, desc, sizeof view);
+        if (view_format(resource, view.Format) != view.Format) {
+            view.Format = view_format(resource, view.Format);
+            desc = &view;
+        }
+    }
+    if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr; checking) {
+        D3D12_RESOURCE_DESC of{};
+        if (resource)
+            of = resource->GetDesc();
+        std::uint32_t words[10]{};
+        if (desc)
+            std::memcpy(words, desc, sizeof words);
+        std::snprintf(lost_last, sizeof lost_last,
+                      "[Lost] thread %lu CreateUnorderedAccessView: resource %p (dimension %d "
+                      "%llux%ux%u mips %u format %d samples %u flags 0x%x), counter %p, view%s "
+                      "format %u dimension %u: %x %x %x %x %x %x %x %x%c",
+                      GetCurrentThreadId(), static_cast<void *>(resource), of.Dimension, of.Width,
+                      of.Height, of.DepthOrArraySize, of.MipLevels, of.Format, of.SampleDesc.Count,
+                      of.Flags, static_cast<void *>(counter), desc ? "" : " (none)", words[0],
+                      words[1], words[2], words[3], words[4], words[5], words[6], words[7],
+                      words[8], words[9], 10);
+        if (resource) {
+            resource->AddRef();
+            const auto references = resource->Release();
+            const auto so_far = std::strlen(lost_last);
+            std::snprintf(lost_last + so_far, sizeof lost_last - so_far,
+                          "[Lost]   the resource has %lu references, vtable %p%c", references,
+                          *reinterpret_cast<void **>(resource), 10);
+        }
+        const std::lock_guard lock(shadow_mutex);
+        const auto *const heap = shadow_heap(handle.ptr);
+        const auto length = std::strlen(lost_last);
+        std::snprintf(
+            lost_last + length, sizeof lost_last - length,
+            "[Lost]   handle %llx: %s, type %d, descriptor %llu of %llu (the host has "
+            "%u), host handle %llx%c",
+            static_cast<unsigned long long>(handle.ptr),
+            heap ? "in a heap of the title's" : "in NO heap known here",
+            heap ? static_cast<int>(heap->type) : -1,
+            heap ? static_cast<unsigned long long>((handle.ptr - heap->base) / heap->stride) : 0ull,
+            heap ? static_cast<unsigned long long>((heap->end - heap->base) / heap->stride) : 0ull,
+            heap ? heap->host_count : 0u,
+            heap ? static_cast<unsigned long long>(host_slot(*heap, handle.ptr).ptr) : 0ull, 10);
+    }
     original<void(STDMETHODCALLTYPE *)(void *, void *, void *, const void *, Handle)>(self, 19)(
         self, resource, counter, desc, host_handle(handle));
     mark_host(handle);
@@ -1535,16 +1730,52 @@ HRESULT STDMETHODCALLTYPE default_msaa_parameters(void *, const DXGI_SAMPLE_DESC
 std::mutex target_mutex;
 std::map<std::uint64_t, ID3D12Resource *> target_of;
 std::atomic<ID3D12Resource *> last_target{nullptr};
-std::vector<ID3D12Resource *> bound_targets; // the first of each size, under target_mutex
+std::map<std::uint64_t, std::string> view_text; // XV_D3D_LOST, under target_mutex
+std::vector<ID3D12Resource *> bound_targets;    // the first of each size, under target_mutex
 template <std::size_t Index>
 void STDMETHODCALLTYPE create_target_view(ID3D12Device *self, ID3D12Resource *resource,
                                           const void *desc, Handle handle) {
+    // both descriptions begin with the format
+    std::uint8_t view[sizeof(D3D12_RENDER_TARGET_VIEW_DESC)];
+    static_assert(sizeof view >= sizeof(D3D12_DEPTH_STENCIL_VIEW_DESC));
+    if (DXGI_FORMAT format{}; desc && (std::memcpy(&format, desc, sizeof format),
+                                       view_format(resource, format) != format)) {
+        std::memcpy(view, desc,
+                    Index == 20 ? sizeof(D3D12_RENDER_TARGET_VIEW_DESC)
+                                : sizeof(D3D12_DEPTH_STENCIL_VIEW_DESC));
+        format = view_format(resource, format);
+        std::memcpy(view, &format, sizeof format);
+        desc = view;
+    }
     original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, Index)(
         self, resource, desc, host_handle(handle));
     mark_host(handle);
     if (Index == 20) {
         const std::lock_guard lock(target_mutex);
         target_of[host_handle(handle).ptr] = resource;
+    }
+    // XV_D3D_LOST: what each view is of, for the draw the host drops the device at
+    if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr; checking) {
+        char text[200] = "no resource";
+        if (resource) {
+            const auto of = resource->GetDesc();
+            std::snprintf(text, sizeof text,
+                          "resource %p dimension %d %llux%ux%u mips %u format %d samples %u flags "
+                          "0x%x",
+                          static_cast<void *>(resource), of.Dimension, of.Width, of.Height,
+                          of.DepthOrArraySize, of.MipLevels, of.Format, of.SampleDesc.Count,
+                          of.Flags);
+        }
+        std::uint32_t words[4]{};
+        if (desc)
+            std::memcpy(words, desc, sizeof words);
+        char more[120];
+        std::snprintf(more, sizeof more, "; view %s format %u dimension %u, %u %u",
+                      desc ? "with" : "without a description:", words[0], words[1], words[2],
+                      words[3]);
+        const std::lock_guard lock(target_mutex);
+        view_text[host_handle(handle).ptr] =
+            std::string(Index == 20 ? "RTV of " : "DSV of ") + text + more;
     }
 }
 void STDMETHODCALLTYPE create_sampler(ID3D12Device *self, const D3D12_SAMPLER_DESC *desc,
@@ -1683,20 +1914,26 @@ HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
     }
     // The host shows its shaders a million descriptors at most: a larger heap is made that
     // large, and what the title keeps past that is not seen
+    // (a host that makes a larger one is given the title's: that is tried first)
     constexpr UINT host_visible_limit = 1'000'000;
+    const UINT title_count = desc ? desc->NumDescriptors : 0;
+    auto result = E_FAIL;
     if (desc && desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV &&
         desc->Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE &&
-        desc->NumDescriptors > host_visible_limit) {
+        desc->NumDescriptors > host_visible_limit &&
+        FAILED(result = original<Create>(self, 14)(self, desc, iid, heap))) {
         std::fprintf(stderr,
                      "[Runtime] a descriptor heap of %u descriptors for shaders is made with "
-                     "%u, the host's limit\n",
-                     desc->NumDescriptors, host_visible_limit);
+                     "%u, the host's limit (0x%08lx for all of them): the views past that are "
+                     "not seen\n",
+                     desc->NumDescriptors, host_visible_limit, static_cast<unsigned long>(result));
         std::fflush(stderr);
         changed = *desc;
         changed.NumDescriptors = host_visible_limit;
         desc = &changed;
     }
-    const auto result = original<Create>(self, 14)(self, desc, iid, heap);
+    if (FAILED(result))
+        result = original<Create>(self, 14)(self, desc, iid, heap);
     if (FAILED(result) && desc) {
         std::fprintf(stderr,
                      "[Runtime] CreateDescriptorHeap type %d, %u descriptors, flags 0x%x, node "
@@ -1718,8 +1955,13 @@ HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
         heap_proxies.insert(proxy);
     }
     *heap = proxy;
-    register_shadow(self, proxy, *desc, host, gpu,
-                    title_bytes ? title_heap_memory(caller, title_bytes) : nullptr);
+    // the shadow is as long as the title's heap; the host's may be shorter
+    auto shadowed = *desc;
+    if (desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+        shadowed.NumDescriptors = title_count;
+    register_shadow(self, proxy, shadowed, host, gpu,
+                    title_bytes ? title_heap_memory(caller, title_bytes) : nullptr,
+                    desc->NumDescriptors);
     return result;
 }
 HRESULT STDMETHODCALLTYPE create_committed_resource(ID3D12Device *, const D3D12_HEAP_PROPERTIES *,
@@ -2161,6 +2403,17 @@ D3D12_SHADER_BYTECODE keep_shader(const D3D12_SHADER_BYTECODE &code) {
         kept.assign(bytes, bytes + code.BytecodeLength);
     return {kept.data(), kept.size()};
 }
+// XV_D3D_LOST: how each pipeline was made, for the draw that the host drops the device at
+std::map<const void *, std::string> made_pipelines;
+void lost_pipeline(const char *how, void *const *pipeline, const void *root) {
+    static const bool checking = std::getenv("XV_D3D_LOST") != nullptr;
+    if (!checking || !pipeline || !*pipeline)
+        return;
+    char text[40];
+    std::snprintf(text, sizeof text, ", root signature %p", root);
+    const std::lock_guard lock(kept_mutex);
+    made_pipelines[*pipeline] = std::string(how) + text;
+}
 void keep_pipeline(const void *pipeline, const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
     const std::lock_guard lock(kept_mutex);
     auto &kept = kept_pipelines[pipeline];
@@ -2220,6 +2473,8 @@ HRESULT STDMETHODCALLTYPE create_derived_graphics_pipeline(ID3D12Device *self,
         else if (states[i].type == 3)
             desc.SampleMask = states[i].sample_mask;
     const auto result = original<Create>(self, 10)(self, &desc, iid, state);
+    if (SUCCEEDED(result))
+        lost_pipeline("derived", state, desc.pRootSignature);
     if (SUCCEEDED(result) && *state)
         keep_pipeline(*state, desc);
     else {
@@ -2264,6 +2519,9 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        host.DSVFormat = host_format(host.DSVFormat);
+        for (auto &target : host.RTVFormats)
+            target = target_format(target);
         // The console's R10G10B10_SNORM_A2_UNORM (189), what packed normals are in, is no
         // vertex format of the host's: its bits are read unsigned there, and a vertex shader
         // made here makes them signed again
@@ -2307,6 +2565,9 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
     }
     if (rectangles && (!cornered || !host.GS.pShaderBytecode))
         report_half_rectangles();
+    if (SUCCEEDED(result) && state)
+        lost_pipeline(from_shader ? "graphics, signature from its shaders" : "graphics", state,
+                      host.pRootSignature);
     if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
         keep_pipeline(*state, host);
     if (from_shader)
@@ -2407,6 +2668,8 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
     if (FAILED(result) && !emptied && desc && host.CS.pShaderBytecode == desc->CS.pShaderBytecode &&
         empty())
         result = original<Create>(self, 11)(self, &host, iid, state);
+    if (SUCCEEDED(result) && state)
+        lost_pipeline("compute", state, host.pRootSignature);
     if (emptied) {
         std::fprintf(stderr,
                      "[Runtime] a compute shader of %zu bytes that the host's driver cannot "
@@ -2459,6 +2722,9 @@ HRESULT STDMETHODCALLTYPE create_compute_pipeline(ID3D12Device *self,
     }
     return result;
 }
+// XV_D3D_LOST: the first call after which the host has dropped the device, and the calls
+// before it
+void lost_check(const char *kind, std::size_t index, void *from, void *object = nullptr);
 // ID3D12CommandQueue goes on past the desktop's 19 methods with the console's own
 template <std::size_t Index>
 std::uint64_t STDMETHODCALLTYPE unknown_queue_method(void *, std::uint64_t a, std::uint64_t b,
@@ -2617,7 +2883,10 @@ std::uint64_t STDMETHODCALLTYPE queue_by_layout(void *self, std::uint64_t a, std
     } else if (Index < 16 && !fence) {
         return 0; // a marker of a later title that has not signalled yet
     }
-    return reinterpret_cast<Raw>(queue_vtable[slot])(self, a, b, c, d, e, f, g, h, i, j);
+    const auto result =
+        reinterpret_cast<Raw>(queue_vtable[slot])(self, a, b, c, d, e, f, g, h, i, j);
+    lost_check("queue", slot, _ReturnAddress(), self);
+    return result;
 }
 template <std::size_t... Index>
 std::array<Slot, 48> layout_queue_vtable_of(std::index_sequence<Index...>) {
@@ -2681,6 +2950,24 @@ void host_rules(const D3D12_HEAP_PROPERTIES *heap, D3D12_RESOURCE_FLAGS &flags,
         state = D3D12_RESOURCE_STATE_COPY_DEST;
     if (!(flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL))
         flags &= ~D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+    // A depth buffer of the console's may be written by compute shaders and drawn to as a
+    // colour as well; the host makes none that is (E_INVALIDARG). It stays a depth buffer:
+    // what the title writes to it any other way is lost.
+    constexpr auto others = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
+                            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+                            D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+    if (flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL && flags & others) {
+        if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
+            std::fprintf(stderr,
+                         "[Runtime] a depth buffer that is also written without being drawn to "
+                         "(flags 0x%x) is only a depth buffer on the host\n",
+                         static_cast<unsigned>(flags));
+            std::fflush(stderr);
+        }
+        flags &= ~others;
+        if (state & (D3D12_RESOURCE_STATE_UNORDERED_ACCESS | D3D12_RESOURCE_STATE_RENDER_TARGET))
+            state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
 }
 // CreateCommittedResource, reported when the host turns it down
 HRESULT STDMETHODCALLTYPE create_committed_resource(
@@ -2701,6 +2988,10 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
     if (desc) {
         host_desc = *desc;
         host_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host_desc.Flags & 0xff);
+        host_desc.Format = host_format(host_desc.Format, true);
+        if (host_desc.Flags &
+            (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
+            host_desc.Format = target_format(host_desc.Format);
         // a console layout names a tile mode (0x100 | mode): the host picks its own
         if (host_desc.Layout >= 0x100)
             host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -2732,6 +3023,8 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
                      "format %d flags 0x%x state 0x%x\n",
                      heap->Type, flags, desc->Dimension, desc->Width, desc->Height, desc->Format,
                      desc->Flags, state);
+    D3D12_CLEAR_VALUE cleared{};
+    clear = host_clear(clear, cleared);
     auto result = original<Create>(self, 27)(self, heap, flags, desc ? &host_desc : nullptr, state,
                                              clear, iid, resource);
     // a buffer the host does not make there is made where the title asked
@@ -2756,6 +3049,10 @@ HRESULT STDMETHODCALLTYPE create_committed_resource(
                      desc->DepthOrArraySize, desc->MipLevels, desc->Format, desc->SampleDesc.Count,
                      desc->Layout, desc->Flags, state, static_cast<unsigned long>(result));
         std::fflush(stderr);
+        // the first thing to be turned down for a device the host has dropped says why it did
+        if (static std::atomic<bool> told{false};
+            result == DXGI_ERROR_DEVICE_REMOVED && !told.exchange(true))
+            report_failure();
     }
     return result;
 }
@@ -2795,9 +3092,10 @@ struct ListProxy {
     std::atomic<ULONG> references;
     ID3D12Resource *target = nullptr; // bound last, for XV_D3D_PROBE's draw counts
     const void *graphics_root = nullptr, *compute_root = nullptr;
-    ID3D12DescriptorHeap *heaps[2]{};  // the host's, as bound: views, then samplers
-    UINT topology = 0;                 // as the title set it, the console's own included
-    D3D12_INDEX_BUFFER_VIEW indices{}; // the title's, to put back after a quad draw
+    ID3D12DescriptorHeap *heaps[2]{};        // the host's, as bound: views, then samplers
+    UINT topology = 0;                       // as the title set it, the console's own included
+    D3D12_INDEX_BUFFER_VIEW indices{};       // the title's, to put back after a quad draw
+    ID3D12PipelineState *pipeline = nullptr; // set last
 };
 std::mutex proxy_mutex;
 std::set<const void *> list_proxies;
@@ -2873,8 +3171,10 @@ std::uint64_t STDMETHODCALLTYPE list_method(void *self, std::uint64_t a, std::ui
         return E_NOTIMPL;
     }
     auto *const host = host_of(self);
-    return reinterpret_cast<Raw>((*reinterpret_cast<Slot **>(host))[target])(host, a, b, c, d, e, f,
-                                                                             g, h, i, j);
+    const auto result = reinterpret_cast<Raw>((*reinterpret_cast<Slot **>(host))[target])(
+        host, a, b, c, d, e, f, g, h, i, j);
+    lost_check("list", Index, _ReturnAddress(), self);
+    return result;
 }
 HRESULT STDMETHODCALLTYPE list_query(void *self, REFIID iid, void **object) {
     if (!object)
@@ -2929,10 +3229,106 @@ ULONG STDMETHODCALLTYPE list_release(void *self) {
 // handles. The depth clear has a float in a register the generic path does not carry.
 using Handle = D3D12_CPU_DESCRIPTOR_HANDLE;
 std::atomic<ID3D12Device *> d3d12_device{nullptr};
+void lost_check(const char *kind, std::size_t index, void *from, void *object) {
+    static const bool checking = std::getenv("XV_D3D_LOST") != nullptr;
+    static std::atomic<bool> told{false};
+    if (!checking || told.load(std::memory_order_relaxed))
+        return;
+    struct Call {
+        const char *kind;
+        std::size_t index;
+        void *from, *object;
+        DWORD thread;
+    };
+    // a thread of its own that does nothing but look, and says where every thread is when
+    // the device goes
+    static const bool watching = [] {
+        // what the host's runtime and driver say for a debugger (OutputDebugString raises
+        // an exception to hand its text over), and from where
+        AddVectoredExceptionHandler(1, [](EXCEPTION_POINTERS *exception) -> LONG {
+            const auto *const record = exception->ExceptionRecord;
+            if ((record->ExceptionCode != 0x40010006 && record->ExceptionCode != 0x4001000a) ||
+                record->NumberParameters < 2)
+                return EXCEPTION_CONTINUE_SEARCH;
+            const bool wide = record->ExceptionCode == 0x4001000a;
+            const auto text = record->ExceptionInformation[1];
+            const bool removing =
+                wide ? std::wcsstr(reinterpret_cast<const wchar_t *>(text), L"Removing") != nullptr
+                     : std::strstr(reinterpret_cast<const char *>(text), "Removing") != nullptr;
+            if (wide)
+                std::fprintf(stderr, "[Said] thread %lu: %ls", GetCurrentThreadId(),
+                             reinterpret_cast<const wchar_t *>(text));
+            else
+                std::fprintf(stderr, "[Said] thread %lu: %s", GetCurrentThreadId(),
+                             reinterpret_cast<const char *>(text));
+            std::fflush(stderr);
+            // the thread that says so is the one whose call the host drops the device for
+            if (removing) {
+                std::fputs(lost_last, stderr);
+                std::fflush(stderr);
+            }
+            if (removing)
+                detail::report_thread_stacks(exception->ContextRecord->Rsp);
+            return EXCEPTION_CONTINUE_SEARCH;
+        });
+        std::thread([] {
+            for (const auto *name : {L"D3D12Core.dll", L"d3d12.dll", L"dxgi.dll", L"nvwgf2umx.dll",
+                                     L"xvboot.exe", L"d3d12SDKLayers.dll"})
+                std::fprintf(stderr, "[Stacks] %ls is at %llx%c", name,
+                             static_cast<unsigned long long>(
+                                 reinterpret_cast<std::uintptr_t>(GetModuleHandleW(name))),
+                             10);
+            std::fflush(stderr);
+            for (;;) {
+                auto *const watched = d3d12_device.load();
+                if (watched && FAILED(watched->GetDeviceRemovedReason()))
+                    break;
+                YieldProcessor();
+            }
+            std::fprintf(stderr, "[Runtime] the host has dropped the device; the threads:%c", 10);
+            detail::report_thread_stacks();
+        }).detach();
+        return true;
+    }();
+    static_cast<void>(watching);
+    static Call ring[64];
+    static std::atomic<std::uint64_t> next{0};
+    const auto at = next++;
+    ring[at % 64] = {kind, index, from, object, GetCurrentThreadId()};
+    auto *const device = d3d12_device.load();
+    if (!device || SUCCEEDED(device->GetDeviceRemovedReason()) || told.exchange(true))
+        return;
+    std::fprintf(stderr, "[Runtime] the host has dropped the device (0x%08lx) by call %llu:%c",
+                 static_cast<unsigned long>(device->GetDeviceRemovedReason()),
+                 static_cast<unsigned long long>(at), 10);
+    for (std::uint64_t i = at >= 63 ? at - 63 : 0; i <= at; ++i) {
+        const auto &call = ring[i % 64];
+        std::fprintf(stderr, "[Runtime]   thread %lu %s %p slot %zu from %s%c", call.thread,
+                     call.kind, call.object, call.index, detail::guest_location(call.from).c_str(),
+                     10);
+    }
+    std::fflush(stderr);
+}
 HRESULT STDMETHODCALLTYPE close_list(void *self) {
     const auto result = host_of(self)->Close();
-    if (FAILED(result))
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 4000) {
+        std::fprintf(stderr, "[Lost] thread %lu list %p (type %d) closed: 0x%08lx%c",
+                     GetCurrentThreadId(), self, static_cast<int>(host_of(self)->GetType()),
+                     static_cast<unsigned long>(result), 10);
+        std::fflush(stderr);
+    }
+    if (FAILED(result)) {
+        // the host drops the device when such a list is executed: what was wrong in it is
+        // the debug layer's to say
+        if (static std::atomic<int> shown{0}; shown++ < 8) {
+            std::fprintf(
+                stderr, "[Runtime] a command list (type %d) closes with 0x%08lx, from %s\n",
+                static_cast<int>(host_of(self)->GetType()), static_cast<unsigned long>(result),
+                detail::guest_location(_ReturnAddress()).c_str());
+            std::fflush(stderr);
+        }
         report_messages();
+    }
     return result;
 }
 // ResourceBarrier: transitions name states the console's way. GENERIC_READ is 0x8c3 there,
@@ -3289,13 +3685,24 @@ HRESULT STDMETHODCALLTYPE reset_list(void *self, ID3D12CommandAllocator *allocat
     list->heaps[0] = list->heaps[1] = nullptr;
     list->topology = 0;
     list->indices = {};
-    return host_of(self)->Reset(allocator, state);
+    list->pipeline = state;
+    const auto result = host_of(self)->Reset(allocator, state);
+    if (static std::atomic<int> shown{0};
+        std::getenv("XV_D3D_LOST") && (FAILED(result) || shown < 80) && shown++ < 200) {
+        std::fprintf(stderr, "[Lost] thread %lu list %p reset (allocator %p, state %p): 0x%08lx%c",
+                     GetCurrentThreadId(), self, static_cast<void *>(allocator),
+                     static_cast<void *>(state), static_cast<unsigned long>(result), 10);
+        std::fflush(stderr);
+    }
+    return result;
 }
 // the host's GPU handle for a console one, which is the descriptor's address in the shadow
 D3D12_GPU_DESCRIPTOR_HANDLE host_gpu(D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     const std::lock_guard lock(shadow_mutex);
     if (const auto *heap = shadow_heap(handle.ptr); heap && heap->shader_visible)
-        return {heap->gpu + (handle.ptr - heap->base) / heap->stride * heap->host_stride};
+        return {heap->gpu + std::min<std::uint64_t>((handle.ptr - heap->base) / heap->stride,
+                                                    heap->host_count - 1) *
+                                heap->host_stride};
     return handle;
 }
 // The root signatures and descriptor tables: the title's own descriptors in a table are read
@@ -3383,10 +3790,72 @@ D3D12_INDEX_BUFFER_VIEW quad_indices(UINT quads) {
 // A quad list is drawn with indices of ours over the title's vertices. A rectangle list
 // gives three corners of each rectangle and the GPU makes the fourth: here the pipeline's
 // geometry shader does (see rectangle_pipeline).
+void STDMETHODCALLTYPE set_pipeline_state(void *self, ID3D12PipelineState *state) {
+    static_cast<ListProxy *>(self)->pipeline = state;
+    host_of(self)->SetPipelineState(state);
+}
+// XV_D3D_LOST: what the first draws are made with
+void lost_draw(void *self, const char *method, UINT count) {
+    static std::atomic<int> shown{0};
+    if (!std::getenv("XV_D3D_LOST") || shown++ >= 16)
+        return;
+    auto *const list = static_cast<ListProxy *>(self);
+    const void *root = nullptr;
+    bool known = false;
+    std::string how = "?";
+    {
+        const std::lock_guard lock(kept_mutex);
+        if (const auto made = made_pipelines.find(list->pipeline); made != made_pipelines.end())
+            how = made->second;
+        if (const auto found = kept_pipelines.find(list->pipeline); found != kept_pipelines.end()) {
+            known = true;
+            root = found->second.desc.pRootSignature;
+        }
+    }
+    {
+        const std::lock_guard lock(signature_mutex);
+        const auto found = signature_text.find(list->graphics_root);
+        std::fprintf(stderr, "[Lost] root signature %p: %s%c", list->graphics_root,
+                     found == signature_text.end() ? "not read" : found->second.c_str(), 10);
+    }
+    auto *const device = d3d12_device.load();
+    std::fprintf(stderr,
+                 "[Lost] thread %lu list %p %s(%u): pipeline %p (%s; %s, its root signature %p), "
+                 "root signature set %p, topology %u, device 0x%08lx%c",
+                 GetCurrentThreadId(), self, method, count, static_cast<void *>(list->pipeline),
+                 how.c_str(), known ? "kept" : "not kept", root, list->graphics_root,
+                 list->topology,
+                 device ? static_cast<unsigned long>(device->GetDeviceRemovedReason()) : 0ul, 10);
+    std::fflush(stderr);
+}
 void STDMETHODCALLTYPE draw_instanced(void *self, UINT vertices, UINT instances, UINT first,
                                       UINT first_instance) {
     count_draw(self);
+    lost_draw(self, "DrawInstanced", vertices);
     auto *const list = static_cast<ListProxy *>(self);
+    // XV_D3D_LOST_PSO: the draw with a pipeline of ours that draws nothing, to tell whether
+    // it is the title's pipeline the host drops the device for
+    if (std::getenv("XV_D3D_LOST_PSO") && list->graphics_root) {
+        const auto vertex = modules::empty_vertex_shader(), pixel = modules::empty_pixel_shader();
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = const_cast<ID3D12RootSignature *>(
+            static_cast<const ID3D12RootSignature *>(list->graphics_root));
+        desc.VS = {vertex.data(), vertex.size()};
+        desc.PS = {pixel.data(), pixel.size()};
+        desc.SampleMask = ~0u;
+        desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        desc.SampleDesc.Count = 1;
+        ID3D12PipelineState *ours = nullptr;
+        const auto made =
+            d3d12_device.load()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&ours));
+        std::fprintf(stderr, "[Lost] a pipeline of ours for the draw: 0x%08lx%c",
+                     static_cast<unsigned long>(made), 10);
+        std::fflush(stderr);
+        if (ours)
+            list->host->SetPipelineState(ours);
+    }
     if (list->topology == quad_list) {
         const auto view = quad_indices(vertices / 4);
         if (!view.BufferLocation)
@@ -3402,6 +3871,7 @@ void STDMETHODCALLTYPE draw_instanced(void *self, UINT vertices, UINT instances,
 void STDMETHODCALLTYPE draw_indexed_instanced(void *self, UINT indices, UINT instances, UINT first,
                                               INT base, UINT first_instance) {
     count_draw(self);
+    lost_draw(self, "DrawIndexedInstanced", indices);
     if (static std::atomic<bool> shown{false};
         static_cast<ListProxy *>(self)->topology == quad_list && !shown.exchange(true)) {
         std::fprintf(stderr, "[Runtime] an indexed quad list is drawn as a triangle list, which "
@@ -3423,6 +3893,39 @@ void trace_address(const char *method, std::uint64_t address) {
                  static_cast<unsigned long long>(address), cpu ? " in the title's memory" : "");
     std::fflush(stderr);
 }
+// On the Series console vertices and indices may lie in any memory the title has, as its
+// root descriptors may (see ring_copy): what is in no buffer here is copied into the ring as
+// it is when it is bound, all of it.
+std::uint64_t geometry_address(const char *what, std::uint64_t address, std::uint64_t bytes) {
+    if (!address || console != Target::scarlett) {
+        check_address(what, address, bytes);
+        return host_address(address);
+    }
+    {
+        const std::lock_guard lock(buffer_mutex);
+        auto found = mapped_at.upper_bound(address);
+        if (found != mapped_at.begin() && address < std::prev(found)->second.end)
+            return std::prev(found)->second.gpu + (address - std::prev(found)->first);
+        auto buffer = buffers_at.upper_bound(address);
+        if (buffer != buffers_at.begin() && address < std::prev(buffer)->second.end)
+            return address;
+    }
+    // as much of it as is memory
+    std::uint64_t readable = 0;
+    while (readable < bytes) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (!VirtualQuery(reinterpret_cast<void *>(address + readable), &info, sizeof info) ||
+            info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            break;
+        readable = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize - address;
+    }
+    readable = std::min(readable, bytes);
+    const auto copy =
+        readable ? ring_copy(reinterpret_cast<const void *>(address), readable, readable) : 0;
+    if (!copy)
+        check_address(what, address, bytes);
+    return copy ? copy : address;
+}
 void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
                                           const D3D12_VERTEX_BUFFER_VIEW *views) {
     if (views && count)
@@ -3430,10 +3933,9 @@ void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
     std::vector<D3D12_VERTEX_BUFFER_VIEW> host;
     if (views) {
         host.assign(views, views + count);
-        for (auto &view : host) {
-            check_address("a vertex buffer", view.BufferLocation, view.SizeInBytes);
-            view.BufferLocation = host_address(view.BufferLocation);
-        }
+        for (auto &view : host)
+            view.BufferLocation =
+                geometry_address("a vertex buffer", view.BufferLocation, view.SizeInBytes);
     }
     host_of(self)->IASetVertexBuffers(start, count, views ? host.data() : nullptr);
 }
@@ -3441,8 +3943,8 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
     if (view)
         trace_address("IASetIndexBuffer", view->BufferLocation);
     auto host = view ? *view : D3D12_INDEX_BUFFER_VIEW{};
-    check_address("an index buffer", host.BufferLocation, host.SizeInBytes);
-    host.BufferLocation = host_address(host.BufferLocation);
+    host.BufferLocation =
+        geometry_address("an index buffer", host.BufferLocation, host.SizeInBytes);
     static_cast<ListProxy *>(self)->indices = host;
     host_of(self)->IASetIndexBuffer(view ? &host : nullptr);
 }
@@ -3452,8 +3954,9 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
 // there. The copies go round a ring, which a frame does not come near filling.
 constexpr std::uint64_t most_copied = 64 << 10;
 // the GPU address of a copy of `bytes` (most_copied at most) at `source`, 0 if there is no ring
-std::uint64_t ring_copy(const void *source, std::uint64_t bytes) {
-    constexpr std::uint64_t ring_size = 256ull << 20, most = most_copied;
+std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most) {
+    constexpr std::uint64_t ring_size = 256ull << 20;
+    most = std::min(most, ring_size);
     static std::mutex mutex;
     static ID3D12Resource *ring = nullptr;
     static std::uint8_t *memory = nullptr;
@@ -3541,7 +4044,16 @@ std::uint64_t root_constants(std::uint64_t address) {
 }
 void STDMETHODCALLTYPE set_graphics_root_cbv(void *self, UINT index, std::uint64_t address) {
     trace_address("SetGraphicsRootConstantBufferView", address);
-    host_of(self)->SetGraphicsRootConstantBufferView(index, root_constants(address));
+    const auto host = root_constants(address);
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 16) {
+        std::fprintf(stderr,
+                     "[Lost] thread %lu list %p SetGraphicsRootConstantBufferView(%u, %llx) -> "
+                     "%llx%c",
+                     GetCurrentThreadId(), self, index, static_cast<unsigned long long>(address),
+                     static_cast<unsigned long long>(host), 10);
+        std::fflush(stderr);
+    }
+    host_of(self)->SetGraphicsRootConstantBufferView(index, host);
 }
 void STDMETHODCALLTYPE set_compute_root_cbv(void *self, UINT index, std::uint64_t address) {
     host_of(self)->SetComputeRootConstantBufferView(index, root_constants(address));
@@ -3550,7 +4062,20 @@ void STDMETHODCALLTYPE set_compute_root_srv(void *self, UINT index, std::uint64_
     host_of(self)->SetComputeRootShaderResourceView(index, root_address(address));
 }
 void STDMETHODCALLTYPE set_graphics_root_srv(void *self, UINT index, std::uint64_t address) {
-    host_of(self)->SetGraphicsRootShaderResourceView(index, root_address(address));
+    const auto host = root_address(address);
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 16) {
+        MEMORY_BASIC_INFORMATION info{};
+        const bool cpu = VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+                         info.State == MEM_COMMIT;
+        std::fprintf(stderr,
+                     "[Lost] thread %lu list %p SetGraphicsRootShaderResourceView(%u, %llx%s) "
+                     "-> %llx, from %s%c",
+                     GetCurrentThreadId(), self, index, static_cast<unsigned long long>(address),
+                     cpu ? " = memory of the title's" : "", static_cast<unsigned long long>(host),
+                     detail::guest_location(_ReturnAddress()).c_str(), 10);
+        std::fflush(stderr);
+    }
+    host_of(self)->SetGraphicsRootShaderResourceView(index, host);
 }
 void STDMETHODCALLTYPE set_compute_root_uav(void *self, UINT index, std::uint64_t address) {
     host_of(self)->SetComputeRootUnorderedAccessView(index, host_address(address));
@@ -3618,6 +4143,24 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
     Handle host_depth{};
     if (depth)
         host_depth = host_view(*depth);
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 16) {
+        const std::lock_guard lock(target_mutex);
+        const auto say = [](std::uint64_t handle) {
+            const auto found = view_text.find(handle);
+            return found == view_text.end() ? std::string("a view never made") : found->second;
+        };
+        std::fprintf(stderr, "[Lost] thread %lu list %p OMSetRenderTargets(%u, single %d)%c",
+                     GetCurrentThreadId(), self, count, single, 10);
+        for (const auto &view : host)
+            std::fprintf(stderr, "[Lost]   target %llx: %s%c",
+                         static_cast<unsigned long long>(view.ptr), say(view.ptr).c_str(), 10);
+        if (depth)
+            std::fprintf(stderr, "[Lost]   depth %llx -> %llx: %s%c",
+                         static_cast<unsigned long long>(depth->ptr),
+                         static_cast<unsigned long long>(host_depth.ptr),
+                         say(host_depth.ptr).c_str(), 10);
+        std::fflush(stderr);
+    }
     host_of(self)->OMSetRenderTargets(count, targets ? host.data() : nullptr, single,
                                       depth ? &host_depth : nullptr);
 }
@@ -3692,6 +4235,7 @@ std::array<Slot, list_slots> list_vtable_of(std::index_sequence<Index...>) {
     // the later layout's 139 (137 here, see list_by_layout): Reset with one argument more
     vtable[137] = reinterpret_cast<Slot>(&reset_list);
     vtable[21] = reinterpret_cast<Slot>(&set_viewports);
+    vtable[25] = reinterpret_cast<Slot>(&set_pipeline_state);
     vtable[22] = reinterpret_cast<Slot>(&set_scissors);
     vtable[26] = reinterpret_cast<Slot>(&resource_barrier);
     vtable[27] = reinterpret_cast<Slot>(&execute_bundle);
@@ -3739,8 +4283,10 @@ std::uint64_t STDMETHODCALLTYPE list_by_layout(void *self, std::uint64_t a, std:
                                                std::uint64_t i, std::uint64_t j) {
     if (later_queue && Index < 61)
         return 0;
-    return reinterpret_cast<Raw>(list_vtable[later_queue ? Index - 2 : Index])(self, a, b, c, d, e,
-                                                                               f, g, h, i, j);
+    const auto result = reinterpret_cast<Raw>(list_vtable[later_queue ? Index - 2 : Index])(
+        self, a, b, c, d, e, f, g, h, i, j);
+    lost_check("list", later_queue ? Index - 2 : Index, _ReturnAddress(), self);
+    return result;
 }
 template <std::size_t... Index>
 std::array<Slot, list_slots> layout_list_vtable_of(std::index_sequence<Index...>) {
@@ -3882,6 +4428,39 @@ void configure_lists() {
     // SetPredicationBufferX: nothing is drawn by a predicate here
     ignore({85});
 }
+// XV_D3D_LOST: every method of a list looks whether the host still has the device
+template <std::size_t Index>
+std::uint64_t STDMETHODCALLTYPE checked_list_method(void *self, std::uint64_t a, std::uint64_t b,
+                                                    std::uint64_t c, std::uint64_t d,
+                                                    std::uint64_t e, std::uint64_t f,
+                                                    std::uint64_t g, std::uint64_t h,
+                                                    std::uint64_t i, std::uint64_t j) {
+    // XV_D3D_SKIP=<slot>[,<slot>...]: those methods of a list do nothing, to tell which of
+    // them the host drops the device for
+    static const bool skipped = [] {
+        const char *text = std::getenv("XV_D3D_SKIP");
+        for (char *end = nullptr; text && *text; text = *end ? end + 1 : end) {
+            const auto slot = std::strtoull(text, &end, 10);
+            if (end == text)
+                break;
+            if (slot == Index)
+                return true;
+        }
+        return false;
+    }();
+    if (skipped)
+        return 0;
+    const auto result =
+        reinterpret_cast<Raw>(layout_list_vtable[Index])(self, a, b, c, d, e, f, g, h, i, j);
+    lost_check("list method", Index, _ReturnAddress(), self);
+    return result;
+}
+template <std::size_t... Index>
+std::array<Slot, list_slots> checked_list_vtable_of(std::index_sequence<Index...>) {
+    return {reinterpret_cast<Slot>(&checked_list_method<Index>)...};
+}
+std::array<Slot, list_slots> checked_list_vtable =
+    checked_list_vtable_of(std::make_index_sequence<list_slots>{});
 void *make_list_proxy(List *host) {
     auto *const proxy = new ListProxy{};
     // the slots both layouts share, as they are now
@@ -3891,6 +4470,11 @@ void *make_list_proxy(List *host) {
     }();
     static_cast<void>(filled);
     proxy->vtable = console == Target::scarlett ? layout_list_vtable.data() : list_vtable.data();
+    if (console == Target::scarlett && std::getenv("XV_D3D_LOST")) {
+        for (std::size_t slot = 0; slot < 3; ++slot)
+            checked_list_vtable[slot] = layout_list_vtable[slot];
+        proxy->vtable = checked_list_vtable.data();
+    }
     proxy->host = host;
     proxy->references = 1;
     const std::lock_guard lock(proxy_mutex);
@@ -4065,6 +4649,13 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
     auto uploads = take_d3d12_uploads();
     if (uploads.empty())
         return;
+    // XV_D3D_NO_UPLOADS: what the title wrote into its textures is dropped, to tell whether
+    // the host loses the device over it
+    if (std::getenv("XV_D3D_NO_UPLOADS")) {
+        for (auto &upload : uploads)
+            upload.resource->Release();
+        return;
+    }
     if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_TRACE") && shown++ < 5) {
         std::fprintf(stderr,
                      "[Runtime] uploading %zu placement textures, the first with %zu "
@@ -4089,8 +4680,17 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
         if (uploader.fence->GetCompletedValue() < uploader.value) {
             auto *const event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             uploader.fence->SetEventOnCompletion(uploader.value, event);
-            WaitForSingleObject(event, 5000);
+            const auto waited = WaitForSingleObject(event, 5000);
             CloseHandle(event);
+            if (waited != WAIT_OBJECT_0) {
+                std::fprintf(stderr,
+                             "[Runtime] the uploads before these are not done after 5 s (the "
+                             "queue is at %llu of %llu, device 0x%08lx)%c",
+                             static_cast<unsigned long long>(uploader.fence->GetCompletedValue()),
+                             static_cast<unsigned long long>(uploader.value),
+                             static_cast<unsigned long>(device->GetDeviceRemovedReason()), 10);
+                std::fflush(stderr);
+            }
         }
         for (auto *buffer : uploader.buffers)
             buffer->Release();
@@ -4098,9 +4698,24 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
         uploader.allocator->Reset();
         uploader.list->Reset(uploader.allocator, nullptr);
     }
+    std::string what; // of each texture, should the host turn the list down
     for (auto &upload : uploads) {
         const auto desc = upload.resource->GetDesc();
         const auto count = static_cast<UINT>(upload.subresources.size());
+        what += " [dimension " + std::to_string(desc.Dimension) + " " + std::to_string(desc.Width) +
+                "x" + std::to_string(desc.Height) + "x" + std::to_string(desc.DepthOrArraySize) +
+                " mips " + std::to_string(desc.MipLevels) + " format " +
+                std::to_string(desc.Format) + " samples " + std::to_string(desc.SampleDesc.Count) +
+                " flags " + std::to_string(desc.Flags) + ", " + std::to_string(count) +
+                " subresources]";
+        if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 40) {
+            UINT64 total = 0;
+            device->GetCopyableFootprints(&desc, 0, count, 0, nullptr, nullptr, nullptr, &total);
+            std::fprintf(stderr, "[Lost] an upload of%s: %llu bytes%c",
+                         what.substr(what.rfind('[') - 1).c_str(),
+                         static_cast<unsigned long long>(total), 10);
+            std::fflush(stderr);
+        }
         std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(count);
         std::vector<UINT> rows(count);
         UINT64 bytes = 0;
@@ -4162,9 +4777,25 @@ void upload_placements_d3d12(ID3D12CommandQueue *queue) {
         }
         upload.resource->Release();
     }
-    uploader.list->Close();
-    ID3D12CommandList *const lists[] = {uploader.list};
-    queue->ExecuteCommandLists(1, lists);
+    // a list the host turned down is not executed: the host drops the device for that
+    if (const auto closed = uploader.list->Close(); FAILED(closed)) {
+        std::fprintf(stderr,
+                     "[Runtime] the upload of %zu textures the title wrote is turned down "
+                     "(0x%08lx) and what it wrote is lost:%s%c",
+                     uploads.size(), static_cast<unsigned long>(closed), what.c_str(), 10);
+        report_messages();
+    } else {
+        const bool had = SUCCEEDED(device->GetDeviceRemovedReason());
+        ID3D12CommandList *const lists[] = {uploader.list};
+        queue->ExecuteCommandLists(1, lists);
+        if (const auto reason = device->GetDeviceRemovedReason(); had && FAILED(reason)) {
+            std::fprintf(stderr,
+                         "[Runtime] the host drops the device (0x%08lx) at the upload of %zu "
+                         "textures the title wrote:%s%c",
+                         static_cast<unsigned long>(reason), uploads.size(), what.c_str(), 10);
+            std::fflush(stderr);
+        }
+    }
     queue->Signal(uploader.fence, ++uploader.value);
     device->Release();
 }
@@ -4178,7 +4809,29 @@ void STDMETHODCALLTYPE execute_command_lists(ID3D12CommandQueue *self, UINT coun
     std::vector<ID3D12CommandList *> host(count);
     for (UINT i = 0; i < count; ++i)
         host[i] = host_list(lists[i]);
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 80) {
+        std::fprintf(
+            stderr, "[Lost] thread %lu queue %p (type %d) executes %u lists:", GetCurrentThreadId(),
+            static_cast<void *>(self), static_cast<int>(self->GetDesc().Type), count);
+        for (UINT i = 0; i < count; ++i)
+            std::fprintf(stderr, " %p (type %d)", static_cast<void *>(lists[i]),
+                         host[i] ? static_cast<int>(host[i]->GetType()) : -1);
+        std::fprintf(stderr, "%c", 10);
+        std::fflush(stderr);
+    }
     self->ExecuteCommandLists(count, host.data());
+    // the submission the host drops the device at
+    if (static std::atomic<bool> told{false}; !told.load())
+        if (auto *const device = d3d12_device.load();
+            device && FAILED(device->GetDeviceRemovedReason()) && !told.exchange(true)) {
+            std::fprintf(stderr,
+                         "[Runtime] the host drops the device at a submission of %u lists:", count);
+            for (UINT i = 0; i < count; ++i)
+                std::fprintf(stderr, " %p (type %d)", static_cast<void *>(lists[i]),
+                             host[i] ? static_cast<int>(host[i]->GetType()) : -1);
+            std::fprintf(stderr, "\n");
+            report_failure();
+        }
     // XV_D3D_SYNC: the GPU done with this work before the title goes on, to tell its waits
     // from ours
     if (std::getenv("XV_D3D_SYNC")) {
@@ -4236,6 +4889,10 @@ HRESULT STDMETHODCALLTYPE unknown_device_method(void *, void *first, void *secon
 D3D12_RESOURCE_DESC host_resource_desc(const D3D12_RESOURCE_DESC &desc) {
     auto host = desc;
     host.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host.Flags & 0xff);
+    host.Format = host_format(host.Format, true);
+    if (host.Flags &
+        (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
+        host.Format = target_format(host.Format);
     if (host.Layout >= 0x100)
         host.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     return host;
@@ -4251,6 +4908,8 @@ HRESULT STDMETHODCALLTYPE create_placed_resource(ID3D12Device *self, ID3D12Heap 
     D3D12_RESOURCE_DESC host{};
     if (desc)
         host = host_resource_desc(*desc);
+    D3D12_CLEAR_VALUE cleared{};
+    clear = host_clear(clear, cleared);
     const auto result = original<Create>(self, 29)(self, heap, offset, desc ? &host : nullptr,
                                                    host_state(state), clear, iid, resource);
     if (SUCCEEDED(result) && resource && *resource)
@@ -4281,12 +4940,15 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline_x(ID3D12Device *self,
 // callbacks, debug flags, memory priority, UnregisterPagePoolX
 HRESULT STDMETHODCALLTYPE ignored_device_method(void *) { return S_OK; }
 // Deserialize{Graphics,Compute}PipelineStateX (device slots 57 and 67): a pipeline from the
-// console driver's own serialised form, which a title ships a cache of. Not made here yet.
+// console driver's own serialised form, which a title ships a cache of. What is in it (the
+// state, the input layout, each stage's program and its records) is not read yet: the title
+// gets a pipeline with its root signature that draws or computes nothing, since it keeps no
+// other way to make these and reads through the ones it did not get.
 // XV_SHADER_CODE: what the first ones are given, to study (pso_<kind>_<n>.bin: the state's
 // first 0x100 bytes, then each thing a pointer in it leads to).
 template <int Kind>
-HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *, const std::uint64_t *state, REFIID,
-                                               void **pipeline) {
+HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::uint64_t *state,
+                                               REFIID iid, void **pipeline) {
     if (pipeline)
         *pipeline = nullptr;
     static std::atomic<int> seen{0};
@@ -4302,9 +4964,15 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *, const std::uint64
     if (index == 0) {
         std::fprintf(stderr,
                      "[Runtime] Deserialize%sPipelineStateX from %s: console pipeline caches are "
-                     "not read yet\n",
+                     "not read yet, such pipelines do nothing\n",
                      Kind ? "Compute" : "Graphics",
                      detail::guest_location(_ReturnAddress()).c_str());
+        std::fflush(stderr);
+    }
+    // XV_DS_TIME: when each of the first ones comes, and on which thread
+    if (std::getenv("XV_DS_TIME") && index < 400) {
+        std::fprintf(stderr, "[Time] at %llu ms thread %lu Deserialize%s %d\n", GetTickCount64(),
+                     GetCurrentThreadId(), Kind ? "Compute" : "Graphics", index);
         std::fflush(stderr);
     }
     if (const auto *const dump = std::getenv("XV_SHADER_CODE");
@@ -4332,7 +5000,49 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *, const std::uint64
                 }
             }
     }
-    return E_NOTIMPL;
+    if (!state || !pipeline || !readable(reinterpret_cast<std::uint64_t>(state), 8) ||
+        signature_part(reinterpret_cast<const void *>(state[0])).empty())
+        return E_NOTIMPL;
+    auto *const signature = reinterpret_cast<ID3D12RootSignature *>(state[0]);
+    if (Kind) {
+        const auto shader = modules::empty_compute_shader();
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = signature;
+        desc.CS = {shader.data(), shader.size()};
+        using Create = HRESULT(STDMETHODCALLTYPE *)(
+            void *, const D3D12_COMPUTE_PIPELINE_STATE_DESC *, REFIID, void **);
+        const auto made =
+            shader.empty() ? E_NOTIMPL : original<Create>(self, 11)(self, &desc, iid, pipeline);
+        if (SUCCEEDED(made))
+            lost_pipeline("deserialized compute", pipeline, signature);
+        return made;
+    }
+    const auto vertex = modules::empty_vertex_shader(), pixel = modules::empty_pixel_shader();
+    if (vertex.empty() || pixel.empty())
+        return E_NOTIMPL;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+    desc.pRootSignature = signature;
+    desc.VS = {vertex.data(), vertex.size()};
+    desc.PS = {pixel.data(), pixel.size()};
+    desc.SampleMask = ~0u;
+    desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    desc.SampleDesc.Count = 1;
+    using Create = HRESULT(STDMETHODCALLTYPE *)(void *, const D3D12_GRAPHICS_PIPELINE_STATE_DESC *,
+                                                REFIID, void **);
+    const auto result = original<Create>(self, 10)(self, &desc, iid, pipeline);
+    // the title derives its pipelines from this one (CreateDerivedGraphicsPipelineStateX)
+    if (SUCCEEDED(result))
+        lost_pipeline("deserialized graphics", pipeline, signature);
+    if (SUCCEEDED(result) && *pipeline)
+        keep_pipeline(*pipeline, desc);
+    if (FAILED(result)) {
+        std::fprintf(stderr, "[Runtime] a pipeline that draws nothing: 0x%08lx%c",
+                     static_cast<unsigned long>(result), 10);
+        report_messages();
+    }
+    return result;
 }
 // GetGpuHardwareConfigurationX (68): the GPU's clock and which console it is: the first
 // Xbox One, or the Series X
@@ -4365,6 +5075,10 @@ HRESULT STDMETHODCALLTYPE create_committed_resource_2(
     if (desc) {
         host_desc = *desc;
         host_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(host_desc.Flags & 0xff);
+        host_desc.Format = host_format(host_desc.Format, true);
+        if (host_desc.Flags &
+            (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
+            host_desc.Format = target_format(host_desc.Format);
         if (host_desc.Layout >= 0x100)
             host_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         if (host_desc.Format == 187 || host_desc.Format == 188) {
@@ -4388,6 +5102,8 @@ HRESULT STDMETHODCALLTYPE create_committed_resource_2(
         state = D3D12_RESOURCE_STATE_GENERIC_READ;
     if (desc)
         host_rules(heap, host_desc.Flags, state);
+    D3D12_CLEAR_VALUE cleared{};
+    clear = host_clear(clear, cleared);
     const auto result = original<Create>(self, 69)(self, heap, flags, desc ? &host_desc : nullptr,
                                                    state, clear, session, iid, resource);
     if (SUCCEEDED(result) && resource && *resource)
@@ -4580,6 +5296,7 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
     bool made = false;
     std::size_t signature_at = 0; // where in the stream the root signature's pointer is
     ID3D12RootSignature *from_shader = nullptr;
+    std::string types = "stream of"; // XV_D3D_LOST: the subobjects, as the title numbers them
     if (desc && desc->pPipelineStateSubobjectStream && console == Target::scarlett) {
         const auto *bytes = static_cast<const std::uint8_t *>(desc->pPipelineStateSubobjectStream);
         for (std::size_t at = 0; at + 8 <= desc->SizeInBytes;) {
@@ -4595,6 +5312,17 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
             }
             const auto size = std::min(sizes[type], desc->SizeInBytes - at);
             stream.insert(stream.end(), bytes + at, bytes + at + size);
+            {
+                std::uint64_t value = 0;
+                if (size >= 16)
+                    std::memcpy(&value, bytes + at + 8, 8);
+                else if (size >= 8)
+                    std::memcpy(&value, bytes + at + 4, 4);
+                char text[40];
+                std::snprintf(text, sizeof text, " %u:%llx", type,
+                              static_cast<unsigned long long>(value));
+                types += text;
+            }
             if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY && size >= 8) {
                 D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
                 std::memcpy(&topology, stream.data() + stream.size() - size + 4, 4);
@@ -4602,6 +5330,20 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                 topology = host_topology_type(topology);
                 std::memcpy(stream.data() + stream.size() - size + 4, &topology, 4);
             }
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT && size >= 8) {
+                DXGI_FORMAT depth;
+                std::memcpy(&depth, stream.data() + stream.size() - size + 4, 4);
+                depth = host_format(depth);
+                std::memcpy(stream.data() + stream.size() - size + 4, &depth, 4);
+            }
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS && size >= 36)
+                for (std::size_t target = 0; target < 8; ++target) {
+                    DXGI_FORMAT format;
+                    const auto at_format = stream.size() - size + 4 + 4 * target;
+                    std::memcpy(&format, stream.data() + at_format, 4);
+                    format = target_format(format);
+                    std::memcpy(stream.data() + at_format, &format, 4);
+                }
             if (type == 23 || type == 24) {
                 ++type;
                 std::memcpy(stream.data() + stream.size() - size, &type, 4);
@@ -4657,6 +5399,25 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
         desc = &host;
     }
     const auto result = original<Create>(self, 47)(self, desc, iid, state);
+    if (SUCCEEDED(result) && state) {
+        void *signature = nullptr;
+        if (signature_at)
+            std::memcpy(&signature, stream.data() + signature_at, sizeof signature);
+        if (std::getenv("XV_D3D_LOST")) {
+            types += "; as the host has it:";
+            for (std::size_t at = 0; at < stream.size(); ++at) {
+                char byte[4];
+                std::snprintf(byte, sizeof byte, at % 4 ? "%02x" : " %02x", stream[at]);
+                types += byte;
+            }
+        }
+        lost_pipeline((types + (from_shader                  ? ", signature from its shaders"
+                                : shaders[2].pShaderBytecode ? ", compute"
+                                : made                       ? ", shaders made for the host"
+                                                             : ""))
+                          .c_str(),
+                      state, signature);
+    }
     if (from_shader)
         from_shader->Release();
     if (FAILED(result)) {

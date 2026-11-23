@@ -134,6 +134,8 @@ bool in_title(const void *address);
 // the base of the title's image or DLL `address` is in, null for anything else
 void *title_image_base(const void *address);
 std::string guest_location(const void *address);
+// XV_D3D_LOST: where every other thread is, by its return addresses
+void report_thread_stacks(std::uint64_t own_stack = 0);
 // an export of a console system module from the title's system folder, mapping it on first
 // use; null without that folder or module
 void *system_export(std::string_view module, std::string_view symbol);
