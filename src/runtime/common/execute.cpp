@@ -617,6 +617,7 @@ void NTAPI on_thread(void *, DWORD reason, void *) {
             library.entry(library.base, reason, nullptr);
 }
 DWORD run_guest(const Start &start) {
+    start_static_tls();
     for (const auto &[entry, base] : start.libraries)
         attach(reinterpret_cast<std::uint64_t>(entry), base);
     return reinterpret_cast<DWORD (*)()>(start.entry)();

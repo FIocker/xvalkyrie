@@ -189,10 +189,15 @@ void NTAPI on_thread(void *module, DWORD reason, void *reserved) {
         if (modules[which].module == module)
             return tell(which, module, reason, reserved);
 }
+// The executable's callbacks hear of the process on the thread that runs its entry point,
+// as on the console, and of no thread before that.
+std::atomic<bool> executable_started{false};
+void *executable_module = nullptr;
 void NTAPI on_executable_thread(void *module, DWORD reason, void *reserved) {
     if (reason == DLL_THREAD_ATTACH && traded)
         trade(NtCurrentTeb());
-    on_thread(module, reason, reserved);
+    if (executable_started)
+        on_thread(module, reason, reserved);
 }
 ULONG *host_index() {
     const auto *const image = reinterpret_cast<const std::uint8_t *>(GetModuleHandleW(nullptr));
@@ -323,6 +328,14 @@ void install_static_tls(const nlohmann::json &tls, std::uint64_t base, std::uint
     own.module = module;
     modules[which] = std::move(own);
     module_count = which + 1;
-    tell(which, module, DLL_PROCESS_ATTACH, nullptr);
+    if (executable)
+        executable_module = module;
+    else
+        tell(which, module, DLL_PROCESS_ATTACH, nullptr);
+}
+void start_static_tls() {
+    if (!executable_module || executable_started.exchange(true))
+        return;
+    on_thread(executable_module, DLL_PROCESS_ATTACH, nullptr);
 }
 } // namespace xv::runtime
