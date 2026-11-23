@@ -781,7 +781,8 @@ constexpr Row rows[] = {
      {Inert::shared2, transfer_manager}},
     // IsChunkInstalled(chunk, bool *): the whole package is there
     {transfer_manager, direct, 7, {Inert::true8_at, nullptr, 2}},
-    {transfer_manager, direct, 8, {Inert::event_add}},
+    // AreChunksInstalled(chunks, bool *), likewise
+    {transfer_manager, direct, 8, {Inert::true8_at, nullptr, 2}},
     // FindChunkFromFile: the first, which a title counts from 1
     {transfer_manager, direct, 9, {Inert::one32_at, nullptr, 2}},
     // IPackageTransferManagerForChunkSpecifiers::GetInstallationState, by chunks and by

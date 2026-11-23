@@ -177,6 +177,13 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
     if (Index == 6 && self->iid == printable && first)
         return get_class_name(self, static_cast<HSTRING *>(first));
     if (const auto *known = inert_method(self->name.c_str(), self->iid, Index)) {
+        // XV_WINRT_TRACE: the calls answered from the table, with what they were given
+        if (static std::atomic<int> shown{0}; std::getenv("XV_WINRT_TRACE") && shown++ < 400) {
+            std::fprintf(stderr, "[Runtime] WinRT %ls method %zu (%p, %p, %p, %p) from %s\n",
+                         self->name.c_str(), Index, first, second, third, fourth,
+                         detail::guest_location(_ReturnAddress()).c_str());
+            std::fflush(stderr);
+        }
         void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
         void **const at = known->argument >= 1 && known->argument <= std::size(arguments)
                               ? static_cast<void **>(arguments[known->argument - 1])
