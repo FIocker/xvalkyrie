@@ -824,6 +824,59 @@ constexpr Row rows[] = {
     // KinectSensor's method 9, by a title's call of it (image+0x9fd9d4): no argument, and
     // only the HRESULT is looked at. There is no sensor, and nothing comes of it.
     {L"Windows.Kinect.KinectSensor", direct, 9, {Inert::accept}},
+    // The public IKinectSensor::BodyIndexFrameSource and what a title asks of it: the size
+    // of the frames it would give, a reader that never has one
+    {L"Windows.Kinect.KinectSensor",
+     direct,
+     15,
+     {Inert::object, L"Windows.Kinect.BodyIndexFrameSource"}},
+    {L"Windows.Kinect.BodyIndexFrameSource", direct, 6, {Inert::event_add}},
+    {L"Windows.Kinect.BodyIndexFrameSource", direct, 8, {Inert::zero8}}, // IsActive
+    {L"Windows.Kinect.BodyIndexFrameSource",
+     direct,
+     9,
+     {Inert::object, L"Windows.Kinect.BodyIndexFrameReader"}},
+    {L"Windows.Kinect.BodyIndexFrameSource",
+     direct,
+     10,
+     {Inert::object, L"Windows.Kinect.FrameDescription"}},
+    {L"Windows.Kinect.BodyIndexFrameReader", direct, 6, {Inert::event_add}},
+    {L"Windows.Kinect.BodyIndexFrameReader", direct, 8, {Inert::zero64}},             // no frame
+    {L"Windows.Kinect.FrameDescription", direct, 6, {Inert::number32, nullptr, 512}}, // Width
+    {L"Windows.Kinect.FrameDescription", direct, 7, {Inert::number32, nullptr, 424}}, // Height
+    {L"Windows.Kinect.FrameDescription", direct, 11, {Inert::number32, nullptr, 512 * 424}},
+    {L"Windows.Kinect.FrameDescription", direct, 12, {Inert::number32, nullptr, 1}},
+    {L"Windows.Kinect.KinectSensor", direct, 22, {Inert::zero32}}, // KinectCapabilities: none
+    // IConfigurationStatics::MarketplaceId
+    {L"Windows.Xbox.ApplicationModel.Store.Configuration",
+     guid("9d50b2e8-eeb6-4ced-b9f1-3eb95b3c1e0f"),
+     6,
+     {Inert::string, L"US"}},
+    // public IRatedContentRestrictions and IRatedContentDescriptionFactory: nothing is
+    // restricted, and that never changes
+    {L"Windows.Media.ContentRestrictions.RatedContentRestrictions",
+     guid("3f7f23cb-ba07-4401-a49d-8b9222205723"),
+     7,
+     {Inert::zero_operation_at, nullptr, 2}}, // GetRestrictionLevelAsync: Allow
+    {L"Windows.Media.ContentRestrictions.RatedContentRestrictions",
+     guid("3f7f23cb-ba07-4401-a49d-8b9222205723"),
+     9,
+     {Inert::event_add}},
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription",
+     guid("2e38df62-9b90-4fa6-89c1-4b8d2ffb3573"),
+     6,
+     {Inert::object_at, L"Windows.Media.ContentRestrictions.RatedContentDescription", 4}},
+    // the description's setters: Id, Title, Image, Category, Ratings
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription", direct, 7, {Inert::accept}},
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription", direct, 9, {Inert::accept}},
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription", direct, 11, {Inert::accept}},
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription", direct, 13, {Inert::accept}},
+    {L"Windows.Media.ContentRestrictions.RatedContentDescription", direct, 15, {Inert::accept}},
+    // Body's statics, the public IBodyStatics: JointCount
+    {L"Windows.Kinect.Body",
+     guid("38d92488-eecf-4e85-a03a-545fbfa362a9"),
+     6,
+     {Inert::number32, nullptr, 25}},
     // IDisplayConfigurationStatics2::TrySetHdrModeAsync, by a title's symbols: an operation
     // that gives an HdrModeInfo. A title waits for it before it creates its device.
     {L"Windows.Xbox.Graphics.Display.DisplayConfiguration",
