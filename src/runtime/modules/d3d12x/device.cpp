@@ -2391,12 +2391,25 @@ struct KeptPipeline {
 std::mutex kept_mutex;
 std::map<const void *, KeptPipeline> kept_pipelines;
 // A pipeline made of the programs of the title's cache (see deserialize_pipeline) is under
-// a root signature of ours: its shaders read their descriptors from the heap itself, from
-// the first descriptor of the table the title draws with, which each stage is told in a
-// root constant. `uses`: the descriptors they read, by their place in that table, and what
-// each is, so that those the title wrote itself are made the host's before the draw.
+// a root signature of ours: its shaders read their descriptors from the heaps themselves,
+// and are given what the programs have in their user registers as root constants (see
+// rdna::Shader::heaps). `parameters`: the root parameters of the signature the pipeline was
+// cached with, which is what those registers hold, in order. `uses`: the descriptors the
+// shaders read, by the register their table is in and their place in it, and what each is;
+// `samplers`: the registers that have the number of a sampler in the sampler heap. Those
+// descriptors that the title wrote itself are made the host's before a draw.
 struct HeapUses {
-    std::vector<std::pair<std::uint32_t, D3D12_DESCRIPTOR_RANGE_TYPE>> uses;
+    struct Parameter {
+        int kind = 0; // 1 a table, 5 constants, 2 a root view
+        UINT count = 1;
+    };
+    std::vector<Parameter> parameters;
+    struct Use {
+        std::uint32_t reg, place;
+        D3D12_DESCRIPTOR_RANGE_TYPE type;
+    };
+    std::vector<Use> uses;
+    std::vector<std::uint32_t> samplers;
 };
 std::map<const void *, std::shared_ptr<const HeapUses>> heap_pipelines; // under kept_mutex
 std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
@@ -2404,9 +2417,9 @@ std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
     const auto found = heap_pipelines.find(pipeline);
     return found == heap_pipelines.end() ? nullptr : found->second;
 }
-// that root signature: a constant for the vertex shader (b0) and one for the pixel shader
-// (b1), both in space 200, the sampler the shaders sample with, and the heaps indexed by
-// the shaders. Null where the host has no such heaps.
+// that root signature: sixteen constants for the vertex shader (b0) and as many for the
+// pixel shader (b1), both in space 200, the sampler the shaders sample with, and the heaps indexed
+// by the shaders. Null where the host has no such heaps.
 ID3D12RootSignature *heap_signature(ID3D12Device *device) {
     static std::once_flag once;
     static ID3D12RootSignature *signature = nullptr;
@@ -2416,7 +2429,7 @@ ID3D12RootSignature *heap_signature(ID3D12Device *device) {
         D3D12_ROOT_PARAMETER1 parameters[2]{};
         for (UINT n = 0; n < 2; ++n) {
             parameters[n].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-            parameters[n].Constants = {n, 200, 1};
+            parameters[n].Constants = {n, 200, 16};
             parameters[n].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         }
         D3D12_STATIC_SAMPLER_DESC sampler{};
@@ -3889,33 +3902,57 @@ void prepare_draw(ListProxy *list) {
         list->host->SetGraphicsRootSignature(ours);
         list->ours_bound = true;
     }
-    UINT first = 0;
-    if (!list->graphics_arguments.empty() && list->graphics_arguments[0].kind == 1) {
-        const auto table = list->graphics_arguments[0].value;
-        ShadowHeap heap{};
-        bool found = false;
+    // the user registers from s8 on: a table's first descriptor, constants as they are
+    std::uint32_t user[16]{};
+    std::uintptr_t tables[16]{};
+    ShadowHeap heaps[16]{};
+    std::size_t reg = 0;
+    const auto &arguments = list->graphics_arguments;
+    for (std::size_t p = 0; p < list->heap_uses->parameters.size() && reg < 16; ++p) {
+        const auto &parameter = list->heap_uses->parameters[p];
+        const auto *const argument = p < arguments.size() ? &arguments[p] : nullptr;
+        if (parameter.kind == 1) {
+            if (argument && argument->kind == 1) {
+                const std::lock_guard lock(shadow_mutex);
+                if (const auto *const in = shadow_heap(argument->value); in && in->shader_visible) {
+                    heaps[reg] = *in;
+                    tables[reg] = argument->value;
+                    user[reg] =
+                        static_cast<std::uint32_t>((argument->value - in->base) / in->stride);
+                }
+            }
+            ++reg;
+        } else if (parameter.kind == 5) {
+            for (UINT n = 0; n < parameter.count && reg < 16; ++n, ++reg)
+                if (argument && argument->kind == 5 && n < argument->words.size())
+                    user[reg] = argument->words[n];
+        } else {
+            reg += 2;
+        }
+    }
+    for (const auto &use : list->heap_uses->uses)
+        if (const auto at = use.reg - 8; at < 16 && tables[at]) {
+            const auto where = tables[at] + std::uintptr_t{use.place} * heaps[at].stride;
+            if (where + heaps[at].stride <= heaps[at].end)
+                decode_as(heaps[at], where, use.type);
+        }
+    if (!list->heap_uses->samplers.empty()) {
+        ShadowHeap samplers{};
         {
             const std::lock_guard lock(shadow_mutex);
-            if (const auto *const in = shadow_heap(table); in && in->shader_visible)
-                heap = *in, found = true;
+            for (const auto &[base, heap] : shadow_heaps)
+                if (heap.type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER && heap.shader_visible)
+                    samplers = heap;
         }
-        if (found) {
-            first = static_cast<UINT>((table - heap.base) / heap.stride);
-            for (const auto &[place, type] : list->heap_uses->uses)
-                if (const auto at = table + std::uintptr_t{place} * heap.stride;
-                    at + heap.stride <= heap.end)
-                    decode_as(heap, at, type);
-        }
-    } else if (static std::atomic<bool> shown{false}; !shown.exchange(true)) {
-        std::fprintf(stderr,
-                     "[Runtime] a pipeline of the title's cache is drawn with and the "
-                     "first root argument is no table: its shaders read the heap's "
-                     "first descriptors%c",
-                     10);
-        std::fflush(stderr);
+        for (const auto in : list->heap_uses->samplers)
+            if (const auto at = in - 8; at < 16 && samplers.base) {
+                const auto where = samplers.base + std::uintptr_t{user[at]} * samplers.stride;
+                if (where + samplers.stride <= samplers.end)
+                    decode_as(samplers, where, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER);
+            }
     }
-    list->host->SetGraphicsRoot32BitConstant(0, first, 0);
-    list->host->SetGraphicsRoot32BitConstant(1, first, 0);
+    list->host->SetGraphicsRoot32BitConstants(0, 16, user, 0);
+    list->host->SetGraphicsRoot32BitConstants(1, 16, user, 0);
 }
 // XV_D3D_PROBE: draws per render target
 std::mutex draw_mutex;
@@ -5412,20 +5449,38 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
         if (!real_vertex.empty() && (!real_pixel.empty() || programs[1].empty()) &&
             layout.size() >= 0x50 && heap_signature(self)) {
             vertex = real_vertex, pixel = real_pixel;
-            // what the two programs' records name, by its place in the table
+            // what the two programs' records name, and the parameters their registers hold
             auto reads = std::make_shared<HeapUses>();
             for (const auto &part : records)
                 for (std::size_t at = 16; at + 32 <= part.size(); at += 32) {
-                    std::uint32_t words[3];
+                    std::uint32_t words[6];
                     std::memcpy(words, part.data() + at, sizeof words);
-                    if (words[0] != 0x41 ||
-                        (words[1] != 0x300 && words[1] != 0x302 && words[1] != 0x303))
+                    if (words[0] != 0x41)
                         continue;
-                    reads->uses.emplace_back(words[2] / 8,
-                                             words[1] == 0x300   ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
-                                             : words[1] == 0x303 ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
-                                                                 : D3D12_DESCRIPTOR_RANGE_TYPE_CBV);
+                    const auto in = words[5] >> 8 & 0xff;
+                    if (words[1] == 2)
+                        reads->samplers.push_back(in);
+                    else if (words[1] == 0x300 || words[1] == 0x302 || words[1] == 0x303)
+                        reads->uses.push_back({in, words[2] / 8,
+                                               words[1] == 0x300 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
+                                               : words[1] == 0x303
+                                                   ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
+                                                   : D3D12_DESCRIPTOR_RANGE_TYPE_CBV});
                 }
+            const auto at_root = [&](std::size_t at) {
+                std::uint32_t value = 0;
+                if (at + 4 <= root.size())
+                    std::memcpy(&value, root.data() + at, 4);
+                return value;
+            };
+            for (std::uint32_t p = 0, count = std::min(at_root(4), 64u); p < count; ++p) {
+                const auto entry = at_root(8) + 12 * p;
+                const auto type = at_root(entry);
+                reads->parameters.push_back(
+                    type == 0   ? HeapUses::Parameter{1, 1}
+                    : type == 1 ? HeapUses::Parameter{5, at_root(at_root(entry + 8) + 8)}
+                                : HeapUses::Parameter{2, 2});
+            }
             uses = std::move(reads);
             std::size_t at = 0x50;
             const auto count = std::min(at32(0x4c), 32u);

@@ -34,13 +34,19 @@ struct Shader {
     // A program of a cached pipeline is entered with the address of its vertex streams'
     // buffer descriptors in s0:s1 and reads each input from them, by the vertex's number.
     bool streams = false;
-    // Such a program knows its descriptors only by where they are in the table whose
-    // address it is given (in s8), whatever root signature the title draws with: the
-    // translation reads each from the host's heap itself, at the table's first descriptor
-    // (`xv_table`, a root constant) plus its place. `bound`: what the program's records say
-    // is at each place (the type as a root signature's range has it).
+    // Such a program knows its descriptors only by where they are in a table, whatever the
+    // ranges of the root signature the title draws with say: the translation reads each
+    // from the host's heap itself. Its user registers, from s8 on, have the root
+    // signature's parameters in order (a table one, constants one each, a root view two),
+    // then the address of each heap the signature lets shaders index; the translation has
+    // them as `xv_ud<n>` (root constants of the host's, n from 0 for s8): a table's is the
+    // number of its first descriptor in the heap, constants are themselves, the heaps'
+    // addresses are 0, so that what the program adds up to an address is the byte offset in
+    // the heap. `bound`: what the program's records say is at each place of a table (the
+    // type as a root signature's range has it), by the register the table is in.
     struct Bound {
         std::uint32_t offset = 0, type = 0; // in bytes from the table's start
+        std::uint32_t reg = 8;
     };
     bool heaps = false;
     std::vector<Bound> bound;

@@ -851,7 +851,7 @@ std::optional<std::string> console_program_source(ShaderStage stage,
     if (records.size() >= 16) {
         shader.heaps = true;
         for (std::size_t at = 16; at + 32 <= records.size(); at += 32) {
-            std::uint32_t words[3];
+            std::uint32_t words[6];
             std::memcpy(words, records.data() + at, sizeof words);
             if (words[0] != 0x41)
                 continue;
@@ -861,7 +861,7 @@ std::optional<std::string> console_program_source(ShaderStage stage,
                               : words[1] == 2     ? 3u
                                                   : ~0u;
             if (type != ~0u)
-                shader.bound.push_back({words[2] * 4, type});
+                shader.bound.push_back({words[2] * 4, type, words[5] >> 8 & 0xff});
         }
     }
     const auto element = [](const char *name, std::uint32_t index, std::uint32_t reg, bool system) {

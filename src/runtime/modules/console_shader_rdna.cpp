@@ -330,9 +330,7 @@ class Translator {
     bool needs_sm6() const { return needs_sm6_; }
 
     std::string run() {
-        if (shader_.heaps)
-            parameters_.assign(1, Parameter{}); // the one table, of which only places are known
-        else if (!read_root_signature(shader_.root_signature, parameters_))
+        if (!read_root_signature(shader_.root_signature, parameters_))
             give_up("root signature");
         read_file();
         decode();
@@ -483,16 +481,40 @@ class Translator {
         }
         if (!any) { // no records: the parameters in order, from the first user register
             std::uint32_t reg = stage_ == Stage::compute ? 4 : 8;
-            for (std::uint32_t p = 0; p < parameters_.size() && reg < 100; ++p) {
+            const auto real = parameters_.size();
+            for (std::uint32_t p = 0; p < real && reg < 100; ++p) {
                 if (parameters_[p].type == 0) {
+                    table_register_[p] = reg;
                     known_[reg++] = {Known::table, p};
                 } else if (parameters_[p].type == 1) {
+                    // a cached program's: the constants as the host's root constants have them
+                    for (std::uint32_t n = 0; shader_.heaps && n < parameters_[p].count; ++n) {
+                        used_s_.insert(reg + n);
+                        uses_heap_ = true;
+                        prologue_ +=
+                            "    " + s(reg + n) + " = xv_ud" + std::to_string(reg + n - 8) + ";\n";
+                    }
                     reg += parameters_[p].count;
                 } else {
                     root(reg, p);
                     reg += 2;
                 }
             }
+        }
+        // A cached program: after the parameters, the address of each heap its signature
+        // lets it index (flags 0x400 the views, 0x800 the samplers), each as a table of
+        // its own that has all of the heap.
+        if (shader_.heaps && !any) {
+            std::uint32_t reg = 8;
+            for (const auto &parameter : parameters_)
+                reg += parameter.type == 0 ? 1 : parameter.type == 1 ? parameter.count : 2;
+            const auto flags = word(shader_.root_signature, 20);
+            for (const std::uint32_t kind : {1u, 2u})
+                if (flags & (0x200u << kind) && reg < 100) {
+                    heap_parameter_[static_cast<std::uint32_t>(parameters_.size())] = kind;
+                    known_[reg++] = {Known::table, static_cast<std::uint32_t>(parameters_.size())};
+                    parameters_.emplace_back();
+                }
         }
         // a pixel shader: which register of its input signature each attribute is
         if (stage_ == Stage::pixel)
@@ -2011,16 +2033,30 @@ class Translator {
             give_up("a resource that is not a descriptor of a table");
         const auto &ranges = parameters_[known.value].ranges;
         if (shader_.heaps) {
+            Resource resource;
+            resource.heap = true;
+            resource.parameter = known.value;
+            resource.origin = known.origin;
+            resource.dynamic = known.dynamic;
+            if (const auto whole = heap_parameter_.find(known.value);
+                whole != heap_parameter_.end()) {
+                // one of a heap itself, by its byte offset there
+                if (known.dynamic < 0)
+                    give_up("a descriptor of a heap at a place that is fixed");
+                resource.type = whole->second == 2 ? 3 : 0;
+                return resource;
+            }
             if (known.dynamic >= 0)
-                give_up("a descriptor of the heap picked while the shader runs");
+                give_up("a descriptor of a table picked while the shader runs");
+            const auto in = table_register_.find(known.value);
             for (const auto &bound : shader_.bound)
-                if (bound.offset == known.offset) {
+                if (bound.offset == known.offset && in != table_register_.end() &&
+                    bound.reg == in->second) {
                     if (bound.type == 3)
-                        give_up("a sampler of the heap");
-                    Resource resource{bound.type, known.offset / 32, 0};
-                    resource.heap = true;
+                        give_up("a sampler of a table");
+                    resource.type = bound.type;
+                    resource.reg = known.offset / 32;
                     resource.loaded = true;
-                    resource.origin = known.origin;
                     return resource;
                 }
             give_up("a descriptor its program's records do not name");
@@ -2099,8 +2135,19 @@ class Translator {
                 throw Unsupported{"a descriptor as " + known->second + " and as " + type, ~0u,
                                   true};
         }
+        if (resource.heap && resource.dynamic >= 0) {
+            // by its byte offset in the heap, which is known where it is used
+            const auto name = "h" + std::to_string(temporaries_++);
+            uses_heap_ = needs_sm6_ = true;
+            line(type + " " + name + " = " +
+                 (resource.type == 3 ? "SamplerDescriptorHeap[d" : "ResourceDescriptorHeap[d") +
+                 std::to_string(resource.dynamic) + (resource.type == 3 ? " >> 4];" : " >> 5];"));
+            return name;
+        }
         if (resource.heap) {
-            const auto name = std::string("h") + letter + std::to_string(resource.reg);
+            const auto slot = table_register_[resource.parameter] - 8;
+            const auto name = std::string("h") + letter + std::to_string(slot) + "_" +
+                              std::to_string(resource.reg);
             const auto found = declared_.find(name);
             if (found != declared_.end()) {
                 if (found->second != type)
@@ -2109,8 +2156,8 @@ class Translator {
             }
             declared_[name] = type;
             uses_heap_ = needs_sm6_ = true;
-            prologue_ += "    " + type + " " + name + " = ResourceDescriptorHeap[xv_table + " +
-                         std::to_string(resource.reg) + "u];\n";
+            prologue_ += "    " + type + " " + name + " = ResourceDescriptorHeap[xv_ud" +
+                         std::to_string(slot) + " + " + std::to_string(resource.reg) + "u];\n";
             return name;
         }
         if (resource.dynamic < 0) {
@@ -4333,9 +4380,13 @@ class Translator {
         }
         text += declarations_;
         // the first descriptor of the table the title draws with, by the stage
-        if (uses_heap_)
+        if (uses_heap_) {
             text += std::string("cbuffer xv_user : register(b") +
-                    (stage_ == Stage::vertex ? "0" : "1") + ", space200) { uint xv_table; };\n";
+                    (stage_ == Stage::vertex ? "0" : "1") + ", space200) {";
+            for (int n = 0; n < 16; ++n)
+                text += " uint xv_ud" + std::to_string(n) + ";";
+            text += " };\n";
+        }
         std::string registers;
         for (std::size_t n = 0; n < dynamic_id_.size(); ++n)
             registers += "    uint d" + std::to_string(n) + " = 0u;\n";
@@ -4498,6 +4549,9 @@ class Translator {
     bool needs_sm6_ = false, sopk_writes_exec_ = false;
     bool fetched_ = false, exported_ = false, vertex_id_ = false, instance_id_ = false;
     bool uses_heap_ = false;
+    std::map<std::uint32_t, std::uint32_t> table_register_; // a table parameter's register
+    std::map<std::uint32_t, std::uint32_t>
+        heap_parameter_; // a heap as a table: 1 views, 2 samplers
 };
 } // namespace
 
