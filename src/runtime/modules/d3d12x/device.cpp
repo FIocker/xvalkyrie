@@ -2033,13 +2033,27 @@ HRESULT STDMETHODCALLTYPE create_descriptor_heap(ID3D12Device *self,
     // The host shows its shaders a million descriptors at most: a larger heap is made that
     // large, and what the title keeps past that is not seen
     // (a host that makes a larger one is given the title's: that is tried first)
-    constexpr UINT host_visible_limit = 1'000'000;
+    constexpr UINT default_visible_limit = 1'000'000;
     const UINT title_count = desc ? desc->NumDescriptors : 0;
     auto result = E_FAIL;
     if (desc && desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV &&
         desc->Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE &&
-        desc->NumDescriptors > host_visible_limit &&
+        desc->NumDescriptors > default_visible_limit &&
         FAILED(result = original<Create>(self, 14)(self, desc, iid, heap))) {
+        // The adapter's own limit where it tells one (OPTIONS19) that is under what the title
+        // asked for. Binding tier alone cannot determine it: WARP and hardware can report
+        // different limits at the same tier.
+        UINT host_visible_limit = default_visible_limit;
+#if defined(__ID3D12Device12_INTERFACE_DEFINED__)
+        D3D12_FEATURE_DATA_D3D12_OPTIONS19 options{};
+        using CheckFeature = HRESULT(STDMETHODCALLTYPE *)(void *, D3D12_FEATURE, void *, UINT);
+        if (SUCCEEDED(original<CheckFeature>(self, 13)(self, D3D12_FEATURE_D3D12_OPTIONS19,
+                                                       &options, sizeof(options))) &&
+            options.MaxViewDescriptorHeapSize &&
+            options.MaxViewDescriptorHeapSize < desc->NumDescriptors) {
+            host_visible_limit = options.MaxViewDescriptorHeapSize;
+        }
+#endif
         std::fprintf(stderr,
                      "[Runtime] a descriptor heap of %u descriptors for shaders is made with "
                      "%u, the host's limit (0x%08lx for all of them): the views past that are "
