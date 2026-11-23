@@ -97,8 +97,15 @@ HRESULT make_swap_chain(IDXGIFactory2 *factory, IUnknown *device,
         if (auto *const queue = modules::d3d12x::direct_queue())
             presenter = queue;
     }
-    const auto result = factory->CreateSwapChainForHwnd(
-        presenter, static_cast<HWND>(window->native()), &host, nullptr, nullptr, swap_chain);
+    auto result = factory->CreateSwapChainForHwnd(presenter, static_cast<HWND>(window->native()),
+                                                  &host, nullptr, nullptr, swap_chain);
+    // A console window takes several swap chains (one per resolution and color space, of
+    // which the title presents one); a host window takes one. The others get no window.
+    if (result == E_ACCESSDENIED && flip) {
+        host.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        host.Scaling = DXGI_SCALING_STRETCH;
+        result = factory->CreateSwapChainForComposition(presenter, &host, nullptr, swap_chain);
+    }
     if (SUCCEEDED(result))
         *swap_chain =
             static_cast<IDXGISwapChain1 *>(d3d11x::wrap(*swap_chain, d3d11x::Kind::swap_chain));
