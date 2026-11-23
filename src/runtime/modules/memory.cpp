@@ -22,6 +22,10 @@ constexpr DWORD mem_4mb_pages = 0x80000000;
 constexpr DWORD page_sizes = mem_large_pages | mem_4mb_pages;
 constexpr std::uintptr_t page = 1 << 16;
 constexpr std::uint64_t physical_size = 16ull << 30;
+// A title is told of a page by the number of its first 4 KiB frame, as the console does: one
+// keeps such numbers without their low four bits (the shift left by 4 before
+// XMemMapPhysicalPagesScatter at image+0xf2cbeb of 7952987A).
+constexpr ULONG_PTR frames = page >> 12;
 constexpr DWORD allocation_types =
     MEM_COMMIT | MEM_RESERVE | MEM_RESET | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET_UNDO;
 constexpr DWORD protections = 0xff | PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE;
@@ -43,6 +47,11 @@ struct Physical {
     std::vector<bool> used = std::vector<bool>(physical_size / page),
                       dirty = std::vector<bool>(physical_size / page);
     std::map<std::uintptr_t, Reservation> reservations;
+    // XV_MEM_CHECK: where each page is mapped, to tell of one that is at two addresses or
+    // is given back while it is still mapped
+    bool check = std::getenv("XV_MEM_CHECK");
+    std::multimap<ULONG_PTR, std::uintptr_t> where;
+    int told = 0;
 };
 Physical &physical() {
     static Physical state;
@@ -81,6 +90,12 @@ bool take_pages(Physical &state, std::uintptr_t count, std::uintptr_t run, ULONG
     return false;
 }
 void release_page(Physical &state, ULONG_PTR number) {
+    if (state.check && state.where.contains(number) && state.told++ < 200) {
+        std::fprintf(stderr, "[Memory] page %llu is given back while mapped at %llx%c",
+                     static_cast<unsigned long long>(number),
+                     static_cast<unsigned long long>(state.where.find(number)->second), 10);
+        std::fflush(stderr);
+    }
     state.used[number] = false;
     state.dirty[number] = true;
 }
@@ -90,6 +105,14 @@ void unmap(Physical &state, Reservation &reservation, std::uintptr_t address) {
         return;
     UnmapViewOfFile2(GetCurrentProcess(), reinterpret_cast<void *>(address),
                      MEM_PRESERVE_PLACEHOLDER);
+    if (state.check) {
+        const auto [first, last] = state.where.equal_range(view->second.page);
+        for (auto entry = first; entry != last; ++entry)
+            if (entry->second == address) {
+                state.where.erase(entry);
+                break;
+            }
+    }
     if (view->second.owned)
         release_page(state, view->second.page);
     reservation.views.erase(view);
@@ -109,6 +132,16 @@ bool map(Physical &state, Reservation &reservation, std::uintptr_t address, ULON
     if ((protect & protections) != PAGE_READWRITE)
         VirtualProtect(at, page, protect & protections, &previous);
     reservation.views[address] = {number, owned};
+    if (state.check) {
+        if (state.where.contains(number) && state.told++ < 200) {
+            std::fprintf(stderr, "[Memory] page %llu is mapped at %llx while it is at %llx%c",
+                         static_cast<unsigned long long>(number),
+                         static_cast<unsigned long long>(address),
+                         static_cast<unsigned long long>(state.where.find(number)->second), 10);
+            std::fflush(stderr);
+        }
+        state.where.emplace(number, address);
+    }
     return true;
 }
 void *reserve(void *address, std::uintptr_t size, DWORD type) {
@@ -247,6 +280,8 @@ BOOL WINAPI allocate_title_physical_pages(HANDLE, DWORD type, ULONG_PTR *count, 
         SetLastError(ERROR_OUTOFMEMORY);
         return FALSE;
     }
+    for (ULONG_PTR i = 0; i < *count; ++i)
+        pages[i] *= frames;
     return TRUE;
 }
 BOOL WINAPI free_title_physical_pages(HANDLE, ULONG_PTR count, ULONG_PTR *pages) {
@@ -257,8 +292,8 @@ BOOL WINAPI free_title_physical_pages(HANDLE, ULONG_PTR count, ULONG_PTR *pages)
     auto &state = physical();
     const std::lock_guard lock(state.mutex);
     for (ULONG_PTR i = 0; i < count; ++i)
-        if (pages[i] < state.used.size())
-            release_page(state, pages[i]);
+        if (pages[i] / frames < state.used.size())
+            release_page(state, pages[i] / frames);
     return TRUE;
 }
 void *WINAPI map_title_physical_pages(void *address, ULONG_PTR count, DWORD type, DWORD protect,
@@ -281,8 +316,8 @@ void *WINAPI map_title_physical_pages(void *address, ULONG_PTR count, DWORD type
         return nullptr;
     }
     for (ULONG_PTR i = 0; i < count; ++i)
-        if (pages[i] >= state.used.size() ||
-            !map(state, *reservation, start + i * page, pages[i], protect, false)) {
+        if (pages[i] / frames >= state.used.size() ||
+            !map(state, *reservation, start + i * page, pages[i] / frames, protect, false)) {
             SetLastError(ERROR_INVALID_PARAMETER);
             return nullptr;
         }
@@ -403,8 +438,8 @@ BOOL WINAPI xmem_map_physical_pages_scatter(void **addresses, ULONG_PTR count, U
         }
         if (!pages)
             unmap(state, *reservation, at);
-        else if (pages[i] >= state.used.size() ||
-                 !map(state, *reservation, at, pages[i], PAGE_READWRITE, false)) {
+        else if (pages[i] / frames >= state.used.size() ||
+                 !map(state, *reservation, at, pages[i] / frames, PAGE_READWRITE, false)) {
             SetLastError(ERROR_INVALID_PARAMETER);
             return FALSE;
         }
