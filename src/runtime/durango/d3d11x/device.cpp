@@ -90,7 +90,8 @@ HRESULT make_swap_chain(IDXGIFactory2 *factory, IUnknown *device,
     host.Flags &= DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE |
                   DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
                   DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
-    auto *presenter = static_cast<IUnknown *>(d3d11x::unwrap(device));
+    // the title's object for the device, or one of the DXGI interfaces of it
+    auto *presenter = unwrap_forwarder(static_cast<IUnknown *>(d3d11x::unwrap(device)));
     if (ID3D12Device *d3d12 = nullptr;
         presenter && SUCCEEDED(presenter->QueryInterface(IID_PPV_ARGS(&d3d12)))) {
         d3d12->Release();

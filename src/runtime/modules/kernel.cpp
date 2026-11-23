@@ -1,4 +1,5 @@
 #include "runtime/modules/kernel.hpp"
+#include "runtime/common/com_forward.hpp"
 #include "runtime/common/runtime.hpp"
 #include "runtime/modules/locale.hpp"
 #include "runtime/modules/placement.hpp"
@@ -137,6 +138,18 @@ std::wstring console_path(const wchar_t *name) {
     if (path.size() > 1 && (path[0] == L'\\' || path[0] == L'/') && path[1] != L'\\' &&
         path[1] != L'/')
         return (package_directory(std::filesystem::current_path(error)) / path.substr(1)).wstring();
+    // A title that takes the root of its drive for its package (which it is on the console)
+    // names files of the package from the root of the host's drive.
+    if (path.size() > 3 && path[1] == L':' && (path[2] == L'\\' || path[2] == L'/')) {
+        const auto package = package_directory(std::filesystem::current_path(error));
+        const auto root = package.root_name().wstring();
+        if (root.size() == 2 && towupper(root[0]) == towupper(path[0]) &&
+            GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES) {
+            auto inside = (package / path.substr(3)).wstring();
+            if (GetFileAttributesW(inside.c_str()) != INVALID_FILE_ATTRIBUTES)
+                return inside;
+        }
+    }
     return std::wstring(path);
 }
 // the same for the ANSI functions, whose results stay in the title's code page
@@ -532,7 +545,7 @@ HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD c
         *object = &output;
         return S_OK;
     }
-    if (*iid == console_audio_info && object) {
+    const auto audio_info = [] {
         static void *vtable[16];
         static ConsoleAudioInfo info{[] {
             for (auto &slot : vtable)
@@ -542,13 +555,35 @@ HRESULT WINAPI co_create_instance(const GUID *class_id, IUnknown *outer, DWORD c
             vtable[8] = reinterpret_cast<void *>(&ConsoleAudioInfo::channels);
             return vtable;
         }()};
-        *object = &info;
+        return &info;
+    };
+    if (*iid == console_audio_info && object) {
+        *object = audio_info();
         return S_OK;
     }
     auto result = CoCreateInstance(*class_id, outer, context, *iid, object);
     // a console title's threads have COM without asking for it
     if (result == CO_E_NOTINITIALIZED && SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
         result = CoCreateInstance(*class_id, outer, context, *iid, object);
+    // the host's device enumerator, which a title may ask for that interface later
+    if (SUCCEEDED(result) && object && *iid == __uuidof(IMMDeviceEnumerator)) {
+        static ConsoleAudioInfo *info;
+        info = audio_info();
+        *object = make_forwarder(static_cast<IUnknown *>(*object), 8,
+                                 +[](Forwarder *self, REFIID wanted, void **out) -> HRESULT {
+                                     if (wanted == console_audio_info) {
+                                         *out = info;
+                                         return S_OK;
+                                     }
+                                     if (wanted != __uuidof(IUnknown) &&
+                                         wanted != __uuidof(IMMDeviceEnumerator))
+                                         return forwarder_host(self)->QueryInterface(wanted, out);
+                                     forwarder_add_ref(self);
+                                     *out = self;
+                                     return S_OK;
+                                 },
+                                 {});
+    }
     if (FAILED(result) || std::getenv("XV_COM_TRACE")) {
         wchar_t text[64] = L"", wanted[64] = L"";
         StringFromGUID2(*class_id, text, 64);
