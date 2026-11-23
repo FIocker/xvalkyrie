@@ -231,6 +231,13 @@ decrypt retail packages.
 Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has the ground
 rules. Say where information comes from: guessed offsets, ordinals or ABIs are not merged.
 
+## Acknowledgements
+
+The method order of some console WinRT classes (`Windows.Kinect`,
+`Windows.Xbox.Management.Deployment.PackageTransferManager`, `Windows.Xbox.Input.Controller`)
+was checked against the interface descriptions of
+[WinDurango](https://github.com/WinDurango/WinDurango). No code of it is used here.
+
 ## Legal
 
 XValkyrie is not affiliated with or endorsed by Microsoft. Xbox, Xbox One and Xbox Series X|S
