@@ -27,8 +27,13 @@
 // puts its threads. ERA titles import them from kernelx.dll, GDK titles from API sets.
 namespace xv::runtime::modules {
 namespace {
-// ours and the title's first, then the host's
+std::wstring console_path(const wchar_t *name);
+// ours and the title's first, then the host's; a path on one of the console's drives is
+// the host's for it
 HMODULE WINAPI load_library(const wchar_t *name, HANDLE file, DWORD flags) {
+    const auto path = console_path(name);
+    if (name)
+        name = path.c_str();
     auto module = static_cast<HMODULE>(detail::guest_library(name));
     if (!module)
         module = LoadLibraryExW(name, file, flags);
