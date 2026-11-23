@@ -11,6 +11,8 @@
 #include <direct.h>
 #include <filesystem>
 #include <intrin.h>
+#include <map>
+#include <mutex>
 #include <share.h>
 #include <shlwapi.h>
 #include <string>
@@ -279,17 +281,43 @@ BOOL WINAPI get_disk_free_space_w(const wchar_t *name, DWORD *sectors, DWORD *by
 }
 // The C runtime's file functions open files without going through the functions above, so
 // the console's drives are put in their paths here as well.
-// They are the functions of the C runtime the title has, not of this program's: a FILE of
-// one runtime means nothing to another's fread. Titles of the older kits bring msvcr110
-// or msvcr120; the newer ones share the system's.
-template <class Function> Function *title_crt(const char *name, Function *own) {
-    for (const auto *runtime : {"msvcr110.dll", "msvcr120.dll", "msvcr100.dll", "ucrtbase.dll"})
-        if (const auto module = GetModuleHandleA(runtime))
-            if (const auto found = GetProcAddress(module, name))
-                return reinterpret_cast<Function *>(found);
+// They are the functions of the C runtime the caller uses, not of this program's: a FILE of
+// one runtime means nothing to another's fread. Which runtime that is, the caller's image
+// says in its imports: msvcr110 or msvcr120 for titles of the older kits, the system's
+// universal one for the newer. A process may hold several (a title and its middleware).
+HMODULE crt_of(void *caller) {
+    static std::mutex mutex;
+    static std::map<void *, HMODULE> known;
+    auto *const image = static_cast<std::uint8_t *>(detail::title_image_base(caller));
+    const std::lock_guard lock(mutex);
+    if (const auto found = known.find(image); found != known.end())
+        return found->second;
+    HMODULE runtime = nullptr;
+    if (image) {
+        const auto *const headers = reinterpret_cast<const IMAGE_NT_HEADERS64 *>(
+            image + *reinterpret_cast<LONG *>(image + 0x3c));
+        const auto &directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        for (auto *entry = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(
+                 image + directory.VirtualAddress);
+             directory.VirtualAddress && entry->Name && !runtime; ++entry) {
+            const auto *const name = reinterpret_cast<const char *>(image + entry->Name);
+            if (_strnicmp(name, "msvcr", 5) == 0)
+                runtime = GetModuleHandleA(name);
+            else if (_strnicmp(name, "api-ms-win-crt-", 15) == 0 ||
+                     _stricmp(name, "ucrtbase.dll") == 0)
+                runtime = GetModuleHandleA("ucrtbase.dll");
+        }
+    }
+    known[image] = runtime;
+    return runtime;
+}
+template <class Function> Function *title_crt(void *caller, const char *name, Function *own) {
+    if (const auto runtime = crt_of(caller))
+        if (const auto found = GetProcAddress(runtime, name))
+            return reinterpret_cast<Function *>(found);
     return own;
 }
-#define XV_TITLE_CRT(function) title_crt(#function, &function)
+#define XV_TITLE_CRT(function) title_crt(_ReturnAddress(), #function, &function)
 FILE *crt_wfopen(const wchar_t *name, const wchar_t *mode) {
     return XV_TITLE_CRT(_wfsopen)(console_path(name).c_str(), mode, _SH_DENYNO);
 }
