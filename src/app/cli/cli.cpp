@@ -143,6 +143,17 @@ std::optional<int> run(int argc, wchar_t **argv) {
             words, {reinterpret_cast<const std::uint8_t *>(signature.data()), signature.size()},
             &why, {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()});
         std::cout << (source ? *source : "stopped: " + why) << std::endl;
+        if (source) {
+            const auto stage = argv[2][0] == L'v' ? runtime::modules::ShaderStage::vertex
+                                                  : runtime::modules::ShaderStage::pixel;
+            const auto shader = runtime::modules::console_program_shader(
+                stage, words,
+                {reinterpret_cast<const std::uint8_t *>(signature.data()), signature.size()},
+                {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()}, &why);
+            std::cout << (shader.empty() ? "not compiled: " + why
+                                         : "compiled: " + std::to_string(shader.size()) + " bytes")
+                      << std::endl;
+        }
         return source ? 0 : 1;
     }
     if ((argc == 2 || (argc == 3 && std::filesystem::path(argv[2]) == "--compile")) &&

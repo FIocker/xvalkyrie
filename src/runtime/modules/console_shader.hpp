@@ -48,6 +48,13 @@ std::optional<std::string> console_program_source(ShaderStage stage,
                                                   std::span<const std::uint8_t> root_signature,
                                                   std::string *why = nullptr,
                                                   std::span<const std::uint8_t> layout = {});
+// The same, compiled for the host: empty when it is not translated or the host's compiler
+// turns the translation down, and `why` says which.
+std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
+                                                 std::span<const std::uint32_t> words,
+                                                 std::span<const std::uint8_t> root_signature,
+                                                 std::span<const std::uint8_t> layout = {},
+                                                 std::string *why = nullptr);
 // A geometry shader that makes the rectangles of a rectangle list: it is given the three
 // corners the title draws as a triangle, and adds the fourth, opposite the first, as the
 // console's GPU does. `vertex` is the pipeline's vertex shader as the host has it, whose

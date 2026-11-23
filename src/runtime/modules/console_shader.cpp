@@ -926,6 +926,20 @@ std::optional<std::string> console_program_source(ShaderStage stage,
     return rdna::translate(stage, shader, why);
 }
 
+std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
+                                                 std::span<const std::uint32_t> words,
+                                                 Bytes root_signature, Bytes layout,
+                                                 std::string *why) {
+    std::string said;
+    const auto source = console_program_source(stage, words, root_signature, &said, layout);
+    auto shader = source ? compile_now(stage, *source, false, &said) : std::vector<std::uint8_t>{};
+    if (source && shader.empty())
+        said = "the host's compiler: " + said;
+    if (why)
+        *why = said;
+    return shader;
+}
+
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
     // with console code may have its bitcode as well, and then the host runs that.
