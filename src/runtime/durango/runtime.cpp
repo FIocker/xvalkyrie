@@ -5,6 +5,7 @@
 #include "runtime/modules/gameruntime.hpp"
 #include "runtime/modules/kernel.hpp"
 #include "runtime/modules/memory.hpp"
+#include "runtime/modules/network.hpp"
 #include "runtime/modules/system.hpp"
 #include "runtime/modules/window.hpp"
 #include "runtime/modules/xg.hpp"
@@ -23,6 +24,7 @@ void install(Registry &registry) {
     // ERA titles are WinRT applications and use more of these than the GDK allows
     registry.forward("combase.dll", "combase.dll");
     registry.forward("ws2_32.dll", "ws2_32.dll");
+    modules::install_network(registry);
     registry.forward("oleaut32.dll", "oleaut32.dll");
     // the same functions by their API sets, which the title's own WinRT DLLs import
     for (const auto *set :

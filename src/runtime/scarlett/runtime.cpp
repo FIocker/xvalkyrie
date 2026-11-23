@@ -7,6 +7,7 @@
 #include "runtime/modules/gameruntime.hpp"
 #include "runtime/modules/kernel.hpp"
 #include "runtime/modules/memory.hpp"
+#include "runtime/modules/network.hpp"
 #include "runtime/modules/system.hpp"
 #include "runtime/modules/watchdog.hpp"
 #include "runtime/modules/window.hpp"
@@ -30,6 +31,7 @@ void install(Registry &registry) {
     modules::install_xaudio2(registry);
     modules::install_front_panel(registry);
     registry.forward("ws2_32.dll", "ws2_32.dll");
+    modules::install_network(registry);
     // Media Foundation is the host's, but for what ties it to the console's graphics device
     registry.forward("mfplat.dll", "mfplat.dll");
     registry.add("mfplat.dll", "MFResetDXGIDeviceManagerX", reinterpret_cast<void *>(&succeeded));
