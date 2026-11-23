@@ -423,16 +423,17 @@ void *wrap(void *host_object, Kind kind) {
     for (std::size_t index = 1; index < description.words; ++index) {
         const auto &method = description.object[index];
         // the three IUnknown methods come first in the in-object table as well
-        if (description.words > 1 && index >= 124 && index <= 126)
-            words[index] = const_cast<void *>(vtable_of(kind)[index - 124]);
-        else if (description.words > 1 && index >= 127)
+        const auto table = description.table;
+        if (description.words > 1 && index >= table && index < table + 3)
+            words[index] = const_cast<void *>(vtable_of(kind)[index - table]);
+        else if (description.words > 1 && index >= table + 3)
             words[index] = slot_function(method, object_entries[index]);
     }
     if (description.words > 1 && kind != Kind::context)
         describe(words, host);
     // titles then hand resource tables to SetFastResources_Debug instead of writing packets
     if (kind == Kind::context)
-        reinterpret_cast<std::uint8_t *>(words)[0x390] = 1;
+        reinterpret_cast<std::uint8_t *>(words)[description.out_of_line] = 1;
     objects.emplace(host, words);
     return words;
 }

@@ -1231,6 +1231,23 @@ void STDMETHODCALLTYPE set_fast_resources(void *self, const UINT *table, const U
         }
     }
 }
+// The same of the first kit, whose headers say what is bound another way: a number in bits
+// 16-23 (0-5 the views of a stage, 7-12 its constant buffers, 13 the vertex streams) and 2
+// in bits 24-27 for samplers. The stages and the entries are the same.
+void STDMETHODCALLTYPE set_fast_resources_earliest(void *self, const UINT *table, const UINT *end) {
+    std::vector<UINT> later(table, table && end > table ? end : table);
+    for (std::size_t at = 0; at < later.size(); at += 1 + (later[at] & 0xff) * 4) {
+        const UINT header = later[at], number = (header >> 16) & 0xff;
+        const bool sampler = ((header >> 24) & 0xf) == 2;
+        UINT stage = 15, kind = 0; // nothing known: skipped
+        if (sampler || number < 6)
+            stage = number, kind = sampler ? 2 : 0;
+        else if (number >= 7 && number <= 13)
+            stage = number - 7, kind = 1;
+        later[at] = (header & 0xffff) | stage << 16 | kind << 28;
+    }
+    set_fast_resources(self, later.data(), later.data() + later.size());
+}
 // SetFastResourcesFromBatch_Debug (213): resources as the packets the title would have put
 // in the console's ring itself. Each is a word that says how many words follow and where in
 // the GPU's table of bindings they go, then the descriptors of the objects, which here name
@@ -1594,6 +1611,7 @@ Layout early_layout(const Layout &later, Kind kind) {
     // are not there yet. IASetPlacementIndexBuffer and the command buffer's two methods are
     // where titles call them that way.
     constexpr std::size_t console = 141 + 124;
+    result.table = later.table - 1;
     for (std::size_t index = 3; index + 3 < result.object.size(); ++index)
         result.object[index] = later.object[index + (index + 3 >= console ? 3 : 1)];
     // XXSetShaderResources takes the desktop's arguments there (start, count, views)
@@ -1601,6 +1619,37 @@ Layout early_layout(const Layout &later, Kind kind) {
     result.object[8 + 123] = methods[8];
     for (std::size_t host : {25, 31, 59, 63, 67})
         result.object[host + 122] = methods[host];
+    return result;
+}
+// The first of those kits (SDK 1.5, seen in one title): the context's table inside the
+// object is the desktop's vtable as it is, primitive topology included, from word 54, and
+// its methods take the desktop's arguments.
+Layout earliest_layout(const Layout &later, Kind kind) {
+    auto result = early_layout(later, kind);
+    // no ID3D11Device2 yet: the console's own methods follow ID3D11Device1's
+    if (kind == Kind::device)
+        for (std::size_t slot = 51; slot + 4 < result.vtable.size(); ++slot)
+            result.vtable[slot] = later.vtable[slot + 4];
+    if (kind != Kind::context)
+        return result;
+    result.object = {};
+    result.table = 54;
+    const auto methods = context_methods();
+    for (std::size_t host = 3; host < methods.size(); ++host)
+        result.object[host + result.table] = methods[host];
+    // the console's own follow the desktop's last (133) at once: 77 words before the later
+    // kits', going by OMSetDepthStencilStateX, MakeCeSpace and SetFastResources_Debug
+    constexpr std::size_t console = 134 + 54, earlier = 77;
+    for (std::size_t index = console; index + earlier < later.object.size(); ++index)
+        result.object[index] = later.object[index + earlier];
+    result.object[210 + 124 - earlier] = custom(&set_fast_resources_earliest);
+    // no state is left in the object by this kit's headers, and its flag is where the later
+    // ones keep theirs of what changed
+    result.out_of_line = 0x168;
+    result.apply_state = [](void *self) {
+        upload_placements(static_cast<ID3D11DeviceContext *>(unwrap(self)));
+        restore_pixel_views(self);
+    };
     return result;
 }
 const Layout &layout_of_later(Kind kind);
@@ -1634,7 +1683,8 @@ Layout launch_layout(const Layout &later, Kind kind) {
         result.vtable[slot] = later.vtable[slot + (memory && slot >= 10 ? 3 : 2)];
     return result;
 }
-std::atomic<int> kit_layout{0}; // 0 later kits, 1 the first ones, 2 the launch kit
+// 0 later kits, 1 the first ones, 2 the launch kit, 3 the first of the first ones
+std::atomic<int> kit_layout{0};
 } // namespace
 
 namespace {
@@ -1678,12 +1728,21 @@ const Layout &layout(Kind kind) {
             result[kind] = launch_layout(layouts[kind], static_cast<Kind>(kind));
         return result;
     }();
+    static const auto earliest = [] {
+        std::array<Layout, std::size(layouts)> result;
+        for (std::size_t kind = 0; kind < result.size(); ++kind)
+            result[kind] = earliest_layout(layouts[kind], static_cast<Kind>(kind));
+        return result;
+    }();
     const auto *const kit = kit_layout == 2   ? launch.data()
+                            : kit_layout == 3 ? earliest.data()
                             : kit_layout == 1 ? early.data()
                                               : layouts;
     return kit[static_cast<std::size_t>(kind)];
 }
-void first_development_kits(bool yes, bool launch) { kit_layout = !yes ? 0 : launch ? 2 : 1; }
+void first_development_kits(bool yes, bool launch, bool earliest) {
+    kit_layout = !yes ? 0 : launch ? 2 : earliest ? 3 : 1;
+}
 bool first_development_kits() { return kit_layout != 0; }
 bool launch_kit() { return kit_layout == 2; }
 

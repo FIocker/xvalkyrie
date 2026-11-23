@@ -247,7 +247,7 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *context = nullptr;
     // the launch kit still passes the desktop's SDK version (7), and its DXGI is the desktop's
     dxgi_inserted = sdk >= 0x10000 && sdk < 0x20000 ? 5 : 0;
-    d3d11x::first_development_kits(sdk < 0x20000, sdk < 0x10000);
+    d3d11x::first_development_kits(sdk < 0x20000, sdk < 0x10000, sdk < 0x1000b);
     modules::early_audio_processor(sdk < 0x20000);
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
