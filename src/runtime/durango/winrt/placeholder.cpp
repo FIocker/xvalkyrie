@@ -162,6 +162,9 @@ bool looks_like_event_add(void *first, void *second) {
 constexpr GUID equatable{
     0xde0cbaec, 0xe077, 0x4e92, {0x84, 0xbe, 0xc6, 0xd4, 0x8d, 0xca, 0x30, 0x06}};
 bool same_object(const Placeholder *self, void *other);
+// The one of Object::ToString ({DE0CBAEB-...}): ToString(String ^*), the name of the class
+constexpr GUID printable{
+    0xde0cbaeb, 0x8065, 0x4a45, {0x96, 0xb1, 0xc9, 0xd4, 0x43, 0xf9, 0xba, 0xb3}};
 
 template <std::size_t Index>
 HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, void *third,
@@ -171,6 +174,8 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
         *static_cast<std::uint8_t *>(second) = same_object(self, first);
         return S_OK;
     }
+    if (Index == 6 && self->iid == printable && first)
+        return get_class_name(self, static_cast<HSTRING *>(first));
     if (const auto *known = inert_method(self->name.c_str(), self->iid, Index)) {
         void *const arguments[] = {first, second, third, fourth, a5, a6, a7, a8, a9, a10, a11};
         void **const at = known->argument >= 1 && known->argument <= std::size(arguments)
