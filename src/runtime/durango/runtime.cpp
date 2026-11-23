@@ -25,6 +25,7 @@ void install(Registry &registry) {
     registry.forward("ws2_32.dll", "ws2_32.dll");
     // the shader compiler is the desktop one
     registry.forward("d3dcompiler_47.dll", "d3dcompiler_47.dll");
+    registry.forward("d3dcompiler_46.dll", "d3dcompiler_47.dll");
     install_kernelx(registry);
     // what an Xbox One GDK title has in common with a Series one
     modules::install_kernel(registry, Target::durango);
