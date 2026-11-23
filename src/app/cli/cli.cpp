@@ -125,7 +125,7 @@ std::optional<int> run(int argc, wchar_t **argv) {
                   << '\n';
         return 0;
     }
-    if ((argc == 5 || argc == 6) && command == "shader-program") {
+    if (argc >= 5 && argc <= 7 && command == "shader-program") {
         // v|p, the program of a cached pipeline (XV_SHADER_CODE's pso_g_<n>_<part>.bin) and
         // its root signature (.rts0): the HLSL, or what stops it
         const auto read = [](const wchar_t *path) {
@@ -133,7 +133,10 @@ std::optional<int> run(int argc, wchar_t **argv) {
             return std::vector<char>(std::istreambuf_iterator<char>(file), {});
         };
         const auto code = read(argv[3]), signature = read(argv[4]),
-                   layout = argc == 6 ? read(argv[5]) : std::vector<char>{};
+                   layout = argc >= 6 ? read(argv[5]) : std::vector<char>{},
+                   records = argc == 7 ? read(argv[6]) : std::vector<char>{};
+        const std::span<const std::uint8_t> bound{
+            reinterpret_cast<const std::uint8_t *>(records.data()), records.size()};
         std::vector<std::uint32_t> words(code.size() / 4);
         std::memcpy(words.data(), code.data(), words.size() * 4);
         std::string why;
@@ -141,7 +144,7 @@ std::optional<int> run(int argc, wchar_t **argv) {
             argv[2][0] == L'v' ? runtime::modules::ShaderStage::vertex
                                : runtime::modules::ShaderStage::pixel,
             words, {reinterpret_cast<const std::uint8_t *>(signature.data()), signature.size()},
-            &why, {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()});
+            &why, {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()}, bound);
         std::cout << (source ? *source : "stopped: " + why) << std::endl;
         if (source) {
             const auto stage = argv[2][0] == L'v' ? runtime::modules::ShaderStage::vertex
@@ -149,7 +152,8 @@ std::optional<int> run(int argc, wchar_t **argv) {
             const auto shader = runtime::modules::console_program_shader(
                 stage, words,
                 {reinterpret_cast<const std::uint8_t *>(signature.data()), signature.size()},
-                {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()}, &why);
+                {reinterpret_cast<const std::uint8_t *>(layout.data()), layout.size()}, &why,
+                bound);
             std::cout << (shader.empty() ? "not compiled: " + why
                                          : "compiled: " + std::to_string(shader.size()) + " bytes")
                       << std::endl;

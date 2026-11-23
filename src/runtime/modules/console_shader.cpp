@@ -485,16 +485,19 @@ std::vector<std::uint8_t> compile_newer(ShaderStage stage, const std::string &so
         return {};
     // The language as the older compiler has it, which the shaders are written in. The
     // largest are not optimized here: that takes several times as long, and a title waits.
-    const wchar_t *arguments[] = {L"-E",
-                                  L"main",
-                                  L"-T",
-                                  stage == ShaderStage::vertex    ? L"vs_6_0"
+    const wchar_t *arguments[] = {L"-E", L"main", L"-T",
+                                  // a shader that reads the heaps itself needs the model
+                                  // that has them
+                                  source.find("ResourceDescriptorHeap[") != std::string::npos
+                                      ? (stage == ShaderStage::vertex    ? L"vs_6_6"
+                                         : stage == ShaderStage::pixel   ? L"ps_6_6"
+                                         : stage == ShaderStage::compute ? L"cs_6_6"
+                                                                         : L"gs_6_6")
+                                  : stage == ShaderStage::vertex  ? L"vs_6_0"
                                   : stage == ShaderStage::pixel   ? L"ps_6_0"
                                   : stage == ShaderStage::compute ? L"cs_6_0"
                                                                   : L"gs_6_0",
-                                  L"-HV",
-                                  L"2018",
-                                  source.size() > 200'000 ? L"-Od" : L"-O3"};
+                                  L"-HV", L"2018", source.size() > 200'000 ? L"-Od" : L"-O3"};
     const DxcBuffer text{source.data(), source.size(), DXC_CP_UTF8};
     IDxcResult *result = nullptr;
     std::vector<std::uint8_t> bytes;
@@ -815,7 +818,7 @@ std::string console_shader_probe(std::span<const std::uint32_t> words, bool comp
 std::optional<std::string> console_program_source(ShaderStage stage,
                                                   std::span<const std::uint32_t> words,
                                                   Bytes root_signature, std::string *why,
-                                                  Bytes layout) {
+                                                  Bytes layout, Bytes records) {
     // before the code, three words at a time: hashes, as instructions that do nothing
     while (words.size() >= 3 && words[0] >> 16 == 0xd580)
         words = words.subspan(3);
@@ -842,6 +845,25 @@ std::optional<std::string> console_program_source(ShaderStage stage,
     rdna::Shader shader;
     shader.file = file;
     shader.root_signature = root_signature;
+    // Its records, eight words each under a header of four: those of kind 0x41 say what is
+    // where in the table (0x300 a shader resource, 0x303 an unordered access view, 0x302
+    // constants, 2 a sampler), the place in words.
+    if (records.size() >= 16) {
+        shader.heaps = true;
+        for (std::size_t at = 16; at + 32 <= records.size(); at += 32) {
+            std::uint32_t words[3];
+            std::memcpy(words, records.data() + at, sizeof words);
+            if (words[0] != 0x41)
+                continue;
+            const auto type = words[1] == 0x300   ? 0u
+                              : words[1] == 0x303 ? 1u
+                              : words[1] == 0x302 ? 2u
+                              : words[1] == 2     ? 3u
+                                                  : ~0u;
+            if (type != ~0u)
+                shader.bound.push_back({words[2] * 4, type});
+        }
+    }
     const auto element = [](const char *name, std::uint32_t index, std::uint32_t reg, bool system) {
         rdna::Element made;
         made.name = name;
@@ -929,9 +951,10 @@ std::optional<std::string> console_program_source(ShaderStage stage,
 std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
                                                  std::span<const std::uint32_t> words,
                                                  Bytes root_signature, Bytes layout,
-                                                 std::string *why) {
+                                                 std::string *why, Bytes records) {
     std::string said;
-    const auto source = console_program_source(stage, words, root_signature, &said, layout);
+    const auto source =
+        console_program_source(stage, words, root_signature, &said, layout, records);
     auto shader = source ? compile_now(stage, *source, false, &said) : std::vector<std::uint8_t>{};
     if (source && shader.empty())
         said = "the host's compiler: " + said;

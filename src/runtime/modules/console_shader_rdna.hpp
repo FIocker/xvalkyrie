@@ -34,6 +34,16 @@ struct Shader {
     // A program of a cached pipeline is entered with the address of its vertex streams'
     // buffer descriptors in s0:s1 and reads each input from them, by the vertex's number.
     bool streams = false;
+    // Such a program knows its descriptors only by where they are in the table whose
+    // address it is given (in s8), whatever root signature the title draws with: the
+    // translation reads each from the host's heap itself, at the table's first descriptor
+    // (`xv_table`, a root constant) plus its place. `bound`: what the program's records say
+    // is at each place (the type as a root signature's range has it).
+    struct Bound {
+        std::uint32_t offset = 0, type = 0; // in bytes from the table's start
+    };
+    bool heaps = false;
+    std::vector<Bound> bound;
 };
 // The HLSL for the code: what the shader declares and its `main`. A vertex or pixel shader's
 // takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing

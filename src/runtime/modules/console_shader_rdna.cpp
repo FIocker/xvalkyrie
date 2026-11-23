@@ -288,6 +288,7 @@ struct Resource {
     std::uint32_t parameter = 0, origin = 0;
     bool loaded = false; // from a table, by the instruction `origin`
     bool stream = false; // a vertex stream, `reg` its number: read as the shader's inputs
+    bool heap = false;   // read from the heap itself, `reg` descriptors after the table's first
 };
 // What a first pass over a shader found out that changes how it is translated: the
 // descriptors written through, which are unordered access views where the table allows both.
@@ -329,7 +330,9 @@ class Translator {
     bool needs_sm6() const { return needs_sm6_; }
 
     std::string run() {
-        if (!read_root_signature(shader_.root_signature, parameters_))
+        if (shader_.heaps)
+            parameters_.assign(1, Parameter{}); // the one table, of which only places are known
+        else if (!read_root_signature(shader_.root_signature, parameters_))
             give_up("root signature");
         read_file();
         decode();
@@ -2007,6 +2010,21 @@ class Translator {
         if (known.kind != Known::descriptor || known.part != 0)
             give_up("a resource that is not a descriptor of a table");
         const auto &ranges = parameters_[known.value].ranges;
+        if (shader_.heaps) {
+            if (known.dynamic >= 0)
+                give_up("a descriptor of the heap picked while the shader runs");
+            for (const auto &bound : shader_.bound)
+                if (bound.offset == known.offset) {
+                    if (bound.type == 3)
+                        give_up("a sampler of the heap");
+                    Resource resource{bound.type, known.offset / 32, 0};
+                    resource.heap = true;
+                    resource.loaded = true;
+                    resource.origin = known.origin;
+                    return resource;
+                }
+            give_up("a descriptor its program's records do not name");
+        }
         if (known.dynamic < 0) {
             const auto index = known.offset / descriptor_size(known.value);
             for (const auto &range : ranges)
@@ -2041,6 +2059,10 @@ class Translator {
     // A sampler. An Xbox One shader has the words of a static one in its code, and the
     // record of what it binds with the same words says which register that is.
     Resource sampler_of(std::uint32_t reg) {
+        // a cached program's: the one sampler its pipeline's signature has (what the words
+        // say of filtering and addressing is not read yet)
+        if (shader_.heaps && reg + 2 < 128 && known_[reg].kind == Known::constant)
+            return Resource{3, 0, 200};
         if (!older_ || reg + 2 >= 128 || known_[reg].kind != Known::constant ||
             known_[reg + 1].kind != Known::constant || known_[reg + 2].kind != Known::constant)
             return resource_of(reg);
@@ -2076,6 +2098,20 @@ class Translator {
             if (!added && known->second != type && resource.dynamic < 0)
                 throw Unsupported{"a descriptor as " + known->second + " and as " + type, ~0u,
                                   true};
+        }
+        if (resource.heap) {
+            const auto name = std::string("h") + letter + std::to_string(resource.reg);
+            const auto found = declared_.find(name);
+            if (found != declared_.end()) {
+                if (found->second != type)
+                    throw Unsupported{name + " as " + found->second + " and as " + type, ~0u, true};
+                return name;
+            }
+            declared_[name] = type;
+            uses_heap_ = needs_sm6_ = true;
+            prologue_ += "    " + type + " " + name + " = ResourceDescriptorHeap[xv_table + " +
+                         std::to_string(resource.reg) + "u];\n";
+            return name;
         }
         if (resource.dynamic < 0) {
             const auto name = std::string(1, letter) + std::to_string(resource.reg) + "_" +
@@ -2259,7 +2295,7 @@ class Translator {
     }
     // a constant buffer as an array of vectors, by name
     std::string constants(const Resource &resource) {
-        if (resource.dynamic >= 0) {
+        if (resource.dynamic >= 0 || resource.heap) {
             uses_constants_ = true;
             return object(resource, "ConstantBuffer<Constants>") + ".w";
         }
@@ -4296,6 +4332,10 @@ class Translator {
                 declarations_.replace(at, mark.size(), std::to_string(std::min(size, 4096u)));
         }
         text += declarations_;
+        // the first descriptor of the table the title draws with, by the stage
+        if (uses_heap_)
+            text += std::string("cbuffer xv_user : register(b") +
+                    (stage_ == Stage::vertex ? "0" : "1") + ", space200) { uint xv_table; };\n";
         std::string registers;
         for (std::size_t n = 0; n < dynamic_id_.size(); ++n)
             registers += "    uint d" + std::to_string(n) + " = 0u;\n";
@@ -4457,6 +4497,7 @@ class Translator {
     bool unlearned_ = false; // an instruction was left out for a descriptor of a kind not known yet
     bool needs_sm6_ = false, sopk_writes_exec_ = false;
     bool fetched_ = false, exported_ = false, vertex_id_ = false, instance_id_ = false;
+    bool uses_heap_ = false;
 };
 } // namespace
 
