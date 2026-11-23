@@ -41,6 +41,8 @@ void install(Registry &registry) {
     modules::install_xg(registry, "xg_x.dll");
     install_winrt(registry);
     install_d3d11x(registry);
+    // what the first kits called d3d11_x.dll
+    registry.alias("d3d11.dll", "d3d11_x.dll");
     for (const auto *name :
          {"EtxRegister", "EtxUnregister", "EtxEventWrite", "EtxFillCommonFields_v7"})
         registry.add("etwplus.dll", name, reinterpret_cast<void *>(&ignored));
