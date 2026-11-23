@@ -46,7 +46,8 @@ std::string console_shader_probe(std::span<const std::uint32_t> words, bool comp
 std::optional<std::string> console_program_source(ShaderStage stage,
                                                   std::span<const std::uint32_t> words,
                                                   std::span<const std::uint8_t> root_signature,
-                                                  std::string *why = nullptr);
+                                                  std::string *why = nullptr,
+                                                  std::span<const std::uint8_t> layout = {});
 // A geometry shader that makes the rectangles of a rectangle list: it is given the three
 // corners the title draws as a triangle, and adds the fourth, opposite the first, as the
 // console's GPU does. `vertex` is the pipeline's vertex shader as the host has it, whose

@@ -814,7 +814,8 @@ std::string console_shader_probe(std::span<const std::uint32_t> words, bool comp
 // those and gives its targets.
 std::optional<std::string> console_program_source(ShaderStage stage,
                                                   std::span<const std::uint32_t> words,
-                                                  Bytes root_signature, std::string *why) {
+                                                  Bytes root_signature, std::string *why,
+                                                  Bytes layout) {
     // before the code, three words at a time: hashes, as instructions that do nothing
     while (words.size() >= 3 && words[0] >> 16 == 0xd580)
         words = words.subspan(3);
@@ -874,6 +875,40 @@ std::optional<std::string> console_program_source(ShaderStage stage,
         shader.inputs.back().type = 1;
         shader.inputs.back().width = 1;
         shader.inputs.back().mask = shader.inputs.back().read = 1;
+        // The pipeline's input layout: a count at 0x4c, then each element as the length of
+        // its name, the name, and the rest of a D3D12_INPUT_ELEMENT_DESC. The program reads
+        // its vertices from the streams itself, each element where the layout has it.
+        shader.streams = true;
+        const auto at32 = [&](std::size_t at) {
+            std::uint32_t value = 0;
+            if (at + 4 <= layout.size())
+                std::memcpy(&value, layout.data() + at, 4);
+            return value;
+        };
+        std::size_t at = 0x50;
+        for (std::uint32_t n = 0, count = at32(0x4c); n < count && n < 32; ++n) {
+            const auto length = at32(at);
+            if (!length || length > 64 || at + 4 + length + 24 > layout.size())
+                break;
+            const std::string name(reinterpret_cast<const char *>(layout.data()) + at + 4,
+                                   length - 1);
+            at += 4 + length;
+            auto input = element(name.c_str(), at32(at), 1 + n, false);
+            const auto format = at32(at + 4);
+            input.stream = at32(at + 8);
+            input.offset = at32(at + 12);
+            input.format = format;
+            // the components of the formats vertices come in
+            input.width = format == 6 || format == 26 ? 3
+                          : format == 16 || format == 34 || format == 35 || format == 37 ||
+                                  format == 49 || format == 51
+                              ? 2
+                          : format == 41 || format == 54 || format == 61 ? 1
+                                                                         : 4;
+            input.mask = input.read = static_cast<std::uint8_t>((1u << input.width) - 1);
+            shader.inputs.push_back(std::move(input));
+            at += 24;
+        }
         shader.outputs.push_back(element("SV_Position", 0, reg++, true));
         for (const auto parameter : parameters)
             shader.outputs.push_back(element("TEXCOORD", parameter, reg++, false));

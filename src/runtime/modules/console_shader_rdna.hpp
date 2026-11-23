@@ -19,6 +19,9 @@ struct Element {
     std::uint32_t reg = 0; // the register it is in, and which of its components
     std::uint8_t mask = 0;
     std::uint8_t read = 0; // the components the shader reads (an input)
+    // an input of a program that fetches its vertices itself: the vertex stream it is in
+    // and where in a vertex of that stream
+    std::uint32_t stream = 0, offset = 0, format = 0;
 };
 struct Shader {
     std::span<const std::uint8_t> file;           // the FSSM file: code and what goes with it
@@ -28,6 +31,9 @@ struct Shader {
     // the inputs, by their place in `inputs`, that come as unsigned 10-bit fields of what
     // the title has as signed ones
     std::uint32_t signed_inputs = 0;
+    // A program of a cached pipeline is entered with the address of its vertex streams'
+    // buffer descriptors in s0:s1 and reads each input from them, by the vertex's number.
+    bool streams = false;
 };
 // The HLSL for the code: what the shader declares and its `main`. A vertex or pixel shader's
 // takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing

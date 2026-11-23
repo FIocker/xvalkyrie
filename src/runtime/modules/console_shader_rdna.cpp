@@ -221,7 +221,9 @@ struct Known {
         code,
         conflict,
         lanes,
-        memory
+        memory,
+        streams, // the address of the vertex streams' buffer descriptors (a cached program)
+        stream   // a word of one of those descriptors; value: which stream
     } kind = nothing;
     std::uint32_t value = 0;            // the constant; the root parameter of the others
     std::uint32_t offset = 0, part = 0; // a descriptor: its byte offset in the table, and
@@ -241,7 +243,8 @@ struct Known {
 // a register that stands for something of the console's, and has no value of its own here
 bool stands_in(const Known &known) {
     return known.kind == Known::table || known.kind == Known::descriptor ||
-           known.kind == Known::root || known.kind == Known::memory;
+           known.kind == Known::root || known.kind == Known::memory ||
+           known.kind == Known::streams || known.kind == Known::stream;
 }
 // What is known where two ways through a shader meet. A descriptor that only one of them
 // loads stays one: compiled code loads descriptors in blocks that are skipped when no lane
@@ -284,6 +287,7 @@ struct Resource {
     int dynamic = -1; // one of an array: the variable with its place in the table
     std::uint32_t parameter = 0, origin = 0;
     bool loaded = false; // from a table, by the instruction `origin`
+    bool stream = false; // a vertex stream, `reg` its number: read as the shader's inputs
 };
 // What a first pass over a shader found out that changes how it is translated: the
 // descriptors written through, which are unordered access views where the table allows both.
@@ -427,6 +431,8 @@ class Translator {
     }
     void read_file() {
         const auto file = shader_.file;
+        if (shader_.streams)
+            known_[0] = known_[1] = {Known::streams};
         if (read_older_file())
             return;
         if (file.size() < 0x140 || std::memcmp(file.data(), "FSSM", 4))
@@ -920,7 +926,8 @@ class Translator {
                 return s(source);
             // an address of the console's has no meaning here, and only goes into the
             // descriptor a shader makes of it
-            if (known.kind == Known::root || known.kind == Known::memory)
+            if (known.kind == Known::root || known.kind == Known::memory ||
+                known.kind == Known::streams || known.kind == Known::stream)
                 return "0u";
             if (known.kind == Known::descriptor)
                 return descriptor_word(source);
@@ -1136,6 +1143,9 @@ class Translator {
                             bits && name == "s_or_b32")
                             result.stride = (*bits >> 16) & 0x3fff;
                     }
+            // the address of the vertex streams with its upper bits cut off is still that
+            if (starts(name, "s_bfe_") && first < 128 && known[first].kind == Known::streams)
+                result = known[first];
             // masks of lanes combined are one
             if (wide && !starts(name, "s_lsh") && !starts(name, "s_ashr") && lanes(known, first) &&
                 lanes(known, second))
@@ -1181,6 +1191,10 @@ class Translator {
                         known[data + n] = {Known::root, placed->parameter, 0, place - placed->at};
                 }
             }
+            if (starts(name, "s_load_dword") && from.kind == Known::streams)
+                for (std::uint32_t n = 0; n < words; ++n)
+                    if (data + n < 128)
+                        known[data + n] = {Known::stream, (ins.w1 & 0x1fffff) / 16, 0, n};
             if (starts(name, "s_load_dword") && from.kind == Known::table) {
                 Known loaded{Known::descriptor, from.value, ins.w1 & 0x1fffff};
                 loaded.origin = ins.at;
@@ -1491,6 +1505,7 @@ class Translator {
             emit_image(ins);
             break;
         case F::mubuf:
+        case F::mtbuf: // the same fields, and a format of its own
             emit_buffer(ins);
             break;
         case F::exp:
@@ -1974,6 +1989,11 @@ class Translator {
                 resource.stride = known_[reg + 1].stride;
             return resource;
         }
+        if (known.kind == Known::stream && known.part == 0) {
+            Resource resource{0u, known.value, 0u};
+            resource.stream = true;
+            return resource;
+        }
         if (known.kind != Known::descriptor || known.part != 0)
             give_up("a resource that is not a descriptor of a table");
         const auto &ranges = parameters_[known.value].ranges;
@@ -2139,6 +2159,8 @@ class Translator {
                 }
                 return;
             }
+            if (from.kind == Known::streams)
+                return; // a vertex stream's descriptor, which stands for the stream
             if (from.kind != Known::table)
                 give_up("a load from memory that is not a descriptor of a table");
             // where in the table is only known when the shader runs
@@ -3920,6 +3942,58 @@ class Translator {
         const auto address = ins.w1 & 0xff, data = (ins.w1 >> 8) & 0xff;
         const auto base = ((ins.w1 >> 16) & 0x1f) * 4, scalar_offset = ins.w1 >> 24;
         const auto resource = resource_of(base);
+        if (resource.stream) {
+            // an input of the vertex, by where it is in the stream's vertices
+            const bool raw = starts(name, "buffer_load_dword");
+            const bool typed = starts(name, "tbuffer_load_format_");
+            if ((!starts(name, "buffer_load_format_") && !raw && !typed) || !has_index ||
+                has_offset)
+                give_up("a vertex stream read another way than as an input (" + std::string(name) +
+                        ")");
+            const auto rest = name.substr(17);
+            const auto components =
+                !raw           ? static_cast<std::uint32_t>(name.size() - (typed ? 20 : 19))
+                : rest.empty() ? 1u
+                : rest == "x2" ? 2u
+                : rest == "x3" ? 3u
+                               : 4u;
+            const auto &inputs = shader_.inputs;
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                const auto &element = inputs[i];
+                if (generated(element) || element.stream != resource.reg ||
+                    element.offset != offset)
+                    continue;
+                // the words as they lie in the vertex: of four bytes, the bytes again
+                if (raw && element.format >= 27 && element.format <= 32 && components == 1) {
+                    const auto field = "input.f" + std::to_string(i);
+                    const bool whole = element.format == 30 || element.format == 32;
+                    const bool is_signed = element.format == 31 || element.format == 32;
+                    const std::string scale = is_signed ? "127.0" : "255.0";
+                    const auto bytes = whole ? "uint4(" + field + ")"
+                                             : "uint4(int4(round(" + field + " * " + scale + ")))";
+                    const auto id = "x" + std::to_string(temporaries_++);
+                    line("uint4 " + id + " = " + bytes + " & 255u;");
+                    set_v(data, id + ".x | (" + id + ".y << 8) | (" + id + ".z << 16) | (" + id +
+                                    ".w << 24)");
+                    return;
+                }
+                if (raw && components != element.width)
+                    give_up("a vertex stream read as " + std::to_string(components) +
+                            " words where the input layout has format " +
+                            std::to_string(element.format));
+                for (std::uint32_t c = 0; c < components; ++c) {
+                    const auto field = "input.f" + std::to_string(i) +
+                                       (element.width > 1 ? std::string(".") + "xyzw"[c] : "");
+                    set_v(data + c, c >= element.width  ? (c == 3 ? "0x3f800000u" : "0u")
+                                    : element.type == 3 ? u(field)
+                                                        : "(uint)" + field);
+                }
+                return;
+            }
+            give_up("a vertex stream read where the input layout has nothing");
+        }
+        if (ins.format == F::mtbuf)
+            give_up(std::string(name));
         const std::string guard = exec_changes_ ? "if " + active() + " " : "";
         std::string index = "0u", extra = hex(offset);
         std::uint32_t fixed = offset;
@@ -4185,7 +4259,7 @@ class Translator {
     std::string finish() {
         if (stage_ != Stage::compute && !exported_)
             give_up("nothing exported");
-        if (stage_ == Stage::vertex && !fetched_ && !shader_.inputs.empty())
+        if (stage_ == Stage::vertex && !fetched_ && !shader_.inputs.empty() && !shader_.streams)
             give_up("a vertex shader that does not fetch its inputs");
         std::string text = helpers;
         if (uses_words_)
