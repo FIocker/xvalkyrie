@@ -1202,8 +1202,82 @@ void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFE
         self, desc ? &host : nullptr, host_handle(handle));
     mark_host(handle);
 }
+// What a view without a format reads a typeless texture as: the console takes the number
+// format from elsewhere, the host wants it in the view. `srgb` picks the gamma twin.
+DXGI_FORMAT typed_format(DXGI_FORMAT format, bool srgb = false) {
+    switch (format) {
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    case DXGI_FORMAT_R32G32B32_TYPELESS:
+        return DXGI_FORMAT_R32G32B32_FLOAT;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case DXGI_FORMAT_R32G32_TYPELESS:
+        return DXGI_FORMAT_R32G32_FLOAT;
+    case DXGI_FORMAT_R32G8X24_TYPELESS:
+        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+        return DXGI_FORMAT_R10G10B10A2_UNORM;
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+        return srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_R16G16_TYPELESS:
+        return DXGI_FORMAT_R16G16_FLOAT;
+    case DXGI_FORMAT_R32_TYPELESS:
+        return DXGI_FORMAT_R32_FLOAT;
+    case DXGI_FORMAT_R24G8_TYPELESS:
+        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case DXGI_FORMAT_R8G8_TYPELESS:
+        return DXGI_FORMAT_R8G8_UNORM;
+    case DXGI_FORMAT_R16_TYPELESS:
+        return DXGI_FORMAT_R16_UNORM;
+    case DXGI_FORMAT_R8_TYPELESS:
+        return DXGI_FORMAT_R8_UNORM;
+    case DXGI_FORMAT_BC1_TYPELESS:
+        return srgb ? DXGI_FORMAT_BC1_UNORM_SRGB : DXGI_FORMAT_BC1_UNORM;
+    case DXGI_FORMAT_BC2_TYPELESS:
+        return srgb ? DXGI_FORMAT_BC2_UNORM_SRGB : DXGI_FORMAT_BC2_UNORM;
+    case DXGI_FORMAT_BC3_TYPELESS:
+        return srgb ? DXGI_FORMAT_BC3_UNORM_SRGB : DXGI_FORMAT_BC3_UNORM;
+    case DXGI_FORMAT_BC4_TYPELESS:
+        return DXGI_FORMAT_BC4_UNORM;
+    case DXGI_FORMAT_BC5_TYPELESS:
+        return DXGI_FORMAT_BC5_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+        return srgb ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+        return srgb ? DXGI_FORMAT_B8G8R8X8_UNORM_SRGB : DXGI_FORMAT_B8G8R8X8_UNORM;
+    case DXGI_FORMAT_BC6H_TYPELESS:
+        return DXGI_FORMAT_BC6H_UF16;
+    case DXGI_FORMAT_BC7_TYPELESS:
+        return srgb ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
+    default:
+        return format;
+    }
+}
 void STDMETHODCALLTYPE create_srv(ID3D12Device *self, ID3D12Resource *resource, const void *desc,
                                   Handle handle) {
+    // The console views a multisampled texture as a plain one and a typeless one without a
+    // format; the host removes the device over either
+    D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+    if (resource && desc) {
+        std::memcpy(&view, desc, sizeof view);
+        const auto of = resource->GetDesc();
+        if (of.SampleDesc.Count > 1 && view.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D) {
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
+            desc = &view;
+        } else if (of.SampleDesc.Count > 1 &&
+                   view.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2DARRAY) {
+            const auto slices = view.Texture2DArray;
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY;
+            view.Texture2DMSArray = {slices.FirstArraySlice, slices.ArraySize};
+            desc = &view;
+        }
+        if (view.Format == DXGI_FORMAT_UNKNOWN && of.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
+            typed_format(of.Format) != of.Format) {
+            view.Format = typed_format(of.Format);
+            desc = &view;
+        }
+    }
     original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, 18)(
         self, resource, desc, host_handle(handle));
     mark_host(handle);
@@ -1213,6 +1287,68 @@ void STDMETHODCALLTYPE create_uav(ID3D12Device *self, ID3D12Resource *resource,
     original<void(STDMETHODCALLTYPE *)(void *, void *, void *, const void *, Handle)>(self, 19)(
         self, resource, counter, desc, host_handle(handle));
     mark_host(handle);
+}
+// Xbox One's CreatePlacedShaderResourceViewX (46) and CreatePlacedUnorderedAccessViewX (47):
+// the console's descriptions begin as the host's do and go on with where the memory is and
+// how the hardware reads it, which the host's resource already says
+void STDMETHODCALLTYPE create_placed_srv(ID3D12Device *self, ID3D12Resource *resource,
+                                         const void *desc, Handle handle) {
+    if (!resource)
+        return;
+    // the number format after the host's fields and the memory's address: 9 is sRGB
+    D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+    if (desc) {
+        std::memcpy(&view, desc, sizeof view);
+        std::uint32_t number = 0;
+        std::memcpy(&number, static_cast<const std::uint8_t *>(desc) + sizeof view + 12,
+                    sizeof number);
+        const auto of = resource->GetDesc();
+        if (view.Format == DXGI_FORMAT_UNKNOWN && of.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)
+            view.Format = typed_format(of.Format, number == 9);
+    }
+    create_srv(self, resource, desc ? &view : nullptr, handle);
+}
+void STDMETHODCALLTYPE create_placed_uav(ID3D12Device *self, ID3D12Resource *resource,
+                                         const void *desc, Handle handle) {
+    if (resource)
+        create_uav(self, resource, nullptr, desc, handle);
+}
+// GetDefaultMSAAParametersX (59): the standard pattern of the sample count, in sixteenths of
+// a pixel from its centre, the same for the four pixels of a quad
+HRESULT STDMETHODCALLTYPE default_msaa_parameters(void *, const DXGI_SAMPLE_DESC *samples,
+                                                  std::int8_t (*locations)[16][2],
+                                                  std::uint8_t *priorities,
+                                                  std::uint32_t *parameters) {
+    if (!samples || !std::has_single_bit(samples->Count) || samples->Count > 16)
+        return E_INVALIDARG;
+    static constexpr std::int8_t one[][2]{{0, 0}};
+    static constexpr std::int8_t two[][2]{{4, 4}, {-4, -4}};
+    static constexpr std::int8_t four[][2]{{-2, -6}, {6, -2}, {-6, 2}, {2, 6}};
+    static constexpr std::int8_t eight[][2]{{1, -3}, {-1, 3},  {5, 1}, {-3, -5},
+                                            {-5, 5}, {-7, -1}, {3, 7}, {7, -7}};
+    static constexpr std::int8_t sixteen[][2]{
+        {1, 1},  {-1, -3}, {-3, 2},  {4, -1}, {-5, -2}, {2, 5},  {5, 3}, {3, -5},
+        {-2, 6}, {0, -7},  {-4, -6}, {-6, 4}, {-8, 0},  {7, -4}, {6, 7}, {-7, -8}};
+    const std::int8_t(*const pattern)[2] = samples->Count == 1   ? one
+                                           : samples->Count == 2 ? two
+                                           : samples->Count == 4 ? four
+                                           : samples->Count == 8 ? eight
+                                                                 : sixteen;
+    if (locations)
+        for (int pixel = 0; pixel < 4; ++pixel) {
+            std::memset(locations[pixel], 0, sizeof locations[pixel]);
+            std::memcpy(locations[pixel], pattern, samples->Count * 2);
+        }
+    if (priorities)
+        for (std::uint8_t i = 0; i < 16; ++i)
+            priorities[i] = static_cast<std::uint8_t>(i % samples->Count);
+    if (parameters) {
+        // every sample is a colour sample the pixel shader sees
+        const auto log2 = static_cast<std::uint32_t>(std::countr_zero(samples->Count));
+        parameters[0] = log2 | 8u << 3 | log2 << 7;
+        parameters[1] = log2 | log2 << 3 | log2 << 6 | log2 << 9;
+    }
+    return S_OK;
 }
 // the resource behind each render target view, for XV_D3D_PROBE
 std::mutex target_mutex;
@@ -1660,9 +1796,20 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                 REFIID, void **);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC host{};
     ID3D12RootSignature *from_shader = nullptr;
+    std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
     if (desc) {
         host = *desc;
         host.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+        // The console's R10G10B10_SNORM_A2_UNORM (189), what packed normals are in, is no
+        // vertex format of the host's: its bits are read unsigned there
+        if (host.InputLayout.pInputElementDescs) {
+            elements.assign(host.InputLayout.pInputElementDescs,
+                            host.InputLayout.pInputElementDescs + host.InputLayout.NumElements);
+            for (auto &element : elements)
+                if (element.Format == static_cast<DXGI_FORMAT>(189))
+                    element.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+            host.InputLayout.pInputElementDescs = elements.data();
+        }
         host.PrimitiveTopologyType = host_topology_type(host.PrimitiveTopologyType);
         const auto geometry = host.PrimitiveTopologyType == D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT
                                   ? modules::ShaderStage::geometry_points
@@ -2258,10 +2405,14 @@ HRESULT STDMETHODCALLTYPE close_list(void *self) {
 }
 // ResourceBarrier: transitions name states the console's way. GENERIC_READ is 0x8c3 there,
 // and bit 0x400000 goes with the states shaders read in; on the host that bit is a ray
-// tracing acceleration structure, which is no state to be combined with another.
+// tracing acceleration structure, which is no state to be combined with another. Xbox One
+// has more of its own from there up (what stays compressed or expanded across the
+// transition), where the host has video and shading rate states.
 D3D12_RESOURCE_STATES host_state(D3D12_RESOURCE_STATES state) {
     if (state == static_cast<D3D12_RESOURCE_STATES>(0x8c3))
         return D3D12_RESOURCE_STATE_GENERIC_READ;
+    if (console == Target::durango)
+        return state & ~static_cast<D3D12_RESOURCE_STATES>(0x0fd00000);
     constexpr auto structure = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
     state &= ~static_cast<D3D12_RESOURCE_STATES>(0x100000);
     return state & structure && state != structure ? state & ~structure : state;
@@ -2767,23 +2918,10 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
 // buffer or not. An address that is memory of the title's and in no buffer here is copied
 // into a buffer of ours, which is what the host is given: 64 KiB of it, or as much as is
 // there. The copies go round a ring, which a frame does not come near filling.
-std::uint64_t root_address(std::uint64_t address) {
-    if (!address)
-        return 0;
-    {
-        const std::lock_guard lock(buffer_mutex);
-        auto found = mapped_at.upper_bound(address);
-        if (found != mapped_at.begin() && address < std::prev(found)->second.end)
-            return std::prev(found)->second.gpu + (address - std::prev(found)->first);
-        auto buffer = buffers_at.upper_bound(address);
-        if (buffer != buffers_at.begin() && address < std::prev(buffer)->second.end)
-            return address;
-    }
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) ||
-        info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
-        return address;
-    constexpr std::uint64_t ring_size = 256ull << 20, most = 64 << 10;
+constexpr std::uint64_t most_copied = 64 << 10;
+// the GPU address of a copy of `bytes` (most_copied at most) at `source`, 0 if there is no ring
+std::uint64_t ring_copy(const void *source, std::uint64_t bytes) {
+    constexpr std::uint64_t ring_size = 256ull << 20, most = most_copied;
     static std::mutex mutex;
     static ID3D12Resource *ring = nullptr;
     static std::uint8_t *memory = nullptr;
@@ -2805,28 +2943,74 @@ std::uint64_t root_address(std::uint64_t address) {
                                                    IID_PPV_ARGS(&ring))) ||
             FAILED(ring->Map(0, nullptr, &mapped))) {
             ring = nullptr;
-            return address;
+            return 0;
         }
         memory = static_cast<std::uint8_t *>(mapped);
-        std::fprintf(stderr, "[Runtime] root descriptors on memory that is no buffer are copied "
-                             "into one of the host's\n");
+        std::fprintf(stderr, "[Runtime] root descriptors the host cannot take where they are are "
+                             "copied into a buffer of its own\n");
         std::fflush(stderr);
     }
-    const auto region_end = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
-    const auto bytes = std::min(most, region_end - address);
+    bytes = std::min(bytes, most);
     if (next + most > ring_size)
         next = 0;
     const auto at = next;
     next += (bytes + 255) & ~255ull;
-    std::memcpy(memory + at, reinterpret_cast<const void *>(address), bytes);
+    std::memcpy(memory + at, source, bytes);
     return ring->GetGPUVirtualAddress() + at;
+}
+std::uint64_t root_address(std::uint64_t address) {
+    if (!address)
+        return 0;
+    {
+        const std::lock_guard lock(buffer_mutex);
+        auto found = mapped_at.upper_bound(address);
+        if (found != mapped_at.begin() && address < std::prev(found)->second.end)
+            return std::prev(found)->second.gpu + (address - std::prev(found)->first);
+        auto buffer = buffers_at.upper_bound(address);
+        if (buffer != buffers_at.begin() && address < std::prev(buffer)->second.end)
+            return address;
+    }
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) ||
+        info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return address;
+    const auto region_end = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
+    const auto copy = ring_copy(reinterpret_cast<const void *>(address), region_end - address);
+    return copy ? copy : address;
+}
+// A constant buffer starts anywhere on the console and on a multiple of 256 bytes on the
+// host, which turns the whole list down for one that does not. What a buffer the CPU can
+// read holds from such an address on is copied to where the host takes it.
+std::uint64_t root_constants(std::uint64_t address) {
+    const auto host = root_address(address);
+    if (!(host & 255))
+        return host;
+    ID3D12Resource *buffer = nullptr;
+    std::uint64_t start = 0, end = 0;
+    {
+        const std::lock_guard lock(buffer_mutex);
+        const auto found = buffers_at.upper_bound(host);
+        if (found == buffers_at.begin() || host >= std::prev(found)->second.end)
+            return host;
+        start = std::prev(found)->first;
+        end = std::prev(found)->second.end;
+        buffer = std::prev(found)->second.resource;
+    }
+    void *memory = nullptr;
+    const D3D12_RANGE nothing_read{0, 0};
+    if (FAILED(buffer->Map(0, &nothing_read, &memory)) || !memory)
+        return host;
+    const auto copy =
+        ring_copy(static_cast<const std::uint8_t *>(memory) + (host - start), end - host);
+    buffer->Unmap(0, &nothing_read);
+    return copy ? copy : host;
 }
 void STDMETHODCALLTYPE set_graphics_root_cbv(void *self, UINT index, std::uint64_t address) {
     trace_address("SetGraphicsRootConstantBufferView", address);
-    host_of(self)->SetGraphicsRootConstantBufferView(index, root_address(address));
+    host_of(self)->SetGraphicsRootConstantBufferView(index, root_constants(address));
 }
 void STDMETHODCALLTYPE set_compute_root_cbv(void *self, UINT index, std::uint64_t address) {
-    host_of(self)->SetComputeRootConstantBufferView(index, root_address(address));
+    host_of(self)->SetComputeRootConstantBufferView(index, root_constants(address));
 }
 void STDMETHODCALLTYPE set_compute_root_srv(void *self, UINT index, std::uint64_t address) {
     host_of(self)->SetComputeRootShaderResourceView(index, root_address(address));
@@ -3954,6 +4138,9 @@ HRESULT WINAPI xbox_create_device(void *, const UINT *parameters, REFIID iid, vo
         for (std::size_t slot = 87; slot <= 92; ++slot)
             overrides.push_back({slot, later[slot - 87]});
         overrides.push_back({90, reinterpret_cast<Slot>(&create_pipeline_state)});
+        overrides.push_back({46, reinterpret_cast<Slot>(&create_placed_srv)});
+        overrides.push_back({47, reinterpret_cast<Slot>(&create_placed_uav)});
+        overrides.push_back({59, reinterpret_cast<Slot>(&default_msaa_parameters)});
     } else {
         for (std::size_t slot = 83; slot <= 103; ++slot)
             overrides.push_back({slot, later[slot - 83]});
