@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
+#include <vector>
 #include <windows.h>
 
 #include <mmdeviceapi.h>
@@ -148,6 +149,40 @@ std::wstring console_path(const wchar_t *name) {
             auto inside = (package / path.substr(3)).wstring();
             if (GetFileAttributesW(inside.c_str()) != INVALID_FILE_ATTRIBUTES)
                 return inside;
+        }
+    }
+    // Any other drive of the console is a folder of its own, kept apart for each title:
+    // nand\<title>\disk_<letter> in the configuration folder. Paths the host handed out
+    // stay the host's: the title's dump, the user's folders, the system's.
+    if (path.size() > 2 && path[1] == L':' && (path[2] == L'\\' || path[2] == L'/') &&
+        iswalpha(path[0]) && !save_directory().empty()) {
+        static const std::vector<std::wstring> hosts = [] {
+            std::vector<std::wstring> folders;
+            std::error_code ignored;
+            folders.push_back(
+                package_directory(std::filesystem::current_path(ignored)).parent_path().wstring());
+            // profiles\<profile>\saves\<title>, in the configuration folder
+            folders.push_back(
+                save_directory().parent_path().parent_path().parent_path().parent_path().wstring());
+            for (const auto *variable : {L"USERPROFILE", L"SystemRoot", L"ProgramData", L"TEMP"})
+                if (const auto *value = _wgetenv(variable); value && *value)
+                    folders.emplace_back(value);
+            return folders;
+        }();
+        std::wstring plain(path);
+        std::replace(plain.begin(), plain.end(), L'/', L'\\');
+        const auto inside = [&](const std::wstring &folder) {
+            return plain.size() >= folder.size() &&
+                   CompareStringOrdinal(plain.data(), static_cast<int>(folder.size()),
+                                        folder.data(), static_cast<int>(folder.size()),
+                                        TRUE) == CSTR_EQUAL;
+        };
+        if (std::none_of(hosts.begin(), hosts.end(), inside)) {
+            const auto disk = std::filesystem::path(hosts[1]) / "nand" /
+                              save_directory().filename() /
+                              (std::wstring(L"disk_") + static_cast<wchar_t>(towlower(path[0])));
+            std::filesystem::create_directories(disk, error);
+            return (disk / path.substr(3)).wstring();
         }
     }
     return std::wstring(path);
