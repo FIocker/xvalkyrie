@@ -64,14 +64,26 @@ HMODULE WINAPI load_library_a(const char *name) { return load_library_ex_a(name,
 BOOL WINAPI read_file(HANDLE file, void *buffer, DWORD bytes, DWORD *read, OVERLAPPED *overlapped) {
     prepare_title_write(buffer, bytes);
     const auto result = ReadFile(file, buffer, bytes, read, overlapped);
-    // XV_FILE_TRACE: a read the host turns down
+    // XV_FILE_TRACE: the reads at an offset and those the host turns down, with what came of
+    // each. A read that goes well leaves the last error as it was, so only one that fails has
+    // an error to show; one of a handle opened for overlapped reads may still be pending.
     if (static const bool trace = std::getenv("XV_FILE_TRACE") != nullptr;
         trace && (overlapped || !result)) {
         const auto error = GetLastError();
-        std::fprintf(stderr, "[Runtime] ReadFile(%p, %lu bytes at %llx, buffer %p): error %lu\n",
-                     file, bytes,
+        char outcome[32];
+        if (result)
+            std::snprintf(outcome, sizeof outcome, "%lu bytes read",
+                          read         ? *read
+                          : overlapped ? static_cast<DWORD>(overlapped->InternalHigh)
+                                       : 0);
+        else if (error == ERROR_IO_PENDING)
+            std::snprintf(outcome, sizeof outcome, "pending");
+        else
+            std::snprintf(outcome, sizeof outcome, "error %lu", error);
+        std::fprintf(stderr, "[Runtime] ReadFile(%p, %lu bytes at %llx, buffer %p): %s\n", file,
+                     bytes,
                      overlapped ? ULONGLONG{overlapped->OffsetHigh} << 32 | overlapped->Offset : 0,
-                     buffer, error);
+                     buffer, outcome);
         std::fflush(stderr);
         SetLastError(error);
     }
