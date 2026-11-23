@@ -75,3 +75,10 @@ at commit `5736b15f7ea0ffb08dd38af21067c314d6a3aae9` (MIT/public domain).
 The interface font is Roboto Medium (Apache License 2.0, Google), taken from
 `misc/fonts` of Dear ImGui and built into the executable. The logo uses
 ProggyClean (MIT, Tristan Grimmer), Dear ImGui's built-in font.
+
+## DirectX 12 Agility SDK (Microsoft, its own license)
+
+The build fetches the NuGet package `Microsoft.Direct3D.D3D12` 1.620.2 and copies its
+`D3D12Core.dll` to `D3D12\` next to `xvboot.exe`, which uses it in place of an older
+Direct3D 12 runtime of the system when it is there. It is not part of the source and not
+in the release archives; the package's `LICENSE.txt` has its terms.
