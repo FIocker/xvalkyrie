@@ -248,6 +248,36 @@ HRESULT STDMETHODCALLTYPE create_buffer(void *self, const D3D11_BUFFER_DESC *des
         *buffer = static_cast<ID3D11Buffer *>(wrap(created, Kind::buffer));
     return result;
 }
+// CreateInputLayout (11): the console's R10G10B10_SNORM_A2_UNORM (189), what packed normals
+// are in, is no vertex format of the host's. Its bits are read unsigned there.
+HRESULT STDMETHODCALLTYPE create_input_layout(void *self, const D3D11_INPUT_ELEMENT_DESC *elements,
+                                              UINT count, const void *code, SIZE_T size,
+                                              ID3D11InputLayout **layout) {
+    std::vector<D3D11_INPUT_ELEMENT_DESC> host(elements, elements + (elements ? count : 0));
+    for (auto &element : host)
+        if (element.Format == static_cast<DXGI_FORMAT>(189))
+            element.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+    ID3D11InputLayout *created = nullptr;
+    const auto result =
+        static_cast<ID3D11Device *>(unwrap(self))
+            ->CreateInputLayout(host.data(), count, code, size, layout ? &created : nullptr);
+    if (FAILED(result)) {
+        std::fprintf(stderr,
+                     "[Runtime] CreateInputLayout: 0x%08lx, signature of %zu bytes%s, elements:",
+                     static_cast<unsigned long>(result), size,
+                     code && size >= 4 && !std::memcmp(code, "DXBC", 4) ? "" : " (not DXBC)");
+        for (const auto &element : host)
+            std::fprintf(
+                stderr, " %s%u/%u@%u+%u(%u,%u)", element.SemanticName, element.SemanticIndex,
+                static_cast<unsigned>(element.Format), element.InputSlot, element.AlignedByteOffset,
+                static_cast<unsigned>(element.InputSlotClass), element.InstanceDataStepRate);
+        std::fprintf(stderr, "\n");
+        std::fflush(stderr);
+    } else if (layout) {
+        *layout = static_cast<ID3D11InputLayout *>(wrap(created, Kind::child));
+    }
+    return result;
+}
 // CreateTexture3D (6), likewise
 HRESULT STDMETHODCALLTYPE create_texture3d(void *self, const D3D11_TEXTURE3D_DESC *desc,
                                            const D3D11_SUBRESOURCE_DATA *data,
@@ -693,7 +723,7 @@ Layout device() {
     result.vtable[7] = custom(&create_shader_resource_view);
     result.vtable[9] = custom(&create_render_target_view);
     result.vtable[10] = custom(&create_depth_stencil_view);
-    set(11, {created(5, Kind::child)});               // input layout
+    result.vtable[11] = custom(&create_input_layout);
     for (std::size_t slot : {12, 13, 15, 16, 17, 18}) // shaders
         set(slot, {in(3), created(4, Kind::child)});
     set(14, {in(8), created(9, Kind::child)});      // geometry shader with stream output
@@ -1523,7 +1553,43 @@ Layout early_layout(const Layout &later, Kind kind) {
         result.object[host + 122] = methods[host];
     return result;
 }
-std::atomic<bool> early_dxgi{false};
+const Layout &layout_of_later(Kind kind);
+// The launch kit, whose interfaces are still the desktop's: device children have no console
+// method after ID3D11DeviceChild's, resources none before their own, and the device has no
+// SetPrivateDataInterfaceGraphics. What the console added follows the desktop's methods.
+Layout launch_layout(const Layout &later, Kind kind) {
+    auto result = later;
+    if (kind == Kind::swap_chain || kind == Kind::dma || kind == Kind::compute)
+        return result;
+    // the console's own methods alone, from the third: CreateDmaEngineContext is the device's
+    // first there (GetImmediateContextX is not there yet), the PIX events the context's
+    if (kind == Kind::device_x || kind == Kind::context_x) {
+        const auto &whole = layout_of_later(kind == Kind::device_x ? Kind::device : Kind::context);
+        const std::size_t first = kind == Kind::device_x ? 56 : 141;
+        result = Layout{kind == Kind::device_x ? "device (console methods)"
+                                               : "context (console methods)"};
+        for (std::size_t slot = 3; slot + first - 3 < whole.vtable.size(); ++slot)
+            result.vtable[slot] = whole.vtable[slot + first - 3];
+        return result;
+    }
+    if (kind == Kind::device) {
+        for (std::size_t slot = 37; slot + 1 < result.vtable.size(); ++slot)
+            result.vtable[slot] = later.vtable[slot + 1];
+        return result;
+    }
+    const bool memory = kind == Kind::buffer || kind == Kind::texture1d ||
+                        kind == Kind::texture2d || kind == Kind::texture3d ||
+                        kind == Kind::resource;
+    for (std::size_t slot = 7; slot + 3 < result.vtable.size(); ++slot)
+        result.vtable[slot] = later.vtable[slot + (memory && slot >= 10 ? 3 : 2)];
+    return result;
+}
+std::atomic<int> kit_layout{0}; // 0 later kits, 1 the first ones, 2 the launch kit
+} // namespace
+
+namespace {
+const Layout *later_layouts = nullptr;
+const Layout &layout_of_later(Kind kind) { return later_layouts[static_cast<std::size_t>(kind)]; }
 } // namespace
 
 const Layout &layout(Kind kind) {
@@ -1546,6 +1612,8 @@ const Layout &layout(Kind kind) {
         child("device child", 6),
         dma(),
         compute(),
+        Layout{"device (console methods)"},
+        Layout{"context (console methods)"},
     };
     static const auto early = [] {
         std::array<Layout, std::size(layouts)> result;
@@ -1553,10 +1621,21 @@ const Layout &layout(Kind kind) {
             result[kind] = early_layout(layouts[kind], static_cast<Kind>(kind));
         return result;
     }();
-    return (early_dxgi ? early.data() : layouts)[static_cast<std::size_t>(kind)];
+    static const auto launch = [] {
+        later_layouts = layouts;
+        std::array<Layout, std::size(layouts)> result;
+        for (std::size_t kind = 0; kind < result.size(); ++kind)
+            result[kind] = launch_layout(layouts[kind], static_cast<Kind>(kind));
+        return result;
+    }();
+    const auto *const kit = kit_layout == 2   ? launch.data()
+                            : kit_layout == 1 ? early.data()
+                                              : layouts;
+    return kit[static_cast<std::size_t>(kind)];
 }
-void first_development_kits(bool yes) { early_dxgi = yes; }
-bool first_development_kits() { return early_dxgi; }
+void first_development_kits(bool yes, bool launch) { kit_layout = !yes ? 0 : launch ? 2 : 1; }
+bool first_development_kits() { return kit_layout != 0; }
+bool launch_kit() { return kit_layout == 2; }
 
 // Console-only interface IDs, as the system's d3d11_x.dll exports them. Titles use the
 // "performance" ones as the device and the context themselves.

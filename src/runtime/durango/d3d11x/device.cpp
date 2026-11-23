@@ -238,9 +238,10 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *device = nullptr;
     if (context)
         *context = nullptr;
-    dxgi_inserted = sdk < 0x20000 ? 5 : 0;
-    d3d11x::first_development_kits(dxgi_inserted != 0);
-    modules::early_audio_processor(dxgi_inserted != 0);
+    // the launch kit still passes the desktop's SDK version (7), and its DXGI is the desktop's
+    dxgi_inserted = sdk >= 0x10000 && sdk < 0x20000 ? 5 : 0;
+    d3d11x::first_development_kits(sdk < 0x20000, sdk < 0x10000);
+    modules::early_audio_processor(sdk < 0x20000);
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {
         std::fprintf(stderr,
@@ -252,7 +253,8 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
     // Console-only flag bits and the debug layer, which may not be installed, are dropped.
     const UINT host_flags =
         flags & (D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_BGRA_SUPPORT |
-                 D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS);
+                 D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS |
+                 D3D11_CREATE_DEVICE_VIDEO_SUPPORT);
     ID3D11Device1 *latest = nullptr;
     bool debug_layer = false;
     const bool vulkan = backend == graphics::Backend::vulkan;

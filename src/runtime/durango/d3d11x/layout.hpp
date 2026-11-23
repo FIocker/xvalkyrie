@@ -45,9 +45,11 @@ struct Layout {
 };
 const Layout &layout(Kind kind);
 // Whether the title was built with the first development kits, whose DXGI interfaces have
-// one more method than later ones: swap chains made from then on have their layout
-void first_development_kits(bool yes);
+// one more method than later ones: swap chains made from then on have their layout.
+// `launch` is the kit before those, with the desktop's interfaces.
+void first_development_kits(bool yes, bool launch = false);
 bool first_development_kits();
+bool launch_kit();
 // IDXGISwapChain::Present of a swap chain of ours
 long present_swap_chain(void *swap_chain, unsigned interval); // HRESULT
 // sets the events a title gave DXGIXSetFrameNotification; after each frame presented
