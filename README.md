@@ -11,7 +11,7 @@
 [![language](https://img.shields.io/badge/C%2B%2B-20-ec3630.svg)](CMakeLists.txt)
 [![platform](https://img.shields.io/badge/platform-Windows%20x64-ec3630.svg)](#building)
 
-[Status](#status) · [How it works](#how-it-works) · [Building](#building) · [Usage](#usage) · [Roadmap](ROADMAP.md)
+[Compatibility](#compatibility) · [Status](#status) · [How it works](#how-it-works) · [Building](#building) · [Usage](#usage) · [Roadmap](ROADMAP.md)
 
 </div>
 
@@ -33,19 +33,70 @@ What has to be translated is what differs from a PC:
 - memory, where a title owns physical pages and places resources on them itself;
 - the system services: users, saved games, the Gaming Runtime, WinRT on Xbox One.
 
+## Compatibility
+
+How far titles get when they are started. Every title that was tried, its state and what
+the states mean are in [COMPATIBILITY.md](COMPATIBILITY.md).
+
+**Xbox One**
+
+<table>
+  <tr>
+    <th>Rock Band 4</th>
+    <th>DRAGON BALL FighterZ</th>
+    <th>Terraria</th>
+    <th>Puyo Puyo Champions</th>
+    <th>Mega Man 11</th>
+  </tr>
+  <tr>
+    <td><img src="docs/img/compat/rock-band-4.png" alt="Rock Band 4" width="170"></td>
+    <td><img src="docs/img/compat/dragon-ball-fighterz.webp" alt="DRAGON BALL FighterZ" width="170"></td>
+    <td><img src="docs/img/compat/terraria.webp" alt="Terraria" width="170"></td>
+    <td><img src="docs/img/compat/puyo-puyo-champions.webp" alt="Puyo Puyo Champions" width="170"></td>
+    <td><img src="docs/img/compat/mega-man-11.png" alt="Mega Man 11" width="170"></td>
+  </tr>
+  <tr>
+    <td align="center">Boots</td>
+    <td align="center">Menu</td>
+    <td align="center">Menu</td>
+    <td align="center">Intro</td>
+    <td align="center">Boots</td>
+  </tr>
+</table>
+
+[+53 titles](COMPATIBILITY.md#xbox-one)
+
+**Xbox Series X|S**
+
+<table>
+  <tr>
+    <th>Fortnite</th>
+    <th>Unicorn Overlord</th>
+    <th>Minecraft Preview</th>
+    <th>XDefiant</th>
+    <th>Psychonauts 2</th>
+  </tr>
+  <tr>
+    <td><img src="docs/img/compat/fortnite.webp" alt="Fortnite" width="170"></td>
+    <td><img src="docs/img/compat/unicorn-overlord.webp" alt="Unicorn Overlord" width="170"></td>
+    <td><img src="docs/img/compat/minecraft.webp" alt="Minecraft Preview" width="170"></td>
+    <td><img src="docs/img/compat/xdefiant.png" alt="XDefiant" width="170"></td>
+    <td><img src="docs/img/compat/psychonauts-2.png" alt="Psychonauts 2" width="170"></td>
+  </tr>
+  <tr>
+    <td align="center">Intro</td>
+    <td align="center">Menu</td>
+    <td align="center">Menu</td>
+    <td align="center">Boots</td>
+    <td align="center">Boots</td>
+  </tr>
+</table>
+
+[+3 titles](COMPATIBILITY.md#xbox-series-xs)
+
 ## Status
 
-The project is experimental. It starts real titles of both consoles; it does not play them
-through.
-
-- **Xbox One.** ERA titles (Direct3D 11.X, WinRT) reach their menus and scenes with a
-  gamepad driven from the keyboard or XInput. Saved games, audio decoding and Xbox Live are
-  stubs or absent.
-- **Xbox Series X|S.** The 40 public GDK samples that build for Series all draw their
-  picture. Retail titles start, create their device and present frames. Their shaders are
-  translated from the GPU's machine code: of the 2004 shaders one retail title creates in its
-  first four minutes, 1966 translate and compile. The picture of those titles is not right
-  yet.
+The project is experimental. What it implements of each console, counted from the code:
 
 <!-- status:begin -->
 [![status map](docs/img/status.svg)](docs/STATUS.md)
@@ -154,6 +205,7 @@ Development switches are environment variables, described where they are used in
 | `tools/status.py` | The status block above, `docs/STATUS.md` and `docs/img/status.svg` |
 | `tools/rdna_ops.py` | The instruction table of the shader translator, from LLVM's disassembler |
 | `tools/import_xbdepends.py` | The lists of system DLLs and APIs a console title may use |
+| `tools/compat_images.py check\|fixall` | Nothing, or the screenshots of the table above made alike: 640x360 WebP, 100 KiB at most |
 
 ## FAQ
 
@@ -162,7 +214,7 @@ No. Nothing is emulated at the level of the hardware. A title's code runs on the
 as it is, and the console's libraries are reimplemented.
 
 **Can I play games with it?**
-Not yet. See the status above.
+[COMPATIBILITY.md](COMPATIBILITY.md) says how far each title that was tried gets.
 
 **Does it run on Linux?**
 No. It relies on Windows for the part of the console's system that is Windows.
