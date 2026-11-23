@@ -106,7 +106,13 @@ constexpr Row rows[] = {
     {store, current_app, 6, {Inert::object, license}},
     {license, direct, 7, {Inert::true8}},      // IsActive
     {license, direct, 8, {Inert::zero8}},      // IsTrial
+    {license, direct, 9, {Inert::never}},      // ExpirationDate
     {license, direct, 10, {Inert::event_add}}, // LicenseChanged
+    // the console's own interface of it: the user the license is for
+    {license,
+     guid("aa98c583-a3c8-4f51-a5bc-463ae0c23eaa"),
+     6,
+     {Inert::console_string, L"xbox_user_id"}},
 
     // one user, signed in from the start and for good
     {user, user_statics, 6, {Inert::shared_list, user}}, // Users
@@ -734,6 +740,17 @@ constexpr Row rows[] = {
     // IsChunkInstalled(chunk, bool *): the whole package is there
     {transfer_manager, direct, 7, {Inert::true8_at, nullptr, 2}},
     {transfer_manager, direct, 8, {Inert::event_add}},
+    {transfer_manager, direct, 9, {Inert::zero32_at, nullptr, 2}}, // FindChunkFromFile: the first
+    // IPackageTransferManagerForChunkSpecifiers::GetInstallationState, by chunks and by
+    // specifiers: what is asked about is installed
+    {transfer_manager,
+     guid("96130573-d1ad-468c-aa25-9967781fb2f3"),
+     7,
+     {Inert::zero32_at, nullptr, 2}},
+    {transfer_manager,
+     guid("96130573-d1ad-468c-aa25-9967781fb2f3"),
+     8,
+     {Inert::zero32_at, nullptr, 2}},
     {transfer_manager, direct, 10, {Inert::zero32}}, // read as 4 bytes; zero: nothing in transfer
     // ISpeechRecognizerFactory::Create(language, SpeechRecognizer **)
     {L"Windows.Xbox.Speech.Recognition.SpeechRecognizerFactory",

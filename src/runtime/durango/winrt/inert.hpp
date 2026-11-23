@@ -47,6 +47,8 @@ enum class Inert : std::uint8_t {
                         // result in `argument`
     null_at,            // HRESULT get(..., T **): nothing, in argument `argument`
     true8_at,           // HRESULT get(..., bool *): true, in argument `argument`
+    never,              // HRESULT get(DateTime *result): the latest time there is
+    zero32_at,          // HRESULT get(..., T *): 4 bytes of zero, in argument `argument`
     list_operation_at,  // like list_operation, with the result in argument `argument`
     failed_action_at,   // HRESULT start(..., IAsyncAction **) that fails with `error` at once
     failed_progress_at, // likewise, IAsyncOperationWithProgress<T, P> **

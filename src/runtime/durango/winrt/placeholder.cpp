@@ -186,6 +186,13 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             if (at)
                 *reinterpret_cast<std::uint8_t *>(at) = 1;
             break;
+        case Inert::never:
+            *static_cast<std::int64_t *>(first) = INT64_MAX;
+            break;
+        case Inert::zero32_at:
+            if (at)
+                *reinterpret_cast<std::uint32_t *>(at) = 0;
+            break;
         case Inert::true8:
             *static_cast<std::uint8_t *>(first) = 1;
             break;
