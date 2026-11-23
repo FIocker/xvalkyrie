@@ -3,12 +3,14 @@
 #include "runtime/modules/inflate.hpp"
 #include "runtime/modules/kernel.hpp"
 #include "runtime/modules/placement.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <intrin.h>
 #include <mutex>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -24,23 +26,29 @@
 // console's texture compression (BCPack) is not known here, and such a request fails.
 namespace xv::runtime::modules {
 namespace {
-constexpr GUID file_iid{
-    0x43704f9f, 0x27c6, 0x4a9f, {0x88, 0x15, 0xd1, 0x65, 0x27, 0x89, 0x4d, 0xf4}};
-constexpr GUID factory_iid{
-    0xfb3b54ac, 0xbf82, 0x463a, {0xb7, 0x77, 0x73, 0x19, 0x58, 0x37, 0x86, 0x4d}};
-constexpr GUID status_iid{
-    0xcd66d752, 0x2786, 0x44f7, {0x90, 0x70, 0xe2, 0xa6, 0xfd, 0xad, 0x3f, 0x1b}};
-constexpr GUID queue_iid{
-    0xa3f6649a, 0x8c2c, 0x4b3a, {0x8b, 0x6e, 0x10, 0x18, 0x6a, 0x04, 0xb9, 0xbc}};
+// The IIDs each object answers to. A newer kit gives the factory and the queue new IIDs: a
+// title built with the April 2026 kit (GXDK 10.0.26100.7901) asks DStorageGetFactory for the
+// second factory IID and the factory's slot 10 for the second queue IID, and asks for files
+// and status arrays with the same IIDs as before.
+constexpr GUID file_iids[]{
+    {0x43704f9f, 0x27c6, 0x4a9f, {0x88, 0x15, 0xd1, 0x65, 0x27, 0x89, 0x4d, 0xf4}}};
+constexpr GUID factory_iids[]{
+    {0xfb3b54ac, 0xbf82, 0x463a, {0xb7, 0x77, 0x73, 0x19, 0x58, 0x37, 0x86, 0x4d}},
+    {0x62959d11, 0xd45f, 0x4884, {0xa0, 0xa3, 0xf7, 0x86, 0x2e, 0xa2, 0x43, 0xae}}};
+constexpr GUID status_iids[]{
+    {0xcd66d752, 0x2786, 0x44f7, {0x90, 0x70, 0xe2, 0xa6, 0xfd, 0xad, 0x3f, 0x1b}}};
+constexpr GUID queue_iids[]{
+    {0xa3f6649a, 0x8c2c, 0x4b3a, {0x8b, 0x6e, 0x10, 0x18, 0x6a, 0x04, 0xb9, 0xbc}},
+    {0x3c02cb0c, 0xc050, 0x4195, {0x99, 0xa1, 0xa1, 0xce, 0x94, 0xba, 0x33, 0xc5}}};
 
 template <class Interface> class Object : public Interface {
   public:
-    explicit Object(const GUID &iid) : iid_(iid) {}
+    explicit Object(std::span<const GUID> iids) : iids_(iids) {}
     virtual ~Object() = default;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **object) override {
         if (!object)
             return E_POINTER;
-        if (iid != IID_IUnknown && iid != iid_) {
+        if (iid != IID_IUnknown && std::ranges::find(iids_, iid) == iids_.end()) {
             *object = nullptr;
             return E_NOINTERFACE;
         }
@@ -57,7 +65,7 @@ template <class Interface> class Object : public Interface {
     }
 
   private:
-    GUID iid_;
+    std::span<const GUID> iids_;
     std::atomic<ULONG> references_{1};
 };
 
@@ -76,6 +84,13 @@ struct QueueDesc {
     INT8 priority;
     const char *name;
 };
+// What the newer factory's slot 10 takes: the same description and 8 more bytes, which the
+// title above sets to 1. What they mean is not known; nothing here reads them.
+struct NewerQueueDesc {
+    QueueDesc desc;
+    UINT64 unknown;
+};
+static_assert(sizeof(QueueDesc) == 24 && offsetof(NewerQueueDesc, unknown) == 24);
 struct QueueInfo {
     QueueDesc desc;
     UINT16 empty_slots, until_submit;
@@ -118,11 +133,17 @@ struct FactoryInterface : IUnknown {
     virtual HRESULT SetCpuAffinity(UINT64 affinity) = 0;
     virtual void SetDebugFlags(UINT32 flags) = 0;
     virtual HRESULT SetStagingBufferSize(UINT32 size) = 0;
+    // Only the newer factory has these two. The title above never calls slot 9 through the
+    // factory it keeps, so what it does is not known. It makes its queue with slot 10:
+    // description, IID and out pointer, as slot 3 takes them.
+    virtual HRESULT UnknownSlot9() = 0;
+    virtual HRESULT CreateQueueFromNewerDesc(const NewerQueueDesc *desc, REFIID iid,
+                                             void **queue) = 0;
 };
 
 class File final : public Object<FileInterface> {
   public:
-    explicit File(HANDLE handle) : Object(file_iid), handle_(handle) {}
+    explicit File(HANDLE handle) : Object(file_iids), handle_(handle) {}
     ~File() override { Close(); }
     void Close() override {
         if (const auto handle = handle_.exchange(INVALID_HANDLE_VALUE);
@@ -137,7 +158,7 @@ class File final : public Object<FileInterface> {
 
 class Status final : public Object<StatusInterface> {
   public:
-    explicit Status(UINT32 capacity) : Object(status_iid), entries_(capacity) {}
+    explicit Status(UINT32 capacity) : Object(status_iids), entries_(capacity) {}
     bool IsComplete(UINT32 index) override {
         const std::lock_guard lock(mutex_);
         return index < entries_.size() && entries_[index].done;
@@ -225,7 +246,7 @@ HRESULT read(const Request &request) {
 class Queue final : public Object<QueueInterface> {
   public:
     explicit Queue(const QueueDesc &desc)
-        : Object(queue_iid), desc_(desc), name_(desc.name ? desc.name : ""),
+        : Object(queue_iids), desc_(desc), name_(desc.name ? desc.name : ""),
           error_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
         desc_.name = name_.c_str();
     }
@@ -369,7 +390,7 @@ class Queue final : public Object<QueueInterface> {
 
 class Factory final : public Object<FactoryInterface> {
   public:
-    Factory() : Object(factory_iid) {}
+    Factory() : Object(factory_iids) {}
     HRESULT CreateQueue(const QueueDesc *desc, REFIID iid, void **queue) override {
         if (!desc || !queue)
             return E_POINTER;
@@ -414,6 +435,18 @@ class Factory final : public Object<FactoryInterface> {
     HRESULT SetCpuAffinity(UINT64) override { return S_OK; }
     void SetDebugFlags(UINT32) override {}
     HRESULT SetStagingBufferSize(UINT32) override { return S_OK; }
+    HRESULT UnknownSlot9() override {
+        if (static std::atomic<bool> shown{false}; !shown.exchange(true))
+            std::fprintf(stderr, "[Runtime] DirectStorage: the factory's slot 9, which is not "
+                                 "known, is not done\n");
+        return E_NOTIMPL;
+    }
+    HRESULT CreateQueueFromNewerDesc(const NewerQueueDesc *desc, REFIID iid,
+                                     void **queue) override {
+        if (!desc)
+            return E_POINTER;
+        return CreateQueue(&desc->desc, iid, queue);
+    }
 };
 
 HRESULT WINAPI get_factory(const GUID *iid, void **factory) {
