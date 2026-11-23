@@ -49,6 +49,8 @@ constexpr wchar_t product[] = L"Windows.Xbox.ApplicationModel.Store.Product";
 constexpr auto product_statics = guid("76efb705-bdd4-4f6a-8d89-a9511d40afe7");
 constexpr wchar_t display_info[] = L"Windows.Xbox.System.UserDisplayInfo";
 constexpr wchar_t local_folder[] = L"Windows.Storage.StorageFolder";
+constexpr wchar_t web_socket[] = L"Windows.Networking.Sockets.MessageWebSocket";
+constexpr wchar_t web_control[] = L"Windows.Networking.Sockets.MessageWebSocketControl";
 constexpr wchar_t package_id[] = L"Windows.ApplicationModel.PackageId";
 constexpr wchar_t package_folder[] = L"Windows.Storage.StorageFolder.InstalledLocation";
 constexpr auto storage_item = guid("4207a996-ca2f-42f7-bde8-8b10457a7f30");
@@ -691,6 +693,29 @@ constexpr Row rows[] = {
     {L"Windows.Storage.ApplicationData", direct, 6, {Inert::shared, local_folder}},
     {local_folder, storage_item, 6, {Inert::console_string, L"local_folder_name"}},
     {local_folder, storage_item, 7, {Inert::console_string, L"local_folder"}},
+    // public IMessageWebSocket and IWebSocket: a socket that is made and set up, and whose
+    // connection fails, there being no network
+    {web_socket, guid("33727d08-34d5-4746-ad7b-8dde5bc2ef88"), 6, {Inert::object, web_control}},
+    {web_socket, guid("33727d08-34d5-4746-ad7b-8dde5bc2ef88"), 7, {Inert::object, web_control}},
+    {web_socket, guid("33727d08-34d5-4746-ad7b-8dde5bc2ef88"), 8, {Inert::event_add}},
+    {web_socket, guid("33727d08-34d5-4746-ad7b-8dde5bc2ef88"), 9, {Inert::accept}},
+    {web_socket, guid("f877396f-99b1-4e18-bc08-850c9adf156e"), 6, {Inert::zero64}},
+    {web_socket,
+     guid("f877396f-99b1-4e18-bc08-850c9adf156e"),
+     7,
+     {Inert::failed_action_at, nullptr, 2, static_cast<long>(0x800704d0)}},
+    {web_socket, guid("f877396f-99b1-4e18-bc08-850c9adf156e"), 8, {Inert::accept}},
+    {web_socket, guid("f877396f-99b1-4e18-bc08-850c9adf156e"), 9, {Inert::event_add}},
+    {web_socket, guid("f877396f-99b1-4e18-bc08-850c9adf156e"), 10, {Inert::accept}},
+    {web_socket, guid("f877396f-99b1-4e18-bc08-850c9adf156e"), 11, {Inert::accept}},
+    {web_control, direct, 6, {Inert::zero32}},
+    {web_control, direct, 7, {Inert::accept}},
+    {web_control, direct, 8, {Inert::zero32}},
+    {web_control, direct, 9, {Inert::accept}},
+    {web_control, guid("8118388a-11ab-4e11-8ea4-0e73e8bb0ef2"), 6, {Inert::zero32}},
+    {web_control, guid("8118388a-11ab-4e11-8ea4-0e73e8bb0ef2"), 7, {Inert::accept}},
+    {web_control, guid("8118388a-11ab-4e11-8ea4-0e73e8bb0ef2"), 8, {Inert::zero32}},
+    {web_control, guid("8118388a-11ab-4e11-8ea4-0e73e8bb0ef2"), 9, {Inert::accept}},
     // public IKeyboardCapabilities: KeyboardPresent, the host's keyboard is there
     {L"Windows.Devices.Input.KeyboardCapabilities",
      guid("3a3f9b56-6798-4bbc-833e-0f34b17c65ff"),
