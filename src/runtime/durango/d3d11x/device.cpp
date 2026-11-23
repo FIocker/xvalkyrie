@@ -77,8 +77,9 @@ HRESULT make_swap_chain(IDXGIFactory2 *factory, IUnknown *device,
         host.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     else if (host.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
         host.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    if (host.Scaling == DXGI_SCALING_ASPECT_RATIO_STRETCH)
-        host.Scaling = DXGI_SCALING_STRETCH;
+    // The console's screen is the size of the buffers; the title window is whatever size it
+    // is, and without scaling it shows the corner of the picture that fits in it.
+    host.Scaling = DXGI_SCALING_STRETCH;
     if (host.AlphaMode != DXGI_ALPHA_MODE_UNSPECIFIED && host.AlphaMode != DXGI_ALPHA_MODE_IGNORE)
         host.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
     const bool flip = host.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL ||
@@ -248,7 +249,10 @@ HRESULT WINAPI create_device(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT flag
         *context = nullptr;
     // the launch kit still passes the desktop's SDK version (7), and its DXGI is the desktop's
     dxgi_inserted = sdk >= 0x10000 && sdk < 0x20000 ? 5 : 0;
-    d3d11x::first_development_kits(sdk < 0x20000, sdk < 0x10000, sdk < 0x1000b);
+    d3d11x::first_development_kits(sdk < 0x20000, sdk < 0x10000,
+                                   sdk < 0x10005   ? 2
+                                   : sdk < 0x1000b ? 1
+                                                   : 0);
     modules::early_audio_processor(sdk < 0x20000);
     const auto backend = graphics::selected_backend();
     if (!graphics::backend_renders_titles(backend)) {

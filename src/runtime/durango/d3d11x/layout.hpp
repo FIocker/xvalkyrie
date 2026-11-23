@@ -51,9 +51,10 @@ struct Layout {
 const Layout &layout(Kind kind);
 // Whether the title was built with the first development kits, whose DXGI interfaces have
 // one more method than later ones: swap chains made from then on have their layout.
-// `launch` is the kit before those, with the desktop's interfaces; `earliest` the first of
-// the kits after it, whose context still has the desktop's whole table in the object.
-void first_development_kits(bool yes, bool launch = false, bool earliest = false);
+// `launch` is the kit before those, with the desktop's interfaces; `earliest` is 1 or 2 for
+// the two kits after it (the later one first), whose context still has the desktop's whole
+// table in the object.
+void first_development_kits(bool yes, bool launch = false, int earliest = 0);
 bool first_development_kits();
 bool launch_kit();
 // IDXGISwapChain::Present of a swap chain of ours

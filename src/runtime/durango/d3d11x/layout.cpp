@@ -1624,7 +1624,9 @@ Layout early_layout(const Layout &later, Kind kind) {
 // The first of those kits (SDK 1.5, seen in one title): the context's table inside the
 // object is the desktop's vtable as it is, primitive topology included, from word 54, and
 // its methods take the desktop's arguments.
-Layout earliest_layout(const Layout &later, Kind kind) {
+// The kit before (SDK 1.4) has that table right after the object's first words, from word
+// 5, and no flag is known for it.
+Layout earliest_layout(const Layout &later, Kind kind, std::size_t table) {
     auto result = early_layout(later, kind);
     // no ID3D11Device2 yet: the console's own methods follow ID3D11Device1's
     if (kind == Kind::device)
@@ -1633,19 +1635,19 @@ Layout earliest_layout(const Layout &later, Kind kind) {
     if (kind != Kind::context)
         return result;
     result.object = {};
-    result.table = 54;
+    result.table = table;
     const auto methods = context_methods();
     for (std::size_t host = 3; host < methods.size(); ++host)
         result.object[host + result.table] = methods[host];
     // the console's own follow the desktop's last (133) at once: 77 words before the later
     // kits', going by OMSetDepthStencilStateX, MakeCeSpace and SetFastResources_Debug
-    constexpr std::size_t console = 134 + 54, earlier = 77;
+    const std::size_t console = 134 + table, earlier = 131 - table;
     for (std::size_t index = console; index + earlier < later.object.size(); ++index)
         result.object[index] = later.object[index + earlier];
     result.object[210 + 124 - earlier] = custom(&set_fast_resources_earliest);
     // no state is left in the object by this kit's headers, and its flag is where the later
     // ones keep theirs of what changed
-    result.out_of_line = 0x168;
+    result.out_of_line = table == 54 ? 0x168 : 0;
     result.apply_state = [](void *self) {
         upload_placements(static_cast<ID3D11DeviceContext *>(unwrap(self)));
         restore_pixel_views(self);
@@ -1731,17 +1733,24 @@ const Layout &layout(Kind kind) {
     static const auto earliest = [] {
         std::array<Layout, std::size(layouts)> result;
         for (std::size_t kind = 0; kind < result.size(); ++kind)
-            result[kind] = earliest_layout(layouts[kind], static_cast<Kind>(kind));
+            result[kind] = earliest_layout(layouts[kind], static_cast<Kind>(kind), 54);
+        return result;
+    }();
+    static const auto before = [] {
+        std::array<Layout, std::size(layouts)> result;
+        for (std::size_t kind = 0; kind < result.size(); ++kind)
+            result[kind] = earliest_layout(layouts[kind], static_cast<Kind>(kind), 5);
         return result;
     }();
     const auto *const kit = kit_layout == 2   ? launch.data()
                             : kit_layout == 3 ? earliest.data()
+                            : kit_layout == 4 ? before.data()
                             : kit_layout == 1 ? early.data()
                                               : layouts;
     return kit[static_cast<std::size_t>(kind)];
 }
-void first_development_kits(bool yes, bool launch, bool earliest) {
-    kit_layout = !yes ? 0 : launch ? 2 : earliest ? 3 : 1;
+void first_development_kits(bool yes, bool launch, int earliest) {
+    kit_layout = !yes ? 0 : launch ? 2 : earliest ? 2 + earliest : 1;
 }
 bool first_development_kits() { return kit_layout != 0; }
 bool launch_kit() { return kit_layout == 2; }
