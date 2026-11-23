@@ -2020,6 +2020,10 @@ Layout early_layout(const Layout &later, Kind kind) {
     }
     for (std::size_t slot = 8; slot + 1 < result.vtable.size(); ++slot)
         result.vtable[slot] = result.vtable[slot + 1];
+    // what a resource has at 11 there is not known to be GetDescriptor, which writes a lot
+    if (kind == Kind::buffer || kind == Kind::texture1d || kind == Kind::texture2d ||
+        kind == Kind::texture3d || kind == Kind::resource)
+        result.vtable[11] = {};
     if (kind != Kind::context)
         return result;
     // the console's own methods (later slot 141 on) are three pointers earlier: two of them
