@@ -3933,6 +3933,37 @@ void STDMETHODCALLTYPE copyable_footprints(ID3D12Device *self, const D3D12_RESOU
             host.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         host.Alignment = 0;
     }
+    if (console == Target::durango && desc && count && count <= 16384) {
+        // The Xbox One has rows and subresources at multiples of 1024 bytes
+        // (D3D12XBOX_TEXTURE_DATA_PITCH_ALIGNMENT), which titles also write by without asking.
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placed(count);
+        std::vector<UINT> lines(count);
+        std::vector<UINT64> sizes(count);
+        UINT64 bytes = 0;
+        original<Get>(self, 38)(self, &host, first, count, 0, placed.data(), lines.data(),
+                                sizes.data(), &bytes);
+        if (bytes != ~0ull) {
+            UINT64 end = 0;
+            for (UINT i = 0; i < count; ++i) {
+                const auto pitch = (sizes[i] + 1023) & ~1023ull;
+                const auto start = (end + 1023) & ~1023ull;
+                placed[i].Offset = offset + start;
+                placed[i].Footprint.RowPitch = static_cast<UINT>(pitch);
+                const auto slices = std::max(placed[i].Footprint.Depth, 1u);
+                end = start + pitch * lines[i] * (slices - 1) +
+                      pitch * (std::max(lines[i], 1u) - 1) + sizes[i];
+            }
+            if (layouts)
+                std::copy(placed.begin(), placed.end(), layouts);
+            if (rows)
+                std::copy(lines.begin(), lines.end(), rows);
+            if (row_sizes)
+                std::copy(sizes.begin(), sizes.end(), row_sizes);
+            if (total)
+                *total = end;
+            return;
+        }
+    }
     original<Get>(self, 38)(self, desc ? &host : nullptr, first, count, offset, layouts, rows,
                             row_sizes, total);
     if (static std::atomic<bool> shown{false};
