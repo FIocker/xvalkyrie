@@ -3807,8 +3807,11 @@ void lost_draw(void *self, const char *method, UINT count) {
             if (const auto made = made_pipelines.find(static_cast<ListProxy *>(self)->pipeline);
                 made != made_pipelines.end())
                 kind = made->second.rfind("stream", 0) == 0
-                           ? "stream" + made->second.substr(made->second.rfind(", ", made->second.rfind(", root") - 1),
-                                                           made->second.rfind(", root") - made->second.rfind(", ", made->second.rfind(", root") - 1))
+                           ? "stream" +
+                                 made->second.substr(
+                                     made->second.rfind(", ", made->second.rfind(", root") - 1),
+                                     made->second.rfind(", root") -
+                                         made->second.rfind(", ", made->second.rfind(", root") - 1))
                            : made->second.substr(0, made->second.find(", root"));
         }
         const std::lock_guard lock(mutex);
@@ -5009,6 +5012,13 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             std::fwrite(state, 1, 0x100, file);
             std::fclose(file);
         }
+        // the root signature its programs are read with
+        if (const auto part = signature_part(reinterpret_cast<const void *>(state[0]));
+            !part.empty())
+            if (auto *const file = std::fopen((name + ".rts0").c_str(), "wb")) {
+                std::fwrite(part.data(), 1, part.size(), file);
+                std::fclose(file);
+            }
         for (int word = 0; word < 32; ++word)
             if (readable(state[word], 0x1000)) {
                 MEMORY_BASIC_INFORMATION info{};
