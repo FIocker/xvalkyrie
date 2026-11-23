@@ -224,6 +224,10 @@ constexpr Row rows[] = {
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
      6,
      {Inert::controllers}},
+    {L"Windows.Xbox.Input.Controller", // GetControllerById(id, IController **)
+     guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
+     15,
+     {Inert::controller_at, nullptr, 2}},
     // GetControllersOrderedLeftToRight(filter, IVectorView<IController> **)
     {L"Windows.Xbox.Input.Controller",
      guid("7400624f-144b-47fc-9f3b-1dcafb482873"),
@@ -288,7 +292,11 @@ constexpr Row rows[] = {
     // IKinectSensorStatics::GetDefault: a sensor that is never available, as with none plugged
     // in. IKinectSensor::Open succeeds all the same.
     {kinect, guid("c421d46b-5084-45d6-bdf0-57151f81d0d9"), 6, {Inert::shared, kinect}},
-    // a console interface of CoreApplication with one flag: its setter
+    // a console interface of CoreApplication with one flag: its getter and its setter
+    {L"Windows.ApplicationModel.Core.CoreApplication",
+     guid("42a6a529-3cc6-4867-b5b7-6d1faf5325f9"),
+     6,
+     {Inert::zero8}},
     {L"Windows.ApplicationModel.Core.CoreApplication",
      guid("42a6a529-3cc6-4867-b5b7-6d1faf5325f9"),
      7,

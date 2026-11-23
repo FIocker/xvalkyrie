@@ -198,6 +198,10 @@ HRESULT STDMETHODCALLTYPE method(Placeholder *self, void *first, void *second, v
             if (at)
                 *reinterpret_cast<std::uint32_t *>(at) = 0;
             break;
+        case Inert::controller_at:
+            if (at)
+                *at = controller();
+            break;
         case Inert::one32_at:
             if (at)
                 *reinterpret_cast<std::uint32_t *>(at) = 1;

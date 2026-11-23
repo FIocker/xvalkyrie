@@ -134,10 +134,10 @@ class Reading final : public IGamepadReading {
                   XV_AXIS(LeftThumbstickX, left_x) XV_AXIS(LeftThumbstickY, left_y)
                       XV_AXIS(RightThumbstickX, right_x) XV_AXIS(RightThumbstickY, right_y)
 #undef XV_AXIS
-        // clang-format on
+      // clang-format on
 
-        private : template <class T>
-                  static HRESULT put(T *value, T field) {
+      private : template <class T>
+                static HRESULT put(T *value, T field) {
         if (!value)
             return E_POINTER;
         *value = field;
@@ -247,13 +247,14 @@ void *gamepad_list() {
     gamepad.AddRef();
     return make_vector_view({static_cast<IGamepad *>(&gamepad)});
 }
-void *controller_list() {
+void *controller() {
     constexpr GUID controller{
         0x9776ff56, 0x9bfd, 0x4581, {0xad, 0x45, 0xb6, 0x45, 0xbb, 0xa5, 0x26, 0xd6}};
     IInspectable *facet = nullptr;
     gamepad.QueryInterface(controller, reinterpret_cast<void **>(&facet));
-    return make_vector_view({facet});
+    return facet;
 }
+void *controller_list() { return make_vector_view({static_cast<IInspectable *>(controller())}); }
 bool gamepad_interface(std::wstring_view name, const GUID &iid, void **object, long &result) {
     constexpr GUID reading{
         0x082e402c, 0x07df, 0x45e1, {0xa5, 0xab, 0xa3, 0x12, 0x7a, 0xf1, 0x97, 0xb5}};
