@@ -72,6 +72,9 @@ v_mul_hi_i32 v1, v2, v3
 v_mul_lo_u32 v1, v2, v3
 v_mul_hi_u32 v1, v2, v3
 v_mad_legacy_f32 v1, v2, v3, v4
+v_lshl_b64 v[1:2], v[2:3], v3
+v_lshr_b64 v[1:2], v[2:3], v3
+v_ashr_i64 v[1:2], v[2:3], v3
 s_cbranch_g_fork s[2:3], s[4:5]
 """.strip().splitlines()
 

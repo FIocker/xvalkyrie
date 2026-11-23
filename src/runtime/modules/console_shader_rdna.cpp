@@ -103,11 +103,9 @@ std::string_view newer_name(std::string_view name) {
         {"v_subrev_i32", "v_subrev_co_u32"}, {"v_addc_u32", "v_add_co_ci_u32"},
         {"v_subb_u32", "v_sub_co_ci_u32"},   {"v_subbrev_u32", "v_subrev_co_ci_u32"},
         {"v_min_legacy_f32", "v_min_f32"},   {"v_max_legacy_f32", "v_max_f32"},
-        {"v_mul_legacy_f32", "v_mul_f32"},   {"v_mac_legacy_f32", "v_mac_f32"},
-        {"v_mad_legacy_f32", "v_mad_f32"},   {"v_rcp_clamp_f32", "v_rcp_f32"},
-        {"v_rcp_legacy_f32", "v_rcp_f32"},   {"v_rsq_clamp_f32", "v_rsq_f32"},
-        {"v_rsq_legacy_f32", "v_rsq_f32"},   {"v_log_clamp_f32", "v_log_f32"},
-        {"v_mul_lo_i32", "v_mul_lo_u32"},
+        {"v_rcp_clamp_f32", "v_rcp_f32"},    {"v_rcp_legacy_f32", "v_rcp_f32"},
+        {"v_rsq_clamp_f32", "v_rsq_f32"},    {"v_rsq_legacy_f32", "v_rsq_f32"},
+        {"v_log_clamp_f32", "v_log_f32"},    {"v_mul_lo_i32", "v_mul_lo_u32"},
     };
     for (const auto &[older, newer] : renamed)
         if (name == older)
@@ -143,6 +141,7 @@ struct Range {
 struct Parameter {
     std::uint32_t type = 0; // 0 table, 1 constants, 2 CBV, 3 SRV, 4 UAV
     std::uint32_t reg = 0, space = 0, count = 0;
+    std::uint32_t visibility = 0; // 0 every stage, 1 vertex, 5 pixel
     std::vector<Range> ranges;
 };
 bool read_root_signature(std::span<const std::uint8_t> data, std::vector<Parameter> &parameters) {
@@ -152,6 +151,7 @@ bool read_root_signature(std::span<const std::uint8_t> data, std::vector<Paramet
     for (std::uint32_t i = 0; i < count; ++i) {
         Parameter parameter;
         parameter.type = word(data, at + 12 * i);
+        parameter.visibility = word(data, at + 12 * i + 4);
         const auto offset = word(data, at + 12 * i + 8);
         if (parameter.type == 0) {
             const auto ranges = word(data, offset), start = word(data, offset + 4);
@@ -211,7 +211,18 @@ struct Known {
     // shader's own code
     // conflict: one thing or another, by the way the shader came
     // lanes: a mask with a bit for each lane of the wave
-    enum Kind { nothing, constant, table, descriptor, root, code, conflict, lanes } kind = nothing;
+    // memory: the address of the root parameters an Xbox One shader has no registers for
+    enum Kind {
+        nothing,
+        constant,
+        table,
+        descriptor,
+        root,
+        code,
+        conflict,
+        lanes,
+        memory
+    } kind = nothing;
     std::uint32_t value = 0;            // the constant; the root parameter of the others
     std::uint32_t offset = 0, part = 0; // a descriptor: its byte offset in the table, and
                                         // which of its words this is; a root: which half
@@ -230,7 +241,7 @@ struct Known {
 // a register that stands for something of the console's, and has no value of its own here
 bool stands_in(const Known &known) {
     return known.kind == Known::table || known.kind == Known::descriptor ||
-           known.kind == Known::root;
+           known.kind == Known::root || known.kind == Known::memory;
 }
 // What is known where two ways through a shader meet. A descriptor that only one of them
 // loads stays one: compiled code loads descriptors in blocks that are skipped when no lane
@@ -321,6 +332,9 @@ class Translator {
         find_blocks();
         analyse();
         prepare_registers();
+        // an Xbox One vertex shader with nothing to fetch calls no fetch shader
+        if (older_ && stage_ == Stage::vertex && code_list_[0].name != "s_swappc_b64")
+            fetch_inputs();
         for (std::size_t block = 0; block < blocks_.size(); ++block)
             emit_block(block);
         // a descriptor whose words the shader reads, met before what it is was known
@@ -349,24 +363,59 @@ class Translator {
         older_ = true;
         for (std::uint32_t at = start; at + 4 <= start + size; at += 4)
             code_.push_back(word(file, at));
-        // the root parameters in order, from the third register; one that would not fit
-        // before the sixteenth is not in registers
-        std::uint32_t reg = 3;
-        for (std::uint32_t p = 0; p < parameters_.size(); ++p) {
-            const std::uint32_t size = parameters_[p].type == 0   ? 1
-                                       : parameters_[p].type == 1 ? parameters_[p].count
-                                                                  : 2;
-            if (reg + size > 16)
-                break;
-            if (parameters_[p].type == 0) {
-                known_[reg] = {Known::table, p};
-            } else if (parameters_[p].type >= 2) {
-                known_[reg] = {Known::root, p};
-                known_[reg + 1] = {Known::root, p, 0, 1};
+        // before the program, COMPUTE_PGM_RSRC2 and the group size
+        header_[0] = word(file, start - 0x18);
+        for (int i = 0; i < 3; ++i)
+            header_[1 + i] = word(file, start - 0x10 + 4 * i);
+        // The records after the program, five words each. Those of kind 0x1a say where a
+        // root parameter is: its number, its words, and the register it starts in, or from
+        // 16 its place in the memory the first register has the address of.
+        known_[0] = {Known::memory};
+        std::set<std::uint32_t> seen;
+        for (std::size_t at = start + size;
+             at + 20 <= file.size() && (word(file, at) || word(file, at + 4)); at += 20) {
+            if ((word(file, at) & 0xff) != 0x1a)
+                continue;
+            const auto where = word(file, at + 4);
+            const auto p = where & 0xff, words = (where >> 8) & 0xff, place = (where >> 16) & 0xff;
+            if (p >= parameters_.size() || !seen.insert(p).second)
+                continue;
+            const auto &parameter = parameters_[p];
+            if (words != (parameter.type == 0 ? 1 : parameter.type == 1 ? parameter.count : 2))
+                give_up("a root parameter of another size than its record says");
+            if (place >= 16) {
+                in_memory_.push_back({place - 16, words, p});
+            } else if (parameter.type == 0) {
+                known_[place] = {Known::table, p};
+            } else if (parameter.type == 1) {
+                in_registers_.push_back({place, words, p});
+            } else {
+                known_[place] = {Known::root, p};
+                known_[place + 1] = {Known::root, p, 0, 1};
             }
-            reg += size;
         }
         return true;
+    }
+    // where the words of a root parameter are: from a register on, or in memory
+    struct Placed {
+        std::uint32_t at, words, parameter;
+    };
+    const Placed *in_memory(std::uint32_t word) const {
+        for (const auto &placed : in_memory_)
+            if (word >= placed.at && word - placed.at < placed.words)
+                return &placed;
+        return nullptr;
+    }
+    // a word of root constants: of the constant buffer the stage sees them as
+    std::string root_constant(std::uint32_t parameter, std::uint32_t word) {
+        const auto &constants = parameters_[parameter];
+        const auto mine = stage_ == Stage::vertex ? 1u : stage_ == Stage::pixel ? 5u : 0u;
+        if (constants.visibility && constants.visibility != mine)
+            return "0u";
+        const auto name = this->constants(Resource{2, constants.reg, constants.space});
+        auto &size = constants_size_[name];
+        size = std::max(size, word / 4 + 1);
+        return name + "[" + std::to_string(word / 4) + "][" + std::to_string(word & 3) + "]";
     }
     void read_file() {
         const auto file = shader_.file;
@@ -495,12 +544,21 @@ class Translator {
             for (const auto &[plain, reversed] :
                  {std::pair<std::string_view, std::string_view>{"v_lshr_b32", "v_lshrrev_b32"},
                   {"v_ashr_i32", "v_ashrrev_i32"},
-                  {"v_lshl_b32", "v_lshlrev_b32"}})
+                  {"v_lshl_b32", "v_lshlrev_b32"},
+                  {"v_lshr_b64", "v_lshrrev_b64"},
+                  {"v_ashr_i64", "v_ashrrev_i64"},
+                  {"v_lshl_b64", "v_lshlrev_b64"}})
                 if (name == plain)
                     name = reversed, std::swap(a, b);
-            const auto op = op_of(F::vop3, newer_name(name));
+            const auto newer = newer_name(name);
+            const auto op = op_of(F::vop3, newer);
             if (!op)
                 give_up("older instruction " + std::string(name));
+            // the carry is VCC where the instruction has no place to name it
+            if (newer.find("_co_") != std::string_view::npos && !abs)
+                abs = 106;
+            if (newer.find("_ci_") != std::string_view::npos && !(rest >> 18 & 0x1ff))
+                rest |= 106u << 18;
             ins.format = F::vop3, ins.op = *op;
             ins.w0 = 0x35u << 26 | *op << 16 | (clamp ? 1u << 15 : 0) | abs << 8 | destination;
             ins.w1 = a | b << 9 | rest;
@@ -518,8 +576,9 @@ class Translator {
             const auto next = second();
             // a compare has the register its result goes to where the others have abs
             const bool compare = op < 0x100;
-            wide(name, w & 0xff, compare ? 0 : (w >> 8) & 7, !compare && (w >> 11 & 1),
-                 next & 0x3ffff, next & ~0x3ffffu);
+            const bool carries = op >= 0x125 && op <= 0x12a;
+            wide(name, w & 0xff, compare ? 0 : (w >> 8) & (carries ? 0x7f : 7),
+                 !compare && !carries && (w >> 11 & 1), next & 0x3ffff, next & ~0x3ffffu);
         } else if (top == 0x32) {
             same(F::vintrp, older_name_of(F::vintrp, (w >> 16) & 3), 16, 3);
         } else if (top == 0x36) {
@@ -561,8 +620,10 @@ class Translator {
             ins.w0 = 0x3du << 26 | *op << 18 | data << 6 | base;
             if (w >> 8 & 1)
                 ins.w1 = 0x7du << 25 | offset * 4;
-            else
-                give_up("a load at an offset in a register");
+            else if (offset == 0xff) // in the next word, and in words as well
+                ins.w1 = 0x7du << 25 | (second() * 4 & 0x1fffff);
+            else // in a register, in bytes
+                ins.w1 = offset << 25;
         } else if (w >> 23 == 0x17d) {
             same(F::sop1, older_name_of(F::sop1, (w >> 8) & 0xff), 8, 0xff);
         } else if (w >> 23 == 0x17e) {
@@ -570,7 +631,9 @@ class Translator {
         } else if (w >> 23 == 0x17f) {
             same(F::sopp, older_name_of(F::sopp, (w >> 16) & 0x7f), 16, 0x7f);
         } else if (w >> 28 == 0xb) {
-            same(F::sopk, older_name_of(F::sopk, (w >> 23) & 0x1f), 23, 0x1f);
+            // 0x15 sets a hardware register from the next word; the assembler has no name for it
+            const auto op = (w >> 23) & 0x1f;
+            same(F::sopk, op == 0x15 ? "s_setreg_imm32_b32" : older_name_of(F::sopk, op), 23, 0x1f);
         } else if (w >> 30 == 2) {
             same(F::sop2, older_name_of(F::sop2, (w >> 23) & 0x7f), 23, 0x7f);
         } else if (w >> 25 == 0x3f) {
@@ -849,7 +912,7 @@ class Translator {
                 return s(source);
             // an address of the console's has no meaning here, and only goes into the
             // descriptor a shader makes of it
-            if (known.kind == Known::root)
+            if (known.kind == Known::root || known.kind == Known::memory)
                 return "0u";
             if (known.kind == Known::descriptor)
                 return descriptor_word(source);
@@ -895,6 +958,10 @@ class Translator {
         if (kind == "StructuredBuffer" && known.part == 2) {
             line("uint " + id + ", " + id + "s; " + name + ".GetDimensions(" + id + ", " + id +
                  "s);");
+            return id;
+        }
+        if (kind == "Buffer" && known.part == 2) { // how many elements it has
+            line("uint " + id + "; " + name + ".GetDimensions(" + id + ");");
             return id;
         }
         static constexpr std::pair<std::string_view, const char *> sizes[] = {
@@ -1023,6 +1090,13 @@ class Translator {
                                                  : source + n < 128       ? known[source + n]
                                                  : value && !n ? Known{Known::constant, *value}
                                                                : Known{};
+            } else if (const auto value = constant_of(source, ins.literal);
+                       name == "s_brev_b32" && value && destination < 128) {
+                // a word of a sampler made in the code may be written the short way round
+                std::uint32_t reversed = 0;
+                for (int bit = 0; bit < 32; ++bit)
+                    reversed |= (*value >> bit & 1) << (31 - bit);
+                known[destination] = {Known::constant, reversed};
             } else if (name == "s_getpc_b64") {
                 known[destination] = {Known::code};
                 clear(destination + 1);
@@ -1087,6 +1161,18 @@ class Translator {
                                                        : 16;
             const auto from = known[base];
             clear(data, words);
+            if (starts(name, "s_load_dword") && from.kind == Known::memory) {
+                for (std::uint32_t n = 0; n < words && ins.w1 >> 25 == 0x7d; ++n) {
+                    const auto place = (ins.w1 & 0x1fffff) / 4 + n;
+                    const auto *const placed = in_memory(place);
+                    if (!placed || data + n >= 128)
+                        continue;
+                    if (parameters_[placed->parameter].type == 0)
+                        known[data + n] = {Known::table, placed->parameter};
+                    else if (parameters_[placed->parameter].type >= 2)
+                        known[data + n] = {Known::root, placed->parameter, 0, place - placed->at};
+                }
+            }
             if (starts(name, "s_load_dword") && from.kind == Known::table) {
                 Known loaded{Known::descriptor, from.value, ins.w1 & 0x1fffff};
                 loaded.origin = ins.at;
@@ -1168,6 +1254,10 @@ class Translator {
 
     void prepare_registers() {
         used_s_.insert({106, 107, 126, 127});
+        for (const auto &placed : in_registers_)
+            for (std::uint32_t n = 0; n < placed.words; ++n)
+                prologue_ +=
+                    "    " + s(placed.at + n) + " = " + root_constant(placed.parameter, n) + ";\n";
         if (stage_ == Stage::pixel) {
             // the position's components that are read follow the barycentrics
             std::uint32_t reg = 2;
@@ -1910,6 +2000,20 @@ class Translator {
             readable && writable ? (facts_.written.count(known.origin) ? 1u : 0u) : ranges[0].type;
         return resource;
     }
+    // A sampler. An Xbox One shader has the words of a static one in its code, and the
+    // record of what it binds with the same words says which register that is.
+    Resource sampler_of(std::uint32_t reg) {
+        if (!older_ || reg + 2 >= 128 || known_[reg].kind != Known::constant ||
+            known_[reg + 1].kind != Known::constant || known_[reg + 2].kind != Known::constant)
+            return resource_of(reg);
+        const auto records = shader_.bindings;
+        for (std::size_t at = 8; at + 56 <= records.size(); at += 56)
+            if ((word(records, at) & 0xff) == 4 && word(records, at + 24) == known_[reg].value &&
+                word(records, at + 28) == known_[reg + 1].value &&
+                word(records, at + 32) == known_[reg + 2].value)
+                return Resource{3, word(records, at + 8), word(records, at + 12)};
+        give_up("a sampler made in the code that the shader does not say it binds");
+    }
     // a resource the shader writes through, which for one picked at run time settles what
     // it is declared as
     void written(const Resource &resource) {
@@ -2010,6 +2114,21 @@ class Translator {
                 for (std::uint32_t n = 0; n < words; ++n)
                     set_s(data + n,
                           read_word(resource, "0u", where, indexed ? ~0u : offset, 4 * n));
+                return;
+            }
+            if (from.kind == Known::memory) {
+                // root parameters: constants have their values, the others stand for
+                // themselves
+                if (indexed)
+                    give_up("a root parameter picked while the shader runs");
+                for (std::uint32_t n = 0; n < words; ++n) {
+                    const auto *const placed = in_memory(offset / 4 + n);
+                    if (!placed)
+                        set_s(data + n, "0u");
+                    else if (parameters_[placed->parameter].type == 1)
+                        set_s(data + n,
+                              root_constant(placed->parameter, offset / 4 + n - placed->at));
+                }
                 return;
             }
             if (from.kind != Known::table)
@@ -3119,6 +3238,19 @@ class Translator {
                                    : std::string("0u"));
             return;
         }
+        if (name == "v_lshlrev_b64" || name == "v_lshrrev_b64" || name == "v_ashrrev_i64") {
+            const auto [low, high] = wide_operand(ins, codes[1], false);
+            const auto id = "x" + std::to_string(temporaries_++);
+            line("uint " + id + "l, " + id + "h; " +
+                 (name == "v_lshlrev_b64"   ? "shift_left"
+                  : name == "v_lshrrev_b64" ? "shift_right"
+                                            : "shift_signed") +
+                 "(" + low + ", " + high + ", " + operand(ins, codes[0]) + ", " + id + "l, " + id +
+                 "h);");
+            set_v(destination, id + "l");
+            set_v(destination + 1, id + "h");
+            return;
+        }
         if (is_wide(name)) {
             if ((modifier || clamp) && !starts(name, "v_cmp"))
                 give_up(std::string(name) + " with a modifier");
@@ -3574,7 +3706,7 @@ class Translator {
             }
         } else {
             const auto sampler_register = ((ins.w1 >> 21) & 0x1f) * 4;
-            auto state = resource_of(sampler_register);
+            auto state = sampler_of(sampler_register);
             if (state.dynamic >= 0)
                 state.type = 3;
             if (state.type != 3)
@@ -4207,7 +4339,8 @@ class Translator {
     std::string declarations_, prologue_, body_, indent_ = "    ";
     int temporaries_ = 0;
     bool exec_changes_ = false, wave64_ = false;
-    bool older_ = false;      // an Xbox One shader
+    bool older_ = false;                           // an Xbox One shader
+    std::vector<Placed> in_memory_, in_registers_; // its root parameters
     bool sums_lanes_ = false; // a compute shader with instructions that read other lanes
     bool unlearned_ = false; // an instruction was left out for a descriptor of a kind not known yet
     bool needs_sm6_ = false, sopk_writes_exec_ = false;

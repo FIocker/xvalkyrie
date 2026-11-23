@@ -273,6 +273,23 @@ std::vector<std::uint8_t> code_container(Bytes container) {
     return {};
 }
 
+// Section 3 of an Xbox One shader's XDAT block, placed from the start of the part like its
+// code: 2, a count, and 56 bytes for each thing the shader binds.
+Bytes bindings_section(Bytes container) {
+    const auto dxil = part(container, "DXIL");
+    constexpr std::size_t xdat = 24;
+    if (dxil.size() < xdat + 16 || std::memcmp(dxil.data() + xdat, "XDAT", 4))
+        return {};
+    const auto count = std::min<std::size_t>(word(dxil, xdat + 4), 16);
+    for (std::size_t entry = xdat + 12; entry + 12 <= dxil.size() && entry < xdat + 12 + 12 * count;
+         entry += 12) {
+        const auto offset = word(dxil, entry + 4), size = word(dxil, entry + 8);
+        if (word(dxil, entry) == 3 && offset <= dxil.size() && size <= dxil.size() - offset)
+            return dxil.subspan(offset, size);
+    }
+    return {};
+}
+
 using rdna::Element;
 // An ISG1 or OSG1 signature, in the order of its registers; or an ISGN or OSGN one, which
 // the host's older compiler writes: the same elements without their first and last words.
@@ -404,6 +421,7 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     rdna::Shader shader;
     shader.file = file;
     shader.root_signature = part(container, "RTS0");
+    shader.bindings = bindings_section(container);
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
     return rdna::translate(stage, shader, why, at, needs_sm6);

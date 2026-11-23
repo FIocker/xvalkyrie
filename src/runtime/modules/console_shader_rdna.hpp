@@ -24,6 +24,7 @@ struct Shader {
     std::span<const std::uint8_t> file;           // the FSSM file: code and what goes with it
     std::span<const std::uint8_t> root_signature; // the RTS0 part
     std::vector<Element> inputs, outputs;
+    std::span<const std::uint8_t> bindings; // of an Xbox One shader: what it binds, by kind
 };
 // The HLSL for the code: what the shader declares and its `main`. A vertex or pixel shader's
 // takes `Input input` and returns `Output`; a compute shader's takes what it needs. Nothing

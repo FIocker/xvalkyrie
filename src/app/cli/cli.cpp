@@ -195,9 +195,12 @@ std::optional<int> run(int argc, wchar_t **argv) {
                            : name.ends_with('p') ? runtime::modules::ShaderStage::pixel
                                                  : runtime::modules::ShaderStage::compute;
         std::string why;
+        std::uint32_t at = ~0u;
         const auto source = runtime::modules::console_shader_source(
-            stage, host::read_snapshot(file, 64 * 1024 * 1024), &why);
+            stage, host::read_snapshot(file, 64 * 1024 * 1024), &why, &at);
         if (!source) {
+            if (at != ~0u) // in words, from the first instruction
+                why += " at " + std::to_string(at);
             std::cerr << why << '\n';
             return 1;
         }
