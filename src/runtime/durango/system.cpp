@@ -423,5 +423,10 @@ void install_system(Registry &registry) {
         "toolhelpx.dll", "MiniDumpWriteDump",
         erase(+[](HANDLE, DWORD, HANDLE, int, void *, void *, void *) -> BOOL { return FALSE; }));
     registry.add("toolhelpx.dll", "QuerySystemHardwareInfo", erase(query_system_hardware_info));
+    // the modules of the process, which a title lists in its log as it starts: the host's
+    for (const auto *name :
+         {"K32EnumProcessModules", "K32GetModuleBaseNameA", "K32GetModuleInformation"})
+        if (auto *const function = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), name))
+            registry.add("toolhelpx.dll", name, reinterpret_cast<void *>(function));
 }
 } // namespace xv::runtime::durango

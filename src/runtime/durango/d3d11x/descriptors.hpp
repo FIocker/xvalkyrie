@@ -15,6 +15,16 @@ void describe(void *object, IUnknown *host);
 ID3D11ShaderResourceView *described_view(const std::uint32_t *descriptor);
 ID3D11SamplerState *described_sampler(const std::uint32_t *descriptor);
 ID3D11Buffer *described_buffer(const std::uint32_t *descriptor, UINT &offset);
+// A resource's own descriptor, which a title asks for (GetDescriptor) to have the device
+// compose views of the resource into descriptors it keeps and binds itself. `object` is
+// ours for the resource.
+void describe_resource(std::uint32_t *descriptor, const void *object, ID3D11Resource *host);
+ID3D11Resource *described_resource(const std::uint32_t *descriptor);
+// the descriptor of a view or a sampler that no object of ours stands for
+void describe_composed(std::uint32_t *descriptor, ID3D11ShaderResourceView *host);
+void describe_composed(std::uint32_t *descriptor, ID3D11UnorderedAccessView *host);
+void describe_composed(std::uint32_t *descriptor, ID3D11SamplerState *host);
+ID3D11UnorderedAccessView *described_unordered(const std::uint32_t *descriptor);
 // a buffer at the title's memory `address` (a placement buffer)
 void describe_buffer(void *object, ID3D11Buffer *host, const void *address);
 // how far into `host` the GPU address `address` is, if it is in it

@@ -6,6 +6,7 @@
 #include "runtime/durango/runtime.hpp"
 #include "runtime/durango/winrt/application.hpp"
 #include "runtime/modules/d3d12x.hpp"
+#include "runtime/modules/inflate.hpp"
 #include "runtime/modules/placement.hpp"
 #include "runtime/modules/watchdog.hpp"
 #include <atomic>
@@ -22,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -78,9 +80,11 @@ Layout child(const char *name, std::size_t last) {
 // packets themselves (GPU addresses, descriptors); zeros here, in an object this large
 constexpr std::size_t child_words = 32;
 // ID3D11Resource: three desktop methods at 9, a console one at 12, then the type's own
+void STDMETHODCALLTYPE get_descriptor(void *self, std::uint32_t *descriptor);
 Layout resource(const char *name, std::size_t last) {
     Layout result{name, child_words};
     device_child(result);
+    result.vtable[12] = custom(&get_descriptor);
     for (std::size_t host = 7; host <= 9; ++host)
         result.vtable[host + 2] = forward(host);
     for (std::size_t host = 10; host <= last; ++host)
@@ -453,6 +457,43 @@ void STDMETHODCALLTYPE dma_timestamp(void *, UINT64 *destination) {
 void STDMETHODCALLTYPE dma_write_value(void *, UINT *destination, UINT value) {
     *destination = value;
 }
+void STDMETHODCALLTYPE dma_write_value64(void *, UINT64 *destination, UINT64 value, UINT) {
+    *destination = value;
+}
+// LZDecompressMemory (25): the copy engine inflates what a title packed with zlib, with the
+// stream's header or without. Nothing says how much room there is: what comes out is
+// what the title packed.
+std::atomic<UINT> dma_error{0};
+HRESULT STDMETHODCALLTYPE dma_inflate(void *, void *destination, const void *source, UINT size,
+                                      UINT) {
+    const auto *const bytes = static_cast<const std::uint8_t *>(source);
+    std::vector<std::uint8_t> plain;
+    bool done = modules::inflate_zlib({bytes, size}, plain);
+    if (!done) {
+        std::vector<std::uint8_t> headed{0x78, 0x01};
+        headed.insert(headed.end(), bytes, bytes + size);
+        plain.clear();
+        done = modules::inflate_zlib(headed, plain);
+    }
+    if (!done) {
+        if (static std::atomic<int> shown{0}; shown++ < 4) {
+            std::fprintf(stderr,
+                         "[Runtime] LZDecompressMemory of %u bytes that are not a zlib "
+                         "stream:",
+                         size);
+            for (UINT i = 0; i < std::min(size, 16u); ++i)
+                std::fprintf(stderr, " %02x", bytes[i]);
+            std::fprintf(stderr, "\n");
+            std::fflush(stderr);
+        }
+        dma_error = 1;
+        return E_FAIL;
+    }
+    std::memcpy(destination, plain.data(), plain.size());
+    dma_error = 0;
+    return S_OK;
+}
+void STDMETHODCALLTYPE dma_error_code(void *, UINT *destination) { *destination = dma_error; }
 // GetDescX (10) of a state. Only a sampler has it: the hardware's words for the sampler, of
 // which the addressing, the filters, the comparison and the levels are filled in from the
 // host's description. The other states have a host method at that place.
@@ -539,12 +580,17 @@ Layout dma() {
     result.vtable[17] = custom(&dma_insert_fence);
     result.vtable[18] = {Method::ignore}; // InsertWaitOnFence: everything is done in order
     result.vtable[19] = custom(&dma_submit);
-    result.vtable[20] = result.vtable[21] = {Method::ignore}; // CopyLastErrorCodeTo...
+    result.vtable[20] = custom(&dma_error_code);
+    result.vtable[21] = {Method::ignore}; // CopyLastErrorCodeToBuffer
     result.vtable[22] = custom(&dma_copy_memory);
     result.vtable[23] = custom(&dma_fill_memory);
     result.vtable[27] = custom(&dma_timestamp);
     result.vtable[29] = custom(&dma_write_value);
+    result.vtable[25] = custom(&dma_inflate);
     result.vtable[30] = {Method::ignore}; // InsertWaitOnMemory
+    result.vtable[31] = custom(&dma_write_value64);
+    for (std::size_t slot : {32, 33, 34}) // PIX events
+        result.vtable[slot] = {Method::ignore};
     return result;
 }
 // ID3D11ComputeContextX: compute work a title records apart from its drawing, on a deferred
@@ -737,12 +783,377 @@ HRESULT STDMETHODCALLTYPE create_placement_texture3d(void *self, const D3D11_TEX
         return E_INVALIDARG;
     auto host = *desc;
     host.MiscFlags &= 0x1 | 0x4 | 0x10 | 0x20 | 0x40 | 0x80;
+    // what the title has at the address is not given to the host: nothing to be immutable with
+    if (host.Usage == D3D11_USAGE_IMMUTABLE)
+        host.Usage = D3D11_USAGE_DEFAULT;
     ID3D11Texture3D *created = nullptr;
     const auto result = static_cast<ID3D11Device *>(unwrap(self))
                             ->CreateTexture3D(&host, nullptr, texture ? &created : nullptr);
     if (SUCCEEDED(result) && texture)
         *texture = static_cast<ID3D11Texture3D *>(wrap(created, Kind::texture3d));
+    if (FAILED(result)) {
+        std::fprintf(stderr,
+                     "[Runtime] CreatePlacementTexture3D %ux%ux%u mips %u format %u usage %u bind "
+                     "0x%x misc 0x%x: 0x%08lx\n",
+                     desc->Width, desc->Height, desc->Depth, desc->MipLevels,
+                     static_cast<unsigned>(desc->Format), static_cast<unsigned>(desc->Usage),
+                     desc->BindFlags, desc->MiscFlags, static_cast<unsigned long>(result));
+        std::fflush(stderr);
+    }
     return result;
+}
+
+// GetDescriptor (12) of a resource, and the device's Compose methods (74 to 78): an engine
+// that keeps descriptors of its own asks the resource for its descriptor and the device for
+// the descriptor of a view of it, and binds those with the fast-resource calls. The views
+// are the host's, made once for each resource and description, and never let go of.
+void STDMETHODCALLTYPE get_descriptor(void *self, std::uint32_t *descriptor) {
+    if (descriptor)
+        describe_resource(descriptor, self, static_cast<ID3D11Resource *>(unwrap(self)));
+}
+// D3D11X_RESOURCE_VIEW_DESC
+struct ComposedView {
+    UINT flags, unused;
+    UINT64 address;
+    UINT data_format, number_format;
+    UINT swizzle[4];
+    UINT memory_type, dimension;
+    UINT words[8]; // of the view: a buffer's flags, first and count; a texture's levels, then
+                   // its slices
+};
+// the format of a view of a typeless resource, by the console's number format
+DXGI_FORMAT numbered_format(DXGI_FORMAT format, UINT number) {
+    struct Family {
+        DXGI_FORMAT typeless, unorm, snorm, uint, sint, real, srgb;
+    };
+    static constexpr DXGI_FORMAT none = DXGI_FORMAT_UNKNOWN;
+    static constexpr Family families[] = {
+        {DXGI_FORMAT_R32G32B32A32_TYPELESS, none, none, DXGI_FORMAT_R32G32B32A32_UINT,
+         DXGI_FORMAT_R32G32B32A32_SINT, DXGI_FORMAT_R32G32B32A32_FLOAT, none},
+        {DXGI_FORMAT_R16G16B16A16_TYPELESS, DXGI_FORMAT_R16G16B16A16_UNORM,
+         DXGI_FORMAT_R16G16B16A16_SNORM, DXGI_FORMAT_R16G16B16A16_UINT,
+         DXGI_FORMAT_R16G16B16A16_SINT, DXGI_FORMAT_R16G16B16A16_FLOAT, none},
+        {DXGI_FORMAT_R32G32_TYPELESS, none, none, DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32_SINT,
+         DXGI_FORMAT_R32G32_FLOAT, none},
+        {DXGI_FORMAT_R32G32B32_TYPELESS, none, none, DXGI_FORMAT_R32G32B32_UINT,
+         DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32_FLOAT, none},
+        {DXGI_FORMAT_R10G10B10A2_TYPELESS, DXGI_FORMAT_R10G10B10A2_UNORM, none,
+         DXGI_FORMAT_R10G10B10A2_UINT, none, none, none},
+        {DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_SNORM,
+         DXGI_FORMAT_R8G8B8A8_UINT, DXGI_FORMAT_R8G8B8A8_SINT, none,
+         DXGI_FORMAT_R8G8B8A8_UNORM_SRGB},
+        {DXGI_FORMAT_B8G8R8A8_TYPELESS, DXGI_FORMAT_B8G8R8A8_UNORM, none, none, none, none,
+         DXGI_FORMAT_B8G8R8A8_UNORM_SRGB},
+        {DXGI_FORMAT_R16G16_TYPELESS, DXGI_FORMAT_R16G16_UNORM, DXGI_FORMAT_R16G16_SNORM,
+         DXGI_FORMAT_R16G16_UINT, DXGI_FORMAT_R16G16_SINT, DXGI_FORMAT_R16G16_FLOAT, none},
+        {DXGI_FORMAT_R32_TYPELESS, none, none, DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_SINT,
+         DXGI_FORMAT_R32_FLOAT, none},
+        {DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_R24_UNORM_X8_TYPELESS, none,
+         DXGI_FORMAT_X24_TYPELESS_G8_UINT, none, none, none},
+        {DXGI_FORMAT_R32G8X24_TYPELESS, none, none, DXGI_FORMAT_X32_TYPELESS_G8X24_UINT, none,
+         DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, none},
+        {DXGI_FORMAT_R8G8_TYPELESS, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8G8_SNORM,
+         DXGI_FORMAT_R8G8_UINT, DXGI_FORMAT_R8G8_SINT, none, none},
+        {DXGI_FORMAT_R16_TYPELESS, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16_SNORM,
+         DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R16_SINT, DXGI_FORMAT_R16_FLOAT, none},
+        {DXGI_FORMAT_R8_TYPELESS, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_SNORM, DXGI_FORMAT_R8_UINT,
+         DXGI_FORMAT_R8_SINT, none, none},
+        {DXGI_FORMAT_BC1_TYPELESS, DXGI_FORMAT_BC1_UNORM, none, none, none, none,
+         DXGI_FORMAT_BC1_UNORM_SRGB},
+        {DXGI_FORMAT_BC2_TYPELESS, DXGI_FORMAT_BC2_UNORM, none, none, none, none,
+         DXGI_FORMAT_BC2_UNORM_SRGB},
+        {DXGI_FORMAT_BC3_TYPELESS, DXGI_FORMAT_BC3_UNORM, none, none, none, none,
+         DXGI_FORMAT_BC3_UNORM_SRGB},
+        {DXGI_FORMAT_BC4_TYPELESS, DXGI_FORMAT_BC4_UNORM, DXGI_FORMAT_BC4_SNORM, none, none, none,
+         none},
+        {DXGI_FORMAT_BC5_TYPELESS, DXGI_FORMAT_BC5_UNORM, DXGI_FORMAT_BC5_SNORM, none, none, none,
+         none},
+        {DXGI_FORMAT_BC6H_TYPELESS, DXGI_FORMAT_BC6H_UF16, DXGI_FORMAT_BC6H_SF16, none, none,
+         DXGI_FORMAT_BC6H_UF16, none},
+        {DXGI_FORMAT_BC7_TYPELESS, DXGI_FORMAT_BC7_UNORM, none, none, none, none,
+         DXGI_FORMAT_BC7_UNORM_SRGB},
+    };
+    for (const auto &family : families) {
+        if (family.typeless != format)
+            continue;
+        const auto picked = number == 1 || number == 6 ? family.snorm
+                            : number == 4              ? family.uint
+                            : number == 5              ? family.sint
+                            : number == 7              ? family.real
+                            : number == 9              ? family.srgb
+                                                       : family.unorm;
+        for (const auto one : {picked, family.unorm, family.real, family.uint})
+            if (one != none)
+                return one;
+    }
+    return format;
+}
+// A buffer has no format of its own: the view's, by the console's data and number formats.
+// One with a structure is viewed by that.
+DXGI_FORMAT buffer_view_format(ID3D11Resource *resource, UINT data, UINT number) {
+    if (ID3D11Buffer *buffer = nullptr; SUCCEEDED(resource->QueryInterface(&buffer))) {
+        D3D11_BUFFER_DESC desc;
+        buffer->GetDesc(&desc);
+        buffer->Release();
+        if (desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED)
+            return DXGI_FORMAT_UNKNOWN;
+    }
+    static constexpr std::pair<UINT, DXGI_FORMAT> typeless[] = {
+        {0x01, DXGI_FORMAT_R8_TYPELESS},           {0x02, DXGI_FORMAT_R16_TYPELESS},
+        {0x03, DXGI_FORMAT_R8G8_TYPELESS},         {0x04, DXGI_FORMAT_R32_TYPELESS},
+        {0x05, DXGI_FORMAT_R16G16_TYPELESS},       {0x06, DXGI_FORMAT_R11G11B10_FLOAT},
+        {0x08, DXGI_FORMAT_R10G10B10A2_TYPELESS},  {0x09, DXGI_FORMAT_R10G10B10A2_TYPELESS},
+        {0x0a, DXGI_FORMAT_R8G8B8A8_TYPELESS},     {0x0b, DXGI_FORMAT_R32G32_TYPELESS},
+        {0x0c, DXGI_FORMAT_R16G16B16A16_TYPELESS}, {0x0d, DXGI_FORMAT_R32G32B32_TYPELESS},
+        {0x0e, DXGI_FORMAT_R32G32B32A32_TYPELESS}};
+    for (const auto &[console, host] : typeless)
+        if (console == data)
+            return numbered_format(host, number);
+    return DXGI_FORMAT_UNKNOWN;
+}
+DXGI_FORMAT resource_format(ID3D11Resource *resource, D3D11_RESOURCE_DIMENSION &dimension) {
+    resource->GetType(&dimension);
+    if (ID3D11Texture2D *texture = nullptr; SUCCEEDED(resource->QueryInterface(&texture))) {
+        D3D11_TEXTURE2D_DESC desc;
+        texture->GetDesc(&desc);
+        texture->Release();
+        return desc.Format;
+    }
+    if (ID3D11Texture3D *texture = nullptr; SUCCEEDED(resource->QueryInterface(&texture))) {
+        D3D11_TEXTURE3D_DESC desc;
+        texture->GetDesc(&desc);
+        texture->Release();
+        return desc.Format;
+    }
+    if (ID3D11Texture1D *texture = nullptr; SUCCEEDED(resource->QueryInterface(&texture))) {
+        D3D11_TEXTURE1D_DESC desc;
+        texture->GetDesc(&desc);
+        texture->Release();
+        return desc.Format;
+    }
+    return DXGI_FORMAT_UNKNOWN;
+}
+std::mutex composed_mutex;
+std::map<std::string, IUnknown *> composed; // by resource, kind and description
+std::string composed_key(char kind, const void *resource, const void *desc, std::size_t size) {
+    std::string key(1, kind);
+    key.append(reinterpret_cast<const char *>(&resource), sizeof resource);
+    if (desc)
+        key.append(static_cast<const char *>(desc), size);
+    return key;
+}
+void report_composed(const char *what, ID3D11Resource *resource, const ComposedView *desc,
+                     HRESULT result) {
+    static std::atomic<int> shown{0};
+    if (shown++ >= 8)
+        return;
+    D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+    const auto format = resource ? resource_format(resource, dimension) : DXGI_FORMAT_UNKNOWN;
+    std::fprintf(stderr,
+                 "[Runtime] Compose%s of a resource of dimension %d format %d: view dimension %u "
+                 "flags 0x%x format %u/%u words %u %u %u %u: 0x%08lx\n",
+                 what, static_cast<int>(dimension), static_cast<int>(format),
+                 desc ? desc->dimension : 0u, desc ? desc->flags : 0u,
+                 desc ? desc->data_format : 0u, desc ? desc->number_format : 0u,
+                 desc ? desc->words[0] : 0u, desc ? desc->words[1] : 0u, desc ? desc->words[2] : 0u,
+                 desc ? desc->words[3] : 0u, static_cast<unsigned long>(result));
+    if (ID3D11Buffer *buffer = nullptr; resource && SUCCEEDED(resource->QueryInterface(&buffer))) {
+        D3D11_BUFFER_DESC of;
+        buffer->GetDesc(&of);
+        buffer->Release();
+        std::fprintf(stderr, "[Runtime] the buffer: %u bytes, bind 0x%x misc 0x%x stride %u\n",
+                     of.ByteWidth, of.BindFlags, of.MiscFlags, of.StructureByteStride);
+    }
+    std::fflush(stderr);
+}
+void STDMETHODCALLTYPE compose_shader_resource_view(void *self, const std::uint32_t *source,
+                                                    const ComposedView *desc,
+                                                    std::uint32_t *descriptor) {
+    if (!descriptor)
+        return;
+    std::memset(descriptor, 0, 32);
+    auto *const resource = source ? described_resource(source) : nullptr;
+    if (!resource)
+        return report_composed("ShaderResourceView", nullptr, desc, E_INVALIDARG);
+    const auto key = composed_key('s', resource, desc, sizeof *desc);
+    const std::lock_guard lock(composed_mutex);
+    auto &view = composed[key];
+    if (!view) {
+        D3D11_RESOURCE_DIMENSION dimension;
+        const auto format = resource_format(resource, dimension);
+        D3D11_SHADER_RESOURCE_VIEW_DESC host{};
+        if (desc) {
+            const auto levels = desc->words[1] ? desc->words[1] : ~0u;
+            host.Format = numbered_format(format, desc->number_format);
+            host.ViewDimension = static_cast<D3D11_SRV_DIMENSION>(desc->dimension);
+            switch (desc->dimension) {
+            case 1:
+                host.Format = buffer_view_format(resource, desc->data_format, desc->number_format);
+                host.Buffer.FirstElement = desc->words[1];
+                host.Buffer.NumElements = desc->words[2];
+                if (desc->words[0] & 1) {
+                    host.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+                    host.Format = DXGI_FORMAT_R32_TYPELESS;
+                    host.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+                }
+                break;
+            case 6:
+                break;
+            case 7:
+                host.Texture2DMSArray = {desc->words[0], desc->words[1]};
+                break;
+            case 3:
+            case 5:
+            case 10:
+                host.Texture2DArray = {desc->words[0], levels, desc->words[2], desc->words[3]};
+                break;
+            default:
+                host.Texture2D = {desc->words[0], levels};
+            }
+        }
+        auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+        ID3D11ShaderResourceView *created = nullptr;
+        auto result = device->CreateShaderResourceView(resource, desc ? &host : nullptr, &created);
+        if (FAILED(result) && desc)
+            result = device->CreateShaderResourceView(resource, nullptr, &created);
+        if (FAILED(result))
+            return report_composed("ShaderResourceView", resource, desc, result);
+        view = created;
+    }
+    describe_composed(descriptor, static_cast<ID3D11ShaderResourceView *>(view));
+}
+void STDMETHODCALLTYPE compose_unordered_access_view(void *self, const std::uint32_t *source,
+                                                     const ComposedView *desc,
+                                                     std::uint32_t *descriptor) {
+    if (!descriptor)
+        return;
+    std::memset(descriptor, 0, 32);
+    auto *const resource = source ? described_resource(source) : nullptr;
+    if (!resource)
+        return report_composed("UnorderedAccessView", nullptr, desc, E_INVALIDARG);
+    const auto key = composed_key('u', resource, desc, sizeof *desc);
+    const std::lock_guard lock(composed_mutex);
+    auto &view = composed[key];
+    if (!view) {
+        D3D11_RESOURCE_DIMENSION dimension;
+        const auto format = resource_format(resource, dimension);
+        D3D11_UNORDERED_ACCESS_VIEW_DESC host{};
+        if (desc) {
+            host.Format = numbered_format(format, desc->number_format);
+            host.ViewDimension = static_cast<D3D11_UAV_DIMENSION>(desc->dimension);
+            switch (desc->dimension) {
+            case 1:
+                host.Format = buffer_view_format(resource, desc->data_format, desc->number_format);
+                host.Buffer.FirstElement = desc->words[1];
+                host.Buffer.NumElements = desc->words[2];
+                if (desc->words[0] & 1) {
+                    host.Format = DXGI_FORMAT_R32_TYPELESS;
+                    host.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+                }
+                break;
+            case 3:
+            case 5:
+            case 8:
+                host.Texture2DArray = {desc->words[0], desc->words[2], desc->words[3]};
+                break;
+            default:
+                host.Texture2D.MipSlice = desc->words[0];
+            }
+        }
+        auto *const device = static_cast<ID3D11Device *>(unwrap(self));
+        ID3D11UnorderedAccessView *created = nullptr;
+        auto result = device->CreateUnorderedAccessView(resource, desc ? &host : nullptr, &created);
+        if (FAILED(result) && desc)
+            result = device->CreateUnorderedAccessView(resource, nullptr, &created);
+        if (FAILED(result))
+            return report_composed("UnorderedAccessView", resource, desc, result);
+        view = created;
+    }
+    describe_composed(descriptor, static_cast<ID3D11UnorderedAccessView *>(view));
+}
+// a constant buffer's or a vertex buffer's: the buffer's address, moved on by the view's
+// offset, with its stride above it, and the bytes left
+void STDMETHODCALLTYPE compose_buffer_view(void *, const std::uint32_t *source,
+                                           const ComposedView *desc, std::uint32_t *descriptor) {
+    if (!descriptor)
+        return;
+    std::memset(descriptor, 0, 16);
+    if (!source || !described_resource(source))
+        return report_composed("BufferView", nullptr, desc, E_INVALIDARG);
+    std::uint64_t address = 0;
+    std::memcpy(&address, source + 2, 8);
+    auto size = source[4];
+    if (desc && desc->dimension == 1) {
+        const auto offset = std::min(desc->words[1], size);
+        address += offset;
+        size -= offset;
+        address |= std::uint64_t{desc->words[2] & 0x3fff} << 48;
+    }
+    std::memcpy(descriptor, &address, 8);
+    descriptor[2] = size;
+}
+// D3D11X_SAMPLER_STATE_DESC
+struct ComposedSampler {
+    UINT flags, magnify, minify, mip, z, mode;
+    D3D11_TEXTURE_ADDRESS_MODE u, v, w;
+    FLOAT least, most, bias, second_bias;
+    UINT anisotropy;
+    FLOAT anisotropy_bias;
+    UINT threshold;
+    D3D11_COMPARISON_FUNC comparison;
+};
+void STDMETHODCALLTYPE compose_sampler_state(void *self, const ComposedSampler *desc,
+                                             std::uint32_t *descriptor) {
+    if (!descriptor)
+        return;
+    std::memset(descriptor, 0, 16);
+    if (!desc)
+        return;
+    const auto key = composed_key('a', nullptr, desc, sizeof *desc);
+    const std::lock_guard lock(composed_mutex);
+    auto &sampler = composed[key];
+    if (!sampler) {
+        // filters: 0 point, 1 linear, from 2 anisotropic; a mip filter of 0 is none
+        D3D11_SAMPLER_DESC host{};
+        const bool anisotropic = desc->magnify >= 2 || desc->minify >= 2;
+        const bool compares =
+            desc->comparison > D3D11_COMPARISON_NEVER && desc->comparison < D3D11_COMPARISON_ALWAYS;
+        UINT filter = anisotropic ? 0x55
+                                  : (desc->minify & 1) << 4 | (desc->magnify & 1) << 2 |
+                                        (desc->mip == 2 ? 1u : 0u);
+        if (compares)
+            filter |= 0x80;
+        host.Filter = static_cast<D3D11_FILTER>(filter);
+        const auto address = [](D3D11_TEXTURE_ADDRESS_MODE mode) {
+            return mode >= D3D11_TEXTURE_ADDRESS_WRAP && mode <= D3D11_TEXTURE_ADDRESS_MIRROR_ONCE
+                       ? mode
+                       : D3D11_TEXTURE_ADDRESS_CLAMP;
+        };
+        host.AddressU = address(desc->u);
+        host.AddressV = address(desc->v);
+        host.AddressW = address(desc->w);
+        host.MinLOD = desc->least;
+        host.MaxLOD = desc->mip ? desc->most : 0.0f;
+        host.MipLODBias = desc->bias;
+        host.MaxAnisotropy = std::clamp(desc->anisotropy, 1u, 16u);
+        host.ComparisonFunc = compares ? desc->comparison : D3D11_COMPARISON_NEVER;
+        ID3D11SamplerState *created = nullptr;
+        const auto result =
+            static_cast<ID3D11Device *>(unwrap(self))->CreateSamplerState(&host, &created);
+        if (FAILED(result)) {
+            std::fprintf(stderr,
+                         "[Runtime] ComposeSamplerState filters %u %u %u mode %u address %d %d %d "
+                         "comparison %d: 0x%08lx\n",
+                         desc->magnify, desc->minify, desc->mip, desc->mode,
+                         static_cast<int>(desc->u), static_cast<int>(desc->v),
+                         static_cast<int>(desc->w), static_cast<int>(desc->comparison),
+                         static_cast<unsigned long>(result));
+            std::fflush(stderr);
+            return;
+        }
+        sampler = created;
+    }
+    describe_composed(descriptor, static_cast<ID3D11SamplerState *>(sampler));
 }
 void STDMETHODCALLTYPE get_timestamps(void *, UINT64 *gpu, UINT64 *cpu) {
     LARGE_INTEGER now;
@@ -814,6 +1225,10 @@ Layout device() {
     result.vtable[71] = custom(&create_renderable_texture2d);   // ...RenderableTexture2D
     result.vtable[72] = custom(&get_driver_statistics);
     result.vtable[73] = custom(&create_compute_context);
+    result.vtable[74] = custom(&compose_shader_resource_view);
+    result.vtable[75] = custom(&compose_unordered_access_view);
+    result.vtable[76] = result.vtable[77] = custom(&compose_buffer_view);
+    result.vtable[78] = custom(&compose_sampler_state);
     return result;
 }
 

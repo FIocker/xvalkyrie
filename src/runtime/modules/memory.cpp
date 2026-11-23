@@ -160,6 +160,12 @@ bool commit(std::uintptr_t address, std::uintptr_t size, DWORD protect) {
 
 void *WINAPI virtual_alloc_ex(HANDLE process, void *address, SIZE_T size, DWORD type,
                               DWORD protect) {
+    // XV_MEM_TRACE: what a title asks of VirtualAlloc
+    if (static std::atomic<int> shown{0}; std::getenv("XV_MEM_TRACE") && shown++ < 40000) {
+        std::fprintf(stderr, "[Runtime] VirtualAlloc(%p, 0x%zx, type 0x%lx, protect 0x%lx)\n",
+                     address, static_cast<std::size_t>(size), type, protect);
+        std::fflush(stderr);
+    }
     if (GetProcessId(process) == GetCurrentProcessId()) {
         if (type & MEM_RESERVE && type & page_sizes) {
             auto *const base = reserve(address, size, type);

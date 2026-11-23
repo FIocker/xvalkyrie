@@ -178,14 +178,15 @@ std::uint32_t optimal_tile_mode(std::uint32_t, std::uint32_t, std::uint32_t, std
                                 std::uint32_t, std::uint32_t, std::uint32_t) {
     return 0;
 }
-std::int32_t optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std::uint32_t,
-                                              std::uint32_t, std::uint32_t, std::uint32_t,
-                                              std::uint32_t *depth, std::uint32_t *stencil) {
+// format, width, height, depth or layers, samples, then whether it is compressed, a tiled
+// resource, and read as a texture
+void optimal_depth_stencil_tile_modes(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t,
+                                      std::uint32_t, std::int32_t, std::int32_t, std::int32_t,
+                                      std::uint32_t *depth, std::uint32_t *stencil) {
     if (depth)
         *depth = 0;
     if (stencil)
         *stencil = 0;
-    return 0;
 }
 } // namespace
 

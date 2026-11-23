@@ -16,7 +16,8 @@
 // from 0x7d70 in 0x10, constant buffers from 0x1c40 (vertex shader) and 0x6a00 (pixel shader).
 namespace xv::runtime::durango::d3d11x {
 namespace {
-constexpr std::uint32_t magic = 0xd3d1face;
+constexpr std::uint32_t magic = 0xd3d1face, resource_magic = 0xd3d1fac0,
+                        unordered_magic = 0xd3d1fac1;
 constexpr std::uint32_t textures = 0x6b40, samplers = 0x7b40, vertices = 0x7d70,
                         vertex_constants = 0x1c40, pixel_constants = 0x6a00;
 constexpr unsigned slots = 16;
@@ -31,11 +32,11 @@ struct Range {
 std::map<std::uintptr_t, Range> buffers; // by start address
 std::atomic<std::uintptr_t> next_address{0x7e0000000000};
 
-void put_id(void *object, std::size_t offset, IUnknown *host) {
+void put_id(void *object, std::size_t offset, IUnknown *host, std::uint32_t kind = magic) {
     const auto id = next_id++;
     auto *const at = static_cast<std::byte *>(object) + offset;
     std::memcpy(at, &id, 4);
-    std::memcpy(at + 4, &magic, 4);
+    std::memcpy(at + 4, &kind, 4);
     const std::lock_guard lock(mutex);
     by_id[id] = host;
 }
@@ -50,8 +51,8 @@ void put_buffer(void *object, ID3D11Buffer *host, std::uintptr_t address) {
     const std::lock_guard lock(mutex);
     buffers[address] = {address + desc.ByteWidth, host};
 }
-template <class T> T *object_of(const std::uint32_t *descriptor) {
-    if (descriptor[1] != magic)
+template <class T> T *object_of(const std::uint32_t *descriptor, std::uint32_t kind = magic) {
+    if (descriptor[1] != kind)
         return nullptr;
     const std::lock_guard lock(mutex);
     const auto found = by_id.find(descriptor[0]);
@@ -154,6 +155,34 @@ ID3D11SamplerState *described_sampler(const std::uint32_t *descriptor) {
 }
 ID3D11Buffer *described_buffer(const std::uint32_t *descriptor, UINT &offset) {
     return buffer_at(descriptor, offset);
+}
+
+void describe_resource(std::uint32_t *descriptor, const void *object, ID3D11Resource *host) {
+    std::memset(descriptor, 0, 640);
+    put_id(descriptor, 0, host, resource_magic);
+    // a buffer's address and size go with it: its views are made of those
+    D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+    host->GetType(&dimension);
+    if (dimension == D3D11_RESOURCE_DIMENSION_BUFFER)
+        std::memcpy(descriptor + 2, static_cast<const std::byte *>(object) + 0x20, 16);
+}
+ID3D11Resource *described_resource(const std::uint32_t *descriptor) {
+    return object_of<ID3D11Resource>(descriptor, resource_magic);
+}
+void describe_composed(std::uint32_t *descriptor, ID3D11ShaderResourceView *host) {
+    std::memset(descriptor, 0, 32);
+    put_id(descriptor, 0, host);
+}
+void describe_composed(std::uint32_t *descriptor, ID3D11UnorderedAccessView *host) {
+    std::memset(descriptor, 0, 32);
+    put_id(descriptor, 0, host, unordered_magic);
+}
+void describe_composed(std::uint32_t *descriptor, ID3D11SamplerState *host) {
+    std::memset(descriptor, 0, 16);
+    put_id(descriptor, 0, host);
+}
+ID3D11UnorderedAccessView *described_unordered(const std::uint32_t *descriptor) {
+    return object_of<ID3D11UnorderedAccessView>(descriptor, unordered_magic);
 }
 
 void describe(void *object, IUnknown *host) {
