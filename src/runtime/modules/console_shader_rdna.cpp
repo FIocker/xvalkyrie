@@ -964,6 +964,10 @@ class Translator {
             if (known.kind == Known::root || known.kind == Known::memory ||
                 known.kind == Known::streams || known.kind == Known::stream)
                 return "0u";
+            // what a cached program computes from a descriptor's words goes back into
+            // them (see track), and is nothing here
+            if (known.kind == Known::descriptor && shader_.heaps && known.part != 0)
+                return "0u";
             if (known.kind == Known::descriptor)
                 return descriptor_word(source);
             give_up("a descriptor table used as a value (" + std::string(ins.name) + ")");
@@ -1185,9 +1189,16 @@ class Translator {
             if (wide && !starts(name, "s_lsh") && !starts(name, "s_ashr") && lanes(known, first) &&
                 lanes(known, second))
                 result = {Known::lanes};
+            // A cached program changes the later words of a descriptor it has loaded (the
+            // stride and size of a buffer it reads by bytes): it is that descriptor still,
+            // and the host's view is read as the program then reads it.
+            const auto before = destination < 128 ? known[destination] : Known{};
             clear(destination, wide ? 2 : 1);
             if (destination < 128)
                 known[destination] = result;
+            if (shader_.heaps && !wide && result.kind == Known::nothing &&
+                before.kind == Known::descriptor && before.part != 0)
+                known[destination] = before;
             if (result.kind == Known::lanes && destination + 1 < 128)
                 known[destination + 1] = result;
             break;
@@ -4053,9 +4064,34 @@ class Translator {
             const auto &inputs = shader_.inputs;
             for (std::size_t i = 0; i < inputs.size(); ++i) {
                 const auto &element = inputs[i];
+                // how many bytes each component of the element is, by its format; a read
+                // may start at a later component than the first
+                const auto format = element.format;
+                const std::uint32_t bytes =
+                    (format >= 27 && format <= 32) || (format >= 48 && format <= 52) ||
+                            (format >= 60 && format <= 64)
+                        ? 1
+                    : (format >= 9 && format <= 14) || (format >= 33 && format <= 38) ||
+                            (format >= 53 && format <= 59)
+                        ? 2
+                        : 4;
                 if (generated(element) || element.stream != resource.reg ||
-                    element.offset != offset)
+                    offset < element.offset || offset >= element.offset + bytes * element.width ||
+                    (offset - element.offset) % bytes)
                     continue;
+                const auto first = (offset - element.offset) / bytes;
+                if (first) {
+                    if (raw)
+                        give_up("a vertex stream read as words from the middle of an input");
+                    for (std::uint32_t c = 0; c < components; ++c) {
+                        const auto field =
+                            "input.f" + std::to_string(i) + "." + "xyzw"[(first + c) & 3];
+                        set_v(data + c, first + c >= element.width ? (c == 3 ? "0x3f800000u" : "0u")
+                                        : element.type == 3        ? u(field)
+                                                                   : "(uint)" + field);
+                    }
+                    return;
+                }
                 // the words as they lie in the vertex: of four bytes, the bytes again
                 if (raw && element.format >= 27 && element.format <= 32 && components == 1) {
                     const auto field = "input.f" + std::to_string(i);

@@ -955,7 +955,23 @@ std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
     std::string said;
     const auto source =
         console_program_source(stage, words, root_signature, &said, layout, records);
-    auto shader = source ? compile_now(stage, *source, false, &said) : std::vector<std::uint8_t>{};
+    // kept in the shader cache by what was translated: a title makes thousands of these as
+    // it starts, and the host's compiler takes long enough over them for the title's own
+    // watch on its threads to end it
+    std::vector<std::uint8_t> shader;
+    std::filesystem::path kept;
+    if (source && !shader_cache_directory().empty()) {
+        kept =
+            shader_cache_directory() /
+            (hash_name({reinterpret_cast<const std::uint8_t *>(source->data()), source->size()}) +
+             (stage == ShaderStage::vertex ? "-cv.dxil" : "-cp.dxil"));
+        shader = read_file(kept);
+    }
+    if (source && shader.empty()) {
+        shader = compile_now(stage, *source, false, &said);
+        if (!shader.empty() && !kept.empty())
+            write_file(kept, shader);
+    }
     if (source && shader.empty())
         said = "the host's compiler: " + said;
     if (why)

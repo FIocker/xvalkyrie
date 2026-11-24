@@ -4043,6 +4043,8 @@ void lost_draw(void *self, const char *method, UINT count) {
                            : made->second.substr(0, made->second.find(", root"));
         }
         const std::lock_guard lock(mutex);
+        if (static_cast<ListProxy *>(self)->heap_uses)
+            kind += ", of the title's programs";
         ++kinds[kind];
         if (++draws % 500 == 0) {
             std::fprintf(stderr, "[Lost] %llu draws:", static_cast<unsigned long long>(draws));
@@ -5261,7 +5263,7 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                 std::fclose(file);
             }
         for (int word = 0; word < 32; ++word)
-            if (readable(state[word], 0x1000)) {
+            if (readable(state[word], 16)) {
                 MEMORY_BASIC_INFORMATION info{};
                 VirtualQuery(reinterpret_cast<void *>(state[word]), &info, sizeof info);
                 const auto room = reinterpret_cast<std::uint64_t>(info.BaseAddress) +
@@ -5311,6 +5313,7 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
     std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
     std::vector<std::string> names;
     std::shared_ptr<const HeapUses> uses; // set: the pipeline is made of the title's programs
+    std::string stopped_by;               // XV_D3D_LOST: what stops each of its programs
     if (!std::getenv("XV_PSO_STAND_IN")) {
         using Words = std::span<const std::uint32_t>;
         Words programs[2]{}; // vertex, pixel
@@ -5416,6 +5419,9 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             if (real_pixel.empty())
                 ++reasons["pixel: " + why_pixel];
         }
+        stopped_by =
+            (real_vertex.empty() ? " vertex: " + why_vertex + ";" : "") +
+            (real_pixel.empty() && !programs[1].empty() ? " pixel: " + why_pixel + ";" : "");
         // XV_PSO_WHY=<text>: the parts of the first few pipelines that such a reason stops,
         // as pso_w_<n>, with the reasons in pso_w_<n>.why
         if (const auto *const wanted = std::getenv("XV_PSO_WHY"); wanted && dump) {
@@ -5558,7 +5564,8 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
     }
     // the title derives its pipelines from this one (CreateDerivedGraphicsPipelineStateX)
     if (SUCCEEDED(result))
-        lost_pipeline("deserialized graphics", pipeline, signature);
+        lost_pipeline(("deserialized graphics" + (uses ? std::string() : ":" + stopped_by)).c_str(),
+                      pipeline, signature);
     if (SUCCEEDED(result) && *pipeline)
         keep_pipeline(*pipeline, desc);
     if (SUCCEEDED(result) && *pipeline && uses) {
