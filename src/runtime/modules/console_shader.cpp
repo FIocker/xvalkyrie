@@ -408,6 +408,8 @@ std::string stand_in(ShaderStage stage, Bytes container) {
             "Output main(Input input) {\n    Output output = (Output)0;\n    return output;\n}\n";
     return inputs.empty() ? without_input(std::move(text)) : text;
 }
+// whether this thread's shaders are translated to read the heaps themselves
+thread_local bool heap_shaders = false;
 // the translation of the code; nothing if the code is not one that is handled, and then
 // `why` says what stopped it
 std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
@@ -428,7 +430,12 @@ std::optional<std::string> translated_source(ShaderStage stage, Bytes container,
     shader.inputs = signature(container, "ISG1");
     shader.outputs = signature(container, "OSG1");
     shader.signed_inputs = signed_inputs;
-    return rdna::translate(stage, shader, why, at, needs_sm6);
+    shader.heaps = heap_shaders && stage != ShaderStage::compute;
+    auto source = rdna::translate(stage, shader, why, at, needs_sm6);
+    // such a pipeline's shaders are all of the model that has the heaps
+    if (shader.heaps && needs_sm6)
+        *needs_sm6 = true;
+    return source;
 }
 
 using Compile = HRESULT(WINAPI *)(const void *, SIZE_T, const char *, const void *, void *,
@@ -990,6 +997,46 @@ std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
     return shader;
 }
 
+void use_heap_shaders(bool on) { heap_shaders = on; }
+
+HeapLayout shader_heap_layout(Bytes container) {
+    HeapLayout layout;
+    const auto file = code_container(container);
+    const auto at32 = [&](std::size_t at) {
+        std::uint32_t value = 0;
+        if (at + 4 <= file.size())
+            std::memcpy(&value, file.data() + at, 4);
+        return value;
+    };
+    if (file.size() < 0x140 || std::memcmp(file.data(), "FSSM", 4))
+        return layout;
+    std::size_t at = std::size_t{at32(0xc0)} + at32(0xc8);
+    while (at32(at) == 0xbf9f0000)
+        at += 4;
+    const auto layouts = at32(0xf8), reads = at32(0xfc);
+    if (!layouts || layouts >= 4096 || reads >= 4096 ||
+        at + 20ull * (layouts + reads) > file.size())
+        return layout;
+    for (std::uint32_t n = 0; n < layouts; ++n) {
+        const auto entry = at + 20 * n;
+        const auto type = at32(entry);
+        if (type == 0 || type == 3)
+            layout.entries.push_back({type, file[entry + 16], at32(entry + 8), file[entry + 17]});
+    }
+    for (std::uint32_t n = 0; n < reads; ++n) {
+        const auto entry = at + 20 * (layouts + n);
+        const auto kind = at32(entry);
+        const auto type = kind == 0x300   ? 0u
+                          : kind == 0x303 ? 1u
+                          : kind == 0x302 ? 2u
+                          : kind == 2     ? 3u
+                                          : ~0u;
+        if (type != ~0u)
+            layout.reads.push_back({type, file[entry + 17], at32(entry + 4) / 8});
+    }
+    return layout;
+}
+
 bool console_only_shader(Bytes container) {
     // The program header says where its bitcode is, from the "DXIL" at offset 8. A shader
     // with console code may have its bitcode as well, and then the host runs that.
@@ -1066,7 +1113,7 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         hash + "-" + letter + "-v" + std::to_string(translator_version) + model_name +
         (signed_inputs ? "-s" + std::to_string(signed_inputs) : "") +
         (root_signature.empty() ? "" : "-r" + hash_name(root_signature).substr(0, 12)) +
-        (stand_ins_only ? "-stand-in" : "") + ".dxbc";
+        (stand_ins_only ? "-stand-in" : "") + (heap_shaders ? "-heaps" : "") + ".dxbc";
     // one thread makes a shader, and the others that want the same one wait for it: titles
     // make their pipelines on many threads, and the host's compiler is slow
     {
@@ -1184,6 +1231,9 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage, Bytes container, Ho
     if (model != HostShaderModel::sm5 && stage != ShaderStage::vertex &&
         stage != ShaderStage::pixel)
         return {};
+    // a shader that reads the heaps is of the model that has them, whatever is asked
+    if (heap_shaders)
+        model = HostShaderModel::sm6;
     return make_host_shader(stage, container, model, packed, root_signature);
 }
 } // namespace xv::runtime::modules

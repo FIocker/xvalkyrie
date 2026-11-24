@@ -2399,19 +2399,42 @@ std::map<const void *, KeptPipeline> kept_pipelines;
 // `samplers`: the registers that have the number of a sampler in the sampler heap. Those
 // descriptors that the title wrote itself are made the host's before a draw.
 struct HeapUses {
-    struct Parameter {
-        int kind = 0; // 1 a table, 5 constants, 2 a root view
-        UINT count = 1;
+    // per stage (vertex, pixel): what its user registers hold - `kind` 1 a table, 5
+    // constants; the first register, how many, the title's root parameter - then the
+    // descriptors read and the registers that have a sampler's number
+    struct Entry {
+        int kind = 0;
+        std::uint32_t reg = 8, count = 1, slot = 0;
     };
-    std::vector<Parameter> parameters;
     struct Use {
         std::uint32_t reg, place;
         D3D12_DESCRIPTOR_RANGE_TYPE type;
     };
-    std::vector<Use> uses;
-    std::vector<std::uint32_t> samplers;
+    struct Stage {
+        std::vector<Entry> entries;
+        std::vector<Use> uses;
+        std::vector<std::uint32_t> samplers;
+    };
+    Stage stages[2];
     std::string made; // XV_D3D_LOST: what its shaders are kept as in the shader cache
 };
+// what a shader of a container says of its registers (modules::shader_heap_layout)
+HeapUses::Stage heap_stage(const D3D12_SHADER_BYTECODE &code) {
+    HeapUses::Stage stage;
+    if (!code.pShaderBytecode)
+        return stage;
+    const auto layout = modules::shader_heap_layout(
+        {static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength});
+    for (const auto &entry : layout.entries)
+        stage.entries.push_back({entry.type == 3 ? 1 : 5, entry.reg, entry.count, entry.slot});
+    for (const auto &read : layout.reads)
+        if (read.type == 3)
+            stage.samplers.push_back(read.reg);
+        else
+            stage.uses.push_back(
+                {read.reg, read.place, static_cast<D3D12_DESCRIPTOR_RANGE_TYPE>(read.type)});
+    return stage;
+}
 std::map<const void *, std::shared_ptr<const HeapUses>> heap_pipelines; // under kept_mutex
 std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
     const std::lock_guard lock(kept_mutex);
@@ -2421,6 +2444,16 @@ std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
 // that root signature: sixteen constants for the vertex shader (b0) and as many for the
 // pixel shader (b1), both in space 200, the sampler the shaders sample with, and the heaps indexed
 // by the shaders. Null where the host has no such heaps.
+ID3D12RootSignature *heap_signature(ID3D12Device *device);
+bool heap_shaders_wanted(ID3D12Device *device) {
+    // not yet by default: with it the host turns some pipelines down (E_OUTOFMEMORY) and
+    // the title ends; XV_HEAP_SHADERS=1 turns it on
+    static const bool on = [] {
+        const auto *const text = std::getenv("XV_HEAP_SHADERS");
+        return text && *text == '1';
+    }();
+    return on && console == Target::scarlett && heap_signature(device);
+}
 ID3D12RootSignature *heap_signature(ID3D12Device *device) {
     static std::once_flag once;
     static ID3D12RootSignature *signature = nullptr;
@@ -2600,6 +2633,7 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                                                 REFIID, void **);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC host{};
     ID3D12RootSignature *from_shader = nullptr;
+    std::shared_ptr<const HeapUses> uses;
     std::vector<D3D12_INPUT_ELEMENT_DESC> elements;
     std::vector<modules::PackedInput> packed;
     if (desc) {
@@ -2631,8 +2665,25 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
         const bool simple = desc->PrimitiveTopologyType != rectangle_type &&
                             !host.GS.pShaderBytecode && !host.HS.pShaderBytecode &&
                             !host.DS.pShaderBytecode;
+        // On the Series console the two are translated to read the heaps themselves, and
+        // the pipeline is under a root signature of ours (see HeapUses), with
+        // XV_HEAP_SHADERS=1; else the title's signature and its ranges are kept.
+        const bool heaps = simple && heap_shaders_wanted(self) && host.VS.pShaderBytecode &&
+                           host.PS.pShaderBytecode &&
+                           modules::console_only_shader(shader_bytes(host.VS)) &&
+                           modules::console_only_shader(shader_bytes(host.PS));
+        modules::use_heap_shaders(heaps);
         const bool pair =
             host_graphics_pair(self, host.VS, host.PS, simple, packed, host.pRootSignature);
+        modules::use_heap_shaders(false);
+        if (heaps && pair) {
+            auto reads = std::make_shared<HeapUses>();
+            reads->stages[0] = heap_stage(desc->VS);
+            reads->stages[1] = heap_stage(desc->PS);
+            reads->made = "a container's";
+            uses = std::move(reads);
+            host.pRootSignature = heap_signature(self);
+        }
         const bool made = host_bytecode(geometry, host.GS) || pair;
         if (made && !host.pRootSignature)
             host.pRootSignature = from_shader =
@@ -2656,6 +2707,10 @@ HRESULT STDMETHODCALLTYPE create_graphics_pipeline(ID3D12Device *self,
                       host.pRootSignature);
     if (SUCCEEDED(result) && desc && state && *state && console == Target::scarlett)
         keep_pipeline(*state, host);
+    if (SUCCEEDED(result) && state && *state && uses) {
+        const std::lock_guard lock(kept_mutex);
+        heap_pipelines[*state] = uses;
+    }
     if (from_shader)
         from_shader->Release();
     if (FAILED(result)) {
@@ -3909,53 +3964,54 @@ void prepare_draw(ListProxy *list) {
     std::uint32_t user[16]{};
     std::uintptr_t tables[16]{};
     ShadowHeap heaps[16]{};
-    std::size_t reg = 0;
     const auto &arguments = list->graphics_arguments;
-    for (std::size_t p = 0; p < list->heap_uses->parameters.size() && reg < 16; ++p) {
-        const auto &parameter = list->heap_uses->parameters[p];
-        const auto *const argument = p < arguments.size() ? &arguments[p] : nullptr;
-        if (parameter.kind == 1) {
-            if (argument && argument->kind == 1) {
+    for (UINT index = 0; index < 2; ++index) {
+        const auto &stage = list->heap_uses->stages[index];
+        std::memset(user, 0, sizeof user);
+        std::memset(tables, 0, sizeof tables);
+        for (const auto &entry : stage.entries) {
+            const auto at = entry.reg - 8;
+            const auto *const argument =
+                entry.slot < arguments.size() ? &arguments[entry.slot] : nullptr;
+            if (at >= 16 || !argument)
+                continue;
+            if (entry.kind == 1 && argument->kind == 1) {
                 const std::lock_guard lock(shadow_mutex);
                 if (const auto *const in = shadow_heap(argument->value); in && in->shader_visible) {
-                    heaps[reg] = *in;
-                    tables[reg] = argument->value;
-                    user[reg] =
+                    heaps[at] = *in;
+                    tables[at] = argument->value;
+                    user[at] =
                         static_cast<std::uint32_t>((argument->value - in->base) / in->stride);
                 }
+            } else if (entry.kind == 5 && argument->kind == 5) {
+                for (UINT n = 0; n < entry.count && at + n < 16; ++n)
+                    if (n < argument->words.size())
+                        user[at + n] = argument->words[n];
             }
-            ++reg;
-        } else if (parameter.kind == 5) {
-            for (UINT n = 0; n < parameter.count && reg < 16; ++n, ++reg)
-                if (argument && argument->kind == 5 && n < argument->words.size())
-                    user[reg] = argument->words[n];
-        } else {
-            reg += 2;
         }
-    }
-    for (const auto &use : list->heap_uses->uses)
-        if (const auto at = use.reg - 8; at < 16 && tables[at]) {
-            const auto where = tables[at] + std::uintptr_t{use.place} * heaps[at].stride;
-            if (where + heaps[at].stride <= heaps[at].end)
-                decode_as(heaps[at], where, use.type);
-        }
-    if (!list->heap_uses->samplers.empty()) {
-        ShadowHeap samplers{};
-        {
-            const std::lock_guard lock(shadow_mutex);
-            for (const auto &[base, heap] : shadow_heaps)
-                if (heap.type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER && heap.shader_visible)
-                    samplers = heap;
-        }
-        for (const auto in : list->heap_uses->samplers)
-            if (const auto at = in - 8; at < 16 && samplers.base) {
-                const auto where = samplers.base + std::uintptr_t{user[at]} * samplers.stride;
-                if (where + samplers.stride <= samplers.end)
-                    decode_as(samplers, where, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER);
+        for (const auto &use : stage.uses)
+            if (const auto at = use.reg - 8; at < 16 && tables[at]) {
+                const auto where = tables[at] + std::uintptr_t{use.place} * heaps[at].stride;
+                if (where + heaps[at].stride <= heaps[at].end)
+                    decode_as(heaps[at], where, use.type);
             }
+        if (!stage.samplers.empty()) {
+            ShadowHeap samplers{};
+            {
+                const std::lock_guard lock(shadow_mutex);
+                for (const auto &[base, heap] : shadow_heaps)
+                    if (heap.type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER && heap.shader_visible)
+                        samplers = heap;
+            }
+            for (const auto in : stage.samplers)
+                if (const auto at = in - 8; at < 16 && samplers.base) {
+                    const auto where = samplers.base + std::uintptr_t{user[at]} * samplers.stride;
+                    if (where + samplers.stride <= samplers.end)
+                        decode_as(samplers, where, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER);
+                }
+        }
+        list->host->SetGraphicsRoot32BitConstants(index, 16, user, 0);
     }
-    list->host->SetGraphicsRoot32BitConstants(0, 16, user, 0);
-    list->host->SetGraphicsRoot32BitConstants(1, 16, user, 0);
     // XV_D3D_LOST: what the first of these draws are given
     if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 24) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC made{};
@@ -3983,7 +4039,7 @@ void prepare_draw(ListProxy *list) {
                      static_cast<void *>(list->pipeline), made.NumRenderTargets, made.RTVFormats[0],
                      made.DSVFormat, made.InputLayout.NumElements, target.Width, target.Height,
                      target.Format, list->topology, user[0], user[1], user[2], user[3], user[4],
-                     user[5], list->heap_uses->parameters.size(), text.c_str(),
+                     user[5], list->heap_uses->stages[1].entries.size(), text.c_str(),
                      list->heap_uses->made.c_str(), 10);
         {
             float first[8]{};
@@ -4002,7 +4058,7 @@ void prepare_draw(ListProxy *list) {
                          memory ? "memory" : "not memory here", first[0], first[1], first[2],
                          first[3], first[4], first[5], first[6], first[7], 10);
         }
-        for (const auto &use : list->heap_uses->uses)
+        for (const auto &use : list->heap_uses->stages[1].uses)
             if (const auto at = use.reg - 8; at < 16 && tables[at]) {
                 std::uint64_t words[2]{};
                 std::memcpy(words,
@@ -5537,21 +5593,21 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             // what the two programs' records name, and the parameters their registers hold
             auto reads = std::make_shared<HeapUses>();
             reads->made = why_vertex + " " + why_pixel;
-            for (const auto &part : records)
-                for (std::size_t at = 16; at + 32 <= part.size(); at += 32) {
+            for (std::size_t index = 0; index < 2; ++index)
+                for (std::size_t at = 16; at + 32 <= records[index].size(); at += 32) {
                     std::uint32_t words[6];
-                    std::memcpy(words, part.data() + at, sizeof words);
+                    std::memcpy(words, records[index].data() + at, sizeof words);
                     if (words[0] != 0x41)
                         continue;
                     const auto in = words[5] >> 8 & 0xff;
                     if (words[1] == 2)
-                        reads->samplers.push_back(in);
+                        reads->stages[index].samplers.push_back(in);
                     else if (words[1] == 0x300 || words[1] == 0x302 || words[1] == 0x303)
-                        reads->uses.push_back({in, words[2] / 8,
-                                               words[1] == 0x300 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
-                                               : words[1] == 0x303
-                                                   ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
-                                                   : D3D12_DESCRIPTOR_RANGE_TYPE_CBV});
+                        reads->stages[index].uses.push_back(
+                            {in, words[2] / 8,
+                             words[1] == 0x300   ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
+                             : words[1] == 0x303 ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
+                                                 : D3D12_DESCRIPTOR_RANGE_TYPE_CBV});
                 }
             const auto at_root = [&](std::size_t at) {
                 std::uint32_t value = 0;
@@ -5559,13 +5615,17 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
                     std::memcpy(&value, root.data() + at, 4);
                 return value;
             };
+            std::uint32_t reg = 8;
             for (std::uint32_t p = 0, count = std::min(at_root(4), 64u); p < count; ++p) {
                 const auto entry = at_root(8) + 12 * p;
                 const auto type = at_root(entry);
-                reads->parameters.push_back(
-                    type == 0   ? HeapUses::Parameter{1, 1}
-                    : type == 1 ? HeapUses::Parameter{5, at_root(at_root(entry + 8) + 8)}
-                                : HeapUses::Parameter{2, 2});
+                const auto words = type == 0   ? 1u
+                                   : type == 1 ? at_root(at_root(entry + 8) + 8)
+                                               : 2u;
+                if (type <= 1)
+                    for (auto &stage : reads->stages)
+                        stage.entries.push_back({type == 0 ? 1 : 5, reg, words, p});
+                reg += words;
             }
             uses = std::move(reads);
             std::size_t at = 0x50;
@@ -5911,6 +5971,7 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
     bool made = false;
     std::size_t signature_at = 0; // where in the stream the root signature's pointer is
     ID3D12RootSignature *from_shader = nullptr;
+    std::shared_ptr<const HeapUses> uses;
     std::string types = "stream of"; // XV_D3D_LOST: the subobjects, as the title numbers them
     if (desc && desc->pPipelineStateSubobjectStream && console == Target::scarlett) {
         const auto *bytes = static_cast<const std::uint8_t *>(desc->pPipelineStateSubobjectStream);
@@ -5993,8 +6054,31 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
         void *signature = nullptr;
         if (signature_at)
             std::memcpy(&signature, stream.data() + signature_at, sizeof signature);
+        const bool heaps = simple_graphics && !compute.pShaderBytecode &&
+                           heap_shaders_wanted(self) && vertex.pShaderBytecode &&
+                           pixel.pShaderBytecode &&
+                           modules::console_only_shader(shader_bytes(vertex)) &&
+                           modules::console_only_shader(shader_bytes(pixel));
+        modules::use_heap_shaders(heaps);
         made = host_graphics_pair(self, vertex, pixel, simple_graphics && !compute.pShaderBytecode,
                                   {}, signature);
+        modules::use_heap_shaders(false);
+        if (heaps && made) {
+            auto reads = std::make_shared<HeapUses>();
+            reads->stages[0] = heap_stage(shaders[0]);
+            reads->stages[1] = heap_stage(shaders[1]);
+            reads->made = "a container's";
+            uses = std::move(reads);
+            auto *const ours = heap_signature(self);
+            if (!signature_at) {
+                stream.resize(stream.size() + 16);
+                const UINT type = D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE;
+                std::memcpy(stream.data() + stream.size() - 16, &type, 4);
+                signature_at = stream.size() - 8;
+            }
+            std::memcpy(stream.data() + signature_at, &ours, sizeof ours);
+            signature = ours;
+        }
         made |= host_bytecode(modules::ShaderStage::compute, compute, modules::HostShaderModel::sm5,
                               {}, signature);
         const D3D12_SHADER_BYTECODE translated[] = {vertex, pixel, compute};
@@ -6014,6 +6098,10 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
         desc = &host;
     }
     const auto result = original<Create>(self, 47)(self, desc, iid, state);
+    if (SUCCEEDED(result) && state && *state && uses) {
+        const std::lock_guard lock(kept_mutex);
+        heap_pipelines[*state] = uses;
+    }
     if (SUCCEEDED(result) && state) {
         void *signature = nullptr;
         if (signature_at)

@@ -82,6 +82,25 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage,
                                           HostShaderModel model = HostShaderModel::sm5,
                                           std::span<const PackedInput> packed = {},
                                           std::span<const std::uint8_t> root_signature = {});
+// While on, this thread's vertex and pixel shaders of the Series console are translated
+// to read their descriptors from the heaps themselves (rdna::Shader::heaps), which a
+// pipeline under a root signature of the host's own takes. What such a shader's file says
+// of its registers, for whoever fills them: `entries` are what the user registers hold
+// (type 0 constants, 3 a table; the first register, how many, the root parameter), `reads`
+// the descriptors read (type as a range's, 3 a sampler picked by the number in register
+// `reg`; else the table's register and the place in it).
+void use_heap_shaders(bool on);
+struct HeapLayout {
+    struct Entry {
+        std::uint32_t type, reg, count, slot;
+    };
+    struct Read {
+        std::uint32_t type, reg, place;
+    };
+    std::vector<Entry> entries;
+    std::vector<Read> reads;
+};
+HeapLayout shader_heap_layout(std::span<const std::uint8_t> container);
 // A compute shader that does nothing, for a pipeline whose own shader the host's driver
 // cannot make. Empty if the host's compiler gives none.
 std::span<const std::uint8_t> empty_compute_shader();

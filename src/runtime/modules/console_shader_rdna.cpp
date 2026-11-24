@@ -467,6 +467,60 @@ class Translator {
             known_[reg] = {Known::root, parameter};
             known_[reg + 1] = {Known::root, parameter, 0, 1};
         };
+        bound_.assign(shader_.bound.begin(), shader_.bound.end());
+        // A shader that reads the heaps itself (see rdna::Shader::heaps), with its tables
+        // after the code: `layout` (as many as the word at 0xf8 says) has what each user
+        // register holds - {type, place in the table in words, registers, shader register,
+        // u8 first register, u8 root parameter}, type 0 constants, 1 a root view, 3 a table,
+        // 4 a sampler of the signature's, 5 and 6 the addresses of the heaps - and `used`
+        // (0xfc) what is read at each place of a table: {kind, place in words, shader
+        // register, count, u8 words, u8 the table's register}.
+        const auto layouts = word(file, 0xf8), reads = word(file, 0xfc);
+        if (shader_.heaps && layouts && layouts < 4096 && reads < 4096 &&
+            at + 20ull * (layouts + reads) <= file.size()) {
+            for (std::uint32_t n = 0; n < layouts; ++n) {
+                const auto entry = at + 20 * n;
+                const auto type = word(file, entry), count = word(file, entry + 8);
+                const std::uint32_t reg = file[entry + 16], slot = file[entry + 17];
+                if (type == 4)
+                    continue;
+                if (type == 1)
+                    give_up("a root view in a shader that reads the heaps");
+                if (reg < 8 || reg + (type == 0 ? count : 1) > 24)
+                    give_up("user registers the host's shader is not given");
+                if (type == 3) {
+                    if (slot >= parameters_.size())
+                        parameters_.resize(slot + 1);
+                    table_register_[slot] = reg;
+                    known_[reg] = {Known::table, slot};
+                } else if (type == 0) {
+                    for (std::uint32_t k = 0; k < count; ++k) {
+                        used_s_.insert(reg + k);
+                        uses_heap_ = true;
+                        prologue_ +=
+                            "    " + s(reg + k) + " = xv_ud" + std::to_string(reg + k - 8) + ";\n";
+                    }
+                } else if (type == 5 || type == 6) {
+                    const auto whole = static_cast<std::uint32_t>(parameters_.size());
+                    heap_parameter_[whole] = type == 5 ? 1 : 2;
+                    known_[reg] = {Known::table, whole};
+                    parameters_.emplace_back();
+                }
+            }
+            for (std::uint32_t n = 0; n < reads; ++n) {
+                const auto entry = at + 20 * (layouts + n);
+                const auto kind = word(file, entry);
+                const auto type = kind == 0x300   ? 0u
+                                  : kind == 0x303 ? 1u
+                                  : kind == 0x302 ? 2u
+                                  : kind == 2     ? 3u
+                                                  : ~0u;
+                if (type != ~0u)
+                    bound_.push_back({word(file, entry + 4) * 4, type, file[entry + 17]});
+            }
+            any = true;
+            at = file.size();
+        }
         for (; at + 20 <= file.size() && word(file, at + 8) != ~0u; at += 20) {
             const auto kind = word(file, at);
             if (kind != 3 && kind != 1)
@@ -2060,7 +2114,7 @@ class Translator {
             if (known.dynamic >= 0)
                 give_up("a descriptor of a table picked while the shader runs");
             const auto in = table_register_.find(known.value);
-            for (const auto &bound : shader_.bound)
+            for (const auto &bound : bound_)
                 if (bound.offset == known.offset && in != table_register_.end() &&
                     bound.reg == in->second) {
                     if (bound.type == 3)
@@ -4585,6 +4639,7 @@ class Translator {
     bool needs_sm6_ = false, sopk_writes_exec_ = false;
     bool fetched_ = false, exported_ = false, vertex_id_ = false, instance_id_ = false;
     bool uses_heap_ = false;
+    std::vector<Shader::Bound> bound_;                      // the caller's, or the file's own
     std::map<std::uint32_t, std::uint32_t> table_register_; // a table parameter's register
     std::map<std::uint32_t, std::uint32_t>
         heap_parameter_; // a heap as a table: 1 views, 2 samplers
