@@ -2410,6 +2410,7 @@ struct HeapUses {
     };
     std::vector<Use> uses;
     std::vector<std::uint32_t> samplers;
+    std::string made; // XV_D3D_LOST: what its shaders are kept as in the shader cache
 };
 std::map<const void *, std::shared_ptr<const HeapUses>> heap_pipelines; // under kept_mutex
 std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
@@ -3193,6 +3194,8 @@ struct ListProxy {
     std::vector<RootArgument> graphics_arguments;
     std::shared_ptr<const HeapUses> heap_uses; // of `pipeline`
     bool ours_bound = false;                   // the host's list has heap_signature
+    D3D12_VERTEX_BUFFER_VIEW vertices{};       // XV_D3D_LOST: the title's first stream, set last
+    UINT vertex_calls = 0;
     RootArgument &argument(UINT parameter) {
         if (graphics_arguments.size() <= parameter)
             graphics_arguments.resize(std::min<std::size_t>(parameter, 63) + 1);
@@ -3953,6 +3956,75 @@ void prepare_draw(ListProxy *list) {
     }
     list->host->SetGraphicsRoot32BitConstants(0, 16, user, 0);
     list->host->SetGraphicsRoot32BitConstants(1, 16, user, 0);
+    // XV_D3D_LOST: what the first of these draws are given
+    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 24) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC made{};
+        {
+            const std::lock_guard lock(kept_mutex);
+            if (const auto kept = kept_pipelines.find(list->pipeline); kept != kept_pipelines.end())
+                made = kept->second.desc;
+        }
+        D3D12_RESOURCE_DESC target{};
+        if (list->target)
+            target = list->target->GetDesc();
+        std::string text;
+        for (std::size_t p = 0; p < arguments.size(); ++p) {
+            char one[64];
+            std::snprintf(one, sizeof one, " %zu:%d/%llx", p, arguments[p].kind,
+                          arguments[p].kind == 5 && !arguments[p].words.empty()
+                              ? static_cast<unsigned long long>(arguments[p].words[0])
+                              : static_cast<unsigned long long>(arguments[p].value));
+            text += one;
+        }
+        std::fprintf(stderr,
+                     "[Lost] a draw with the title's programs: pipeline %p, %u targets of format "
+                     "%d, depth %d, %u inputs; bound target %llux%u format %d; topology %u; "
+                     "registers %x %x %x %x %x %x; %zu parameters, arguments%s; shaders %s%c",
+                     static_cast<void *>(list->pipeline), made.NumRenderTargets, made.RTVFormats[0],
+                     made.DSVFormat, made.InputLayout.NumElements, target.Width, target.Height,
+                     target.Format, list->topology, user[0], user[1], user[2], user[3], user[4],
+                     user[5], list->heap_uses->parameters.size(), text.c_str(),
+                     list->heap_uses->made.c_str(), 10);
+        {
+            float first[8]{};
+            MEMORY_BASIC_INFORMATION info{};
+            const auto at = list->vertices.BufferLocation;
+            const bool memory =
+                at && VirtualQuery(reinterpret_cast<void *>(at), &info, sizeof info) &&
+                info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+            if (memory)
+                std::memcpy(first, reinterpret_cast<const void *>(at), sizeof first);
+            std::fprintf(stderr,
+                         "[Lost]   vertices set %u times on this list; stream 0 at %llx, %u bytes, "
+                         "stride %u, %s: %g %g %g %g %g %g %g %g%c",
+                         list->vertex_calls, static_cast<unsigned long long>(at),
+                         list->vertices.SizeInBytes, list->vertices.StrideInBytes,
+                         memory ? "memory" : "not memory here", first[0], first[1], first[2],
+                         first[3], first[4], first[5], first[6], first[7], 10);
+        }
+        for (const auto &use : list->heap_uses->uses)
+            if (const auto at = use.reg - 8; at < 16 && tables[at]) {
+                std::uint64_t words[2]{};
+                std::memcpy(words,
+                            reinterpret_cast<const void *>(tables[at] + std::uintptr_t{use.place} *
+                                                                            heaps[at].stride),
+                            sizeof words);
+                ID3D12Resource *resource = nullptr;
+                std::uint64_t offset = 0, room = 0;
+                const bool marked = words[0] == host_mark;
+                const bool buffer =
+                    !marked && buffer_at(words[0] & 0xffff'ffff'ffffull, resource, offset, room);
+                std::fprintf(stderr, "[Lost]   s%u place %u type %d: %016llx %016llx, %s%c",
+                             use.reg, use.place, use.type,
+                             static_cast<unsigned long long>(words[0]),
+                             static_cast<unsigned long long>(words[1]),
+                             marked   ? "the host's"
+                             : buffer ? "the title's, of a buffer known here"
+                                      : "the title's, of NO buffer known here",
+                             10);
+            }
+        std::fflush(stderr);
+    }
 }
 // XV_D3D_PROBE: draws per render target
 std::mutex draw_mutex;
@@ -4192,6 +4264,9 @@ void STDMETHODCALLTYPE set_vertex_buffers(void *self, UINT start, UINT count,
     if (views && count)
         trace_address("IASetVertexBuffers", views->BufferLocation);
     std::vector<D3D12_VERTEX_BUFFER_VIEW> host;
+    if (views && count && start == 0)
+        static_cast<ListProxy *>(self)->vertices = views[0];
+    ++static_cast<ListProxy *>(self)->vertex_calls;
     if (views) {
         host.assign(views, views + count);
         for (auto &view : host)
@@ -5457,6 +5532,7 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
             vertex = real_vertex, pixel = real_pixel;
             // what the two programs' records name, and the parameters their registers hold
             auto reads = std::make_shared<HeapUses>();
+            reads->made = why_vertex + " " + why_pixel;
             for (const auto &part : records)
                 for (std::size_t at = 16; at + 32 <= part.size(); at += 32) {
                     std::uint32_t words[6];

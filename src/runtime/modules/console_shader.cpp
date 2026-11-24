@@ -953,8 +953,13 @@ std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
                                                  Bytes root_signature, Bytes layout,
                                                  std::string *why, Bytes records) {
     std::string said;
-    const auto source =
-        console_program_source(stage, words, root_signature, &said, layout, records);
+    auto source = console_program_source(stage, words, root_signature, &said, layout, records);
+    // XV_PSO_SOLID: every pixel program of a cached pipeline writes one colour to its first
+    // target, to tell whether what is drawn with them gets there at all
+    if (static const bool solid = std::getenv("XV_PSO_SOLID") != nullptr;
+        solid && source && stage == ShaderStage::pixel)
+        if (const auto at = source->rfind("    return output;"); at != std::string::npos)
+            source->insert(at, "    output.f0 = 1;\n");
     // kept in the shader cache by what was translated: a title makes thousands of these as
     // it starts, and the host's compiler takes long enough over them for the title's own
     // watch on its threads to end it
@@ -967,6 +972,10 @@ std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
              (stage == ShaderStage::vertex ? "-cv.dxil" : "-cp.dxil"));
         shader = read_file(kept);
     }
+    // XV_SHADER_CODE=<folder>: the translation, under the name it is kept by
+    if (const auto *const dump = std::getenv("XV_SHADER_CODE"); dump && source && !kept.empty())
+        write_file(std::filesystem::path(dump) / (kept.stem().string() + ".hlsl"),
+                   {reinterpret_cast<const std::uint8_t *>(source->data()), source->size()});
     if (source && shader.empty()) {
         shader = compile_now(stage, *source, false, &said);
         if (!shader.empty() && !kept.empty())
@@ -974,6 +983,8 @@ std::vector<std::uint8_t> console_program_shader(ShaderStage stage,
     }
     if (source && shader.empty())
         said = "the host's compiler: " + said;
+    else if (source && !kept.empty())
+        said = kept.stem().string(); // what it is kept as, for the one who asks
     if (why)
         *why = said;
     return shader;
