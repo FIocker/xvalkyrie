@@ -5300,6 +5300,10 @@ HRESULT STDMETHODCALLTYPE deserialize_pipeline(ID3D12Device *self, const std::ui
         *pipeline = nullptr;
     static std::atomic<int> seen{0};
     const int index = seen++;
+    // XV_PSO_NOTIMPL: the cache is not read at all, as on a console that has none, to see
+    // what the title does then
+    if (static const bool refused = std::getenv("XV_PSO_NOTIMPL") != nullptr; refused)
+        return E_NOTIMPL;
     const auto readable = [](std::uint64_t address, std::size_t bytes) {
         MEMORY_BASIC_INFORMATION info{};
         return address > 0x10000 &&
