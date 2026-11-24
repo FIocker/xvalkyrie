@@ -63,6 +63,9 @@ const std::string_view commands =
 std::optional<int> run(int argc, wchar_t **argv) {
     if (argc < 2)
         return std::nullopt;
+    // XV_HEAP_SHADERS=1: the shader commands translate as a run with it does
+    if (const auto *const heaps = std::getenv("XV_HEAP_SHADERS"); heaps && *heaps == '1')
+        runtime::modules::use_heap_shaders(true);
     const std::filesystem::path command(argv[1]);
     if (argc == 3 && command == "inspect") {
         std::cout << inspect_file(argv[2]).dump(2) << '\n';

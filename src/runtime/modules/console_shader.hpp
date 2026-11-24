@@ -82,11 +82,17 @@ std::span<const std::uint8_t> host_shader(ShaderStage stage,
                                           HostShaderModel model = HostShaderModel::sm5,
                                           std::span<const PackedInput> packed = {},
                                           std::span<const std::uint8_t> root_signature = {});
+// XV_D3D_LOST: the start of a console shader's hash, its stage, and whether the host has
+// its translation or a stand-in, and then what stopped the translation; `heaps`: of the
+// shader made to read the heaps itself
+std::string host_shader_note(ShaderStage stage, std::span<const std::uint8_t> container,
+                             bool heaps = false);
 // While on, this thread's vertex and pixel shaders of the Series console are translated
 // to read their descriptors from the heaps themselves (rdna::Shader::heaps), which a
 // pipeline under a root signature of the host's own takes. What such a shader's file says
 // of its registers, for whoever fills them: `entries` are what the user registers hold
-// (type 0 constants, 3 a table; the first register, how many, the root parameter), `reads`
+// (type 0 constants, 1 a root view, 3 a table; the first register, how many, the root
+// parameter), `reads`
 // the descriptors read (type as a range's, 3 a sampler picked by the number in register
 // `reg`; else the table's register and the place in it).
 void use_heap_shaders(bool on);
@@ -96,6 +102,7 @@ struct HeapLayout {
     };
     struct Read {
         std::uint32_t type, reg, place;
+        std::uint32_t stride = 0; // of a buffer's elements, as the program reads them
     };
     std::vector<Entry> entries;
     std::vector<Read> reads;

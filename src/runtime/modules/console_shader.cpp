@@ -609,7 +609,9 @@ std::vector<std::uint8_t> compile_sm6(ShaderStage stage, const std::string &sour
     ComPtr<IDxcCompiler3> compiler;
     if (FAILED(host_dxc_create_instance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler))))
         return {};
-    const wchar_t *const profile = stage == ShaderStage::vertex ? L"vs_6_0" : L"ps_6_6";
+    const bool heaps = source.find("DescriptorHeap[") != std::string::npos;
+    const wchar_t *const profile =
+        stage == ShaderStage::vertex ? (heaps ? L"vs_6_6" : L"vs_6_0") : L"ps_6_6";
     const wchar_t *args[] = {L"-E", L"main", L"-T", profile};
     const DxcBuffer input{source.data(), source.size(), DXC_CP_UTF8};
     ComPtr<IDxcResult> result;
@@ -708,6 +710,8 @@ std::condition_variable made_one;
 std::map<std::string, std::vector<std::uint8_t>> made; // by cache name; never erased
 std::set<std::string> making;                          // by cache name, on some thread
 std::atomic<unsigned> translated{0}, stood_in{0};
+// XV_D3D_LOST: how each shader came to be, by its hash and stage
+std::map<std::string, std::string> notes;
 } // namespace
 
 bool inflate_zlib(Bytes stream, std::vector<std::uint8_t> &out) { return Inflate(stream).run(out); }
@@ -719,19 +723,40 @@ std::span<const std::uint8_t> rectangle_shader(Bytes vertex) {
         outputs = signature(vertex, "OSGN");
     if (outputs.empty())
         return {};
-    // what varies across a rectangle does so evenly: the fourth corner is as far from the
-    // second as the third is from the first. What does not vary is the first corner's.
+    // What varies across a rectangle does so evenly: the fourth corner is as far from one
+    // of the three as the third is from the one between them, which is the one where the
+    // sides meet at a right angle (7952987A gives it second). What does not vary is that
+    // corner's.
     std::string source = hlsl_struct("Vertex", outputs, false) +
                          "[maxvertexcount(4)] void main(triangle Vertex input[3], inout "
-                         "TriangleStream<Vertex> stream) {\n    Vertex fourth = input[0];\n";
+                         "TriangleStream<Vertex> stream) {\n    int c = 0;\n";
+    for (std::size_t field = 0; field < outputs.size(); ++field)
+        if (!_stricmp(outputs[field].name.c_str(), "SV_Position") && outputs[field].width == 4) {
+            const auto name = ".f" + std::to_string(field);
+            source += "    float least = 3.0e38;\n    for (int i = 0; i < 3; ++i) {\n"
+                      "        float2 p = input[i]" +
+                      name + ".xy / input[i]" + name +
+                      ".w;\n"
+                      "        float2 a = input[(i + 1) % 3]" +
+                      name + ".xy / input[(i + 1) % 3]" + name +
+                      ".w - p;\n"
+                      "        float2 b = input[(i + 2) % 3]" +
+                      name + ".xy / input[(i + 2) % 3]" + name +
+                      ".w - p;\n"
+                      "        float d = abs(dot(a, b));\n"
+                      "        if (d < least) { least = d; c = i; }\n    }\n";
+            break;
+        }
+    source += "    Vertex corner = input[c], one = input[(c + 1) % 3], two = input[(c + 2) % 3];\n"
+              "    Vertex fourth = corner;\n";
     for (std::size_t field = 0; field < outputs.size(); ++field)
         if (outputs[field].type == 3) {
             const auto name = ".f" + std::to_string(field);
-            source += "    fourth" + name + " = input[1]" + name + " + input[2]" + name +
-                      " - input[0]" + name + ";\n";
+            source += "    fourth" + name + " = one" + name + " + two" + name + " - corner" + name +
+                      ";\n";
         }
-    source += "    stream.Append(input[0]);\n    stream.Append(input[1]);\n    "
-              "stream.Append(input[2]);\n    stream.Append(fourth);\n}\n";
+    source += "    stream.Append(corner);\n    stream.Append(one);\n    "
+              "stream.Append(two);\n    stream.Append(fourth);\n}\n";
     static std::mutex rectangles_mutex;
     static std::map<std::string, std::vector<std::uint8_t>> rectangles; // by source; never erased
     const std::lock_guard lock(rectangles_mutex);
@@ -1020,7 +1045,7 @@ HeapLayout shader_heap_layout(Bytes container) {
     for (std::uint32_t n = 0; n < layouts; ++n) {
         const auto entry = at + 20 * n;
         const auto type = at32(entry);
-        if (type == 0 || type == 3)
+        if (type == 0 || type == 1 || type == 3)
             layout.entries.push_back({type, file[entry + 16], at32(entry + 8), file[entry + 17]});
     }
     for (std::uint32_t n = 0; n < reads; ++n) {
@@ -1032,7 +1057,8 @@ HeapLayout shader_heap_layout(Bytes container) {
                           : kind == 2     ? 3u
                                           : ~0u;
         if (type != ~0u)
-            layout.reads.push_back({type, file[entry + 17], at32(entry + 4) / 8});
+            layout.reads.push_back(
+                {type, file[entry + 17], at32(entry + 4) / 8, file[entry + 16] == 4 ? at32(entry + 12) : 0});
     }
     return layout;
 }
@@ -1106,6 +1132,9 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
     static const char *const stand_ins = std::getenv("XV_SHADER_STAND_INS");
     const char stage_letter = "vpc123"[static_cast<int>(stage)];
     const bool stand_ins_only = stand_ins && !std::strchr(stand_ins, stage_letter);
+    // XV_SHADER_SOLID: every translated pixel shader writes one colour to its first target,
+    // to tell whether what is drawn with them gets to the screen at all
+    static const bool solid = std::getenv("XV_SHADER_SOLID") != nullptr;
     const char *const model_name = model == HostShaderModel::sm6         ? "-sm6"
                                    : model == HostShaderModel::automatic ? "-auto"
                                                                          : "";
@@ -1113,7 +1142,8 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         hash + "-" + letter + "-v" + std::to_string(translator_version) + model_name +
         (signed_inputs ? "-s" + std::to_string(signed_inputs) : "") +
         (root_signature.empty() ? "" : "-r" + hash_name(root_signature).substr(0, 12)) +
-        (stand_ins_only ? "-stand-in" : "") + (heap_shaders ? "-heaps" : "") + ".dxbc";
+        (stand_ins_only ? "-stand-in" : "") + (heap_shaders ? "-heaps" : "") +
+        (solid ? std::string("-solid") + std::getenv("XV_SHADER_SOLID") : "") + ".dxbc";
     // one thread makes a shader, and the others that want the same one wait for it: titles
     // make their pipelines on many threads, and the host's compiler is slow
     {
@@ -1166,6 +1196,18 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                 at = end + 1;
             }
         }
+        if (solid && source && stage == ShaderStage::pixel)
+            if (const auto at = source->rfind("    return output;"); at != std::string::npos)
+                source->insert(at, "    output.f0 = float4(1.0, 0.0, 1.0, 1.0);\n");
+        // with the value 2, every vertex shader that has its vertex's number puts its
+        // vertices at the corners of a triangle over the whole target as well
+        if (solid && source && stage == ShaderStage::vertex &&
+            std::getenv("XV_SHADER_SOLID")[0] == '2' &&
+            source->find("uint xv_vertex : SV_VertexID") != std::string::npos)
+            if (const auto at = source->rfind("    return output;"); at != std::string::npos)
+                source->insert(at,
+                               "    output.f0 = float4(float(input.xv_vertex & 1u) * 4.0 - 1.0, "
+                               "1.0 - float(input.xv_vertex & 2u) * 2.0, 0.5, 1.0);\n");
         // XV_SHADER_CODE: the HLSL made for it as well
         if (const auto *const dump = std::getenv("XV_SHADER_CODE"); dump && source) {
             const auto text = std::filesystem::path(dump) / (hash + "-" + letter + ".hlsl");
@@ -1176,17 +1218,22 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
         if (source)
             shader = compile(stage, *source, kept ? folder / name : std::filesystem::path{}, sm6);
         const bool done = !shader.empty();
-        if (done || model != HostShaderModel::sm6)
+        // a pipeline whose shaders read the heaps is of the newer model in every stage: a
+        // stand-in for one of them is too
+        const bool stands_in = model != HostShaderModel::sm6 || heap_shaders;
+        if (done || stands_in)
             ++(done ? translated : stood_in);
         const std::lock_guard lock(mutex);
-        if (!done && model != HostShaderModel::sm6) {
+        notes[hash + "-" + letter + (heap_shaders ? "h" : "")] =
+            done ? "translated" : "stand-in (" + (source ? "the host's compiler" : why) + ")";
+        if (!done && stands_in) {
             if (asking)
                 ++reasons[std::string(1, letter) + ": " + (source ? "the host's compiler" : why)];
             const auto text = stand_in(stage, container);
             if (const auto *const dump = std::getenv("XV_SHADER_CODE"))
                 write_file(std::filesystem::path(dump) / (hash + "-" + letter + ".stand-in.hlsl"),
                            {reinterpret_cast<const std::uint8_t *>(text.data()), text.size()});
-            shader = compile(stage, text);
+            shader = compile(stage, text, {}, heap_shaders);
         } else if (done && kept) {
             // only what was translated is kept: a stand-in is made again, in case the next
             // version translates the shader
@@ -1204,11 +1251,20 @@ std::span<const std::uint8_t> make_host_shader(ShaderStage stage, Bytes containe
                 std::fprintf(stderr, "[Runtime]   %u stopped by %s\n", count, reason.c_str());
     }
     const std::lock_guard lock(mutex);
+    notes.try_emplace(hash + "-" + letter + (heap_shaders ? "h" : ""), "translated");
     making.erase(name);
     made_one.notify_all();
     return made.emplace(name, std::move(shader)).first->second;
 }
 } // namespace
+
+std::string host_shader_note(ShaderStage stage, Bytes container, bool heaps) {
+    const auto name = hash_name(container) + "-" + "vpc123"[static_cast<int>(stage)];
+    const std::lock_guard lock(mutex);
+    const auto found = notes.find(heaps ? name + "h" : name);
+    return name.substr(0, 8) + name.substr(name.size() - 2) + " " +
+           (found == notes.end() ? "not made" : found->second);
+}
 
 std::span<const std::uint8_t> empty_compute_shader() {
     static const auto shader = compile(ShaderStage::compute, stand_in(ShaderStage::compute, {}));

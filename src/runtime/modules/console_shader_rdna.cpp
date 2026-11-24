@@ -484,10 +484,30 @@ class Translator {
                 const std::uint32_t reg = file[entry + 16], slot = file[entry + 17];
                 if (type == 4)
                     continue;
-                if (type == 1)
-                    give_up("a root view in a shader that reads the heaps");
-                if (reg < 8 || reg + (type == 0 ? count : 1) > 24)
+                if (reg < 8 || reg + (type == 0 ? count : type == 1 ? 2 : 1) > 24)
                     give_up("user registers the host's shader is not given");
+                if (type == 1) {
+                    // A root view: the host's signature has one of each kind in space 201,
+                    // which gets the address the title gives this parameter. It is a shader
+                    // resource unless a record says the program reads it as another kind.
+                    Parameter view;
+                    view.type = 3;
+                    view.space = 201;
+                    for (std::uint32_t k = 0; k < reads; ++k) {
+                        const auto read = at + 20 * (layouts + k);
+                        if (file[read + 1] == 1 && file[read + 18] == slot)
+                            view.type = file[read] == 2 ? 2u : file[read] == 3 ? 4u : 3u;
+                    }
+                    std::uint32_t tables = 0;
+                    for (std::uint32_t k = 0; k < layouts; ++k)
+                        if (word(file, at + 20 * k) == 3)
+                            tables = std::max<std::uint32_t>(tables, file[at + 20 * k + 17] + 1);
+                    if (parameters_.size() < tables)
+                        parameters_.resize(tables);
+                    root(reg, static_cast<std::uint32_t>(parameters_.size()));
+                    parameters_.push_back(view);
+                    continue;
+                }
                 if (type == 3) {
                     if (slot >= parameters_.size())
                         parameters_.resize(slot + 1);

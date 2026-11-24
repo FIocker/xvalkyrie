@@ -746,6 +746,29 @@ D3D12_CPU_DESCRIPTOR_HANDLE host_handle(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
         return host_slot(*heap, handle.ptr);
     return handle;
 }
+// A view of memory of the title's that is in no buffer here is a view of a copy, and the
+// title fills such memory after it has made the view (7952987A: the constants and matrices
+// of a draw). What each was made of is kept, by the host's slot, so that the copy can be
+// made again when a draw reads it (refresh_memory_view).
+struct MemoryView {
+    D3D12_CPU_DESCRIPTOR_HANDLE handle{}; // the title's
+    bool constants = false;
+    D3D12_CONSTANT_BUFFER_VIEW_DESC buffer{};
+    std::uint8_t resource[sizeof(D3D12_SHADER_RESOURCE_VIEW_DESC) + sizeof(std::uint64_t)]{};
+};
+std::mutex memory_view_mutex;
+std::map<std::uint64_t, MemoryView> memory_views;
+// The view of a buffer in each of the host's slots. A shader that reads the heaps itself
+// reads a buffer as elements of the size its code has, whatever the view the title made
+// says (the console's descriptor is an address): the view is made again as one of such
+// elements for the draw (structured_view).
+struct BufferView {
+    ID3D12Resource *resource;
+    D3D12_SHADER_RESOURCE_VIEW_DESC desc;
+};
+std::map<std::uint64_t, BufferView> buffer_views; // under memory_view_mutex
+// XV_D3D_LOST: what the shader resource view in each of the host's slots was made of
+std::map<std::uint64_t, std::string> lost_views; // under memory_view_mutex
 // The mark of a host descriptor, and the host's handle of the slot that holds it: a title
 // that copies descriptors itself (the device's inline CopyDescriptorsSimple) carries both
 // along, which tells where the host's descriptor of the copy is to come from.
@@ -755,9 +778,24 @@ void set_mark(const ShadowHeap &heap, std::uintptr_t at) {
     std::memcpy(reinterpret_cast<void *>(at), words, sizeof words);
 }
 void mark_host(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
-    const std::lock_guard lock(shadow_mutex);
-    if (const auto *heap = shadow_heap(handle.ptr))
-        set_mark(*heap, handle.ptr);
+    std::uint64_t slot = 0;
+    {
+        const std::lock_guard lock(shadow_mutex);
+        if (const auto *heap = shadow_heap(handle.ptr)) {
+            set_mark(*heap, handle.ptr);
+            slot = host_slot(*heap, handle.ptr).ptr;
+        }
+    }
+    const std::lock_guard lock(memory_view_mutex);
+    memory_views.erase(slot);
+    buffer_views.erase(slot);
+}
+void keep_memory_view(const MemoryView &view) {
+    const auto slot = host_handle(view.handle).ptr;
+    const std::lock_guard lock(memory_view_mutex);
+    if (memory_views.size() > 200'000)
+        memory_views.clear();
+    memory_views[slot] = view;
 }
 // whether a host handle is a slot of a heap the title still has
 bool live_slot(D3D12_DESCRIPTOR_HEAP_TYPE type, std::uint64_t handle) {
@@ -786,6 +824,21 @@ void resolve(const ShadowHeap &heap, std::uintptr_t at) {
     original<Copy>(heap.device, 24)(heap.device, 1, own, D3D12_CPU_DESCRIPTOR_HANDLE{words[1]},
                                     heap.type);
     set_mark(heap, at);
+    // what is known of the descriptor goes with it
+    const std::lock_guard lock(memory_view_mutex);
+    if (const auto found = memory_views.find(words[1]); found != memory_views.end()) {
+        auto view = found->second;
+        view.handle.ptr = at;
+        memory_views[own.ptr] = view;
+    } else {
+        memory_views.erase(own.ptr);
+    }
+    if (const auto found = lost_views.find(words[1]); found != lost_views.end())
+        lost_views[own.ptr] = found->second;
+    if (const auto found = buffer_views.find(words[1]); found != buffer_views.end())
+        buffer_views[own.ptr] = found->second;
+    else
+        buffer_views.erase(own.ptr);
 }
 // the host's handle for a console one whose descriptor is about to be read
 D3D12_CPU_DESCRIPTOR_HANDLE host_view(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
@@ -1436,10 +1489,14 @@ const D3D12_CLEAR_VALUE *host_clear(const D3D12_CLEAR_VALUE *clear, D3D12_CLEAR_
     return &host;
 }
 std::uint64_t root_address(std::uint64_t address);
-std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most = 64 << 10);
+std::uint64_t root_constants(std::uint64_t address);
+std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most = 64 << 10,
+                        std::uint64_t align = 0, ID3D12Resource **buffer = nullptr,
+                        std::uint64_t *offset = nullptr);
 void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFER_VIEW_DESC *desc,
                                   Handle handle) {
     D3D12_CONSTANT_BUFFER_VIEW_DESC host{};
+    bool copied = false;
     if (desc) {
         host = *desc;
         // the console takes a view of any size; the host wants multiples of 256 bytes, and
@@ -1461,14 +1518,20 @@ void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFE
         host.BufferLocation =
             console == Target::scarlett ? root_address(given) : host_address(given);
         MEMORY_BASIC_INFORMATION info{};
+        // root_address has copied what is memory of the title's and in no buffer
+        copied = console == Target::scarlett && host.BufferLocation != given &&
+                 VirtualQuery(reinterpret_cast<void *>(given), &info, sizeof info) &&
+                 info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD));
         if (console == Target::scarlett && host.BufferLocation & 255 &&
             VirtualQuery(reinterpret_cast<void *>(given), &info, sizeof info) &&
             info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
             const auto room =
                 reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize - given;
             if (const auto copy = ring_copy(reinterpret_cast<const void *>(given),
-                                            std::min<std::uint64_t>(room, host.SizeInBytes)))
+                                            std::min<std::uint64_t>(room, host.SizeInBytes))) {
                 host.BufferLocation = copy;
+                copied = true;
+            }
         }
         if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 12) {
             std::fprintf(stderr,
@@ -1477,12 +1540,28 @@ void STDMETHODCALLTYPE create_cbv(ID3D12Device *self, const D3D12_CONSTANT_BUFFE
                          static_cast<unsigned long long>(given), desc->SizeInBytes,
                          static_cast<unsigned long long>(host.BufferLocation), host.SizeInBytes,
                          detail::guest_location(_ReturnAddress()).c_str(), 10);
+            float words[16]{};
+            if (desc->SizeInBytes >= 0x1a0 && info.State == MEM_COMMIT)
+                std::memcpy(words, reinterpret_cast<const void *>(given + 0x160), sizeof words);
+            std::fprintf(stderr,
+                         "[Lost]   at 0x160: %g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g "
+                         "%g%c",
+                         words[0], words[1], words[2], words[3], words[4], words[5], words[6],
+                         words[7], words[8], words[9], words[10], words[11], words[12], words[13],
+                         words[14], words[15], 10);
             std::fflush(stderr);
         }
     }
     original<void(STDMETHODCALLTYPE *)(void *, const void *, Handle)>(self, 17)(
         self, desc ? &host : nullptr, host_handle(handle));
     mark_host(handle);
+    if (copied) {
+        MemoryView view;
+        view.handle = handle;
+        view.constants = true;
+        view.buffer = *desc;
+        keep_memory_view(view);
+    }
 }
 // What a view without a format reads a typeless texture as: the console takes the number
 // format from elsewhere, the host wants it in the view. `srgb` picks the gamma twin.
@@ -1567,6 +1646,39 @@ void STDMETHODCALLTYPE create_srv(ID3D12Device *self, ID3D12Resource *resource, 
     original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(self, 18)(
         self, resource, desc, host_handle(handle));
     mark_host(handle);
+    if (resource && desc && console == Target::scarlett) {
+        D3D12_SHADER_RESOURCE_VIEW_DESC made;
+        std::memcpy(&made, desc, sizeof made);
+        if (made.ViewDimension == D3D12_SRV_DIMENSION_BUFFER) {
+            const auto slot = host_handle(handle).ptr;
+            const std::lock_guard lock(memory_view_mutex);
+            if (buffer_views.size() > 400'000)
+                buffer_views.clear();
+            buffer_views[slot] = {resource, made};
+        }
+    }
+    if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr;
+        checking && resource && desc) {
+        D3D12_SHADER_RESOURCE_VIEW_DESC made;
+        std::memcpy(&made, desc, sizeof made);
+        const auto of = resource->GetDesc();
+        char text[200];
+        std::snprintf(text, sizeof text,
+                      "a view (dimension %d format %d, first %llu, %u of %u bytes) of resource %p "
+                      "dimension %d %llux%u at %llx",
+                      made.ViewDimension, made.Format,
+                      static_cast<unsigned long long>(made.Buffer.FirstElement),
+                      made.Buffer.NumElements, made.Buffer.StructureByteStride,
+                      static_cast<void *>(resource), of.Dimension, of.Width, of.Height,
+                      of.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+                          ? static_cast<unsigned long long>(resource->GetGPUVirtualAddress())
+                          : 0ull);
+        const auto slot = host_handle(handle).ptr;
+        const std::lock_guard lock(memory_view_mutex);
+        if (lost_views.size() > 400'000)
+            lost_views.clear();
+        lost_views[slot] = text;
+    }
 }
 // XV_D3D_LOST: the last view each thread made, said when the host drops the device there
 thread_local char lost_last[640];
@@ -1753,6 +1865,12 @@ void STDMETHODCALLTYPE create_target_view(ID3D12Device *self, ID3D12Resource *re
     if (Index == 20) {
         const std::lock_guard lock(target_mutex);
         target_of[host_handle(handle).ptr] = resource;
+        // XV_D3D_PROBE reads the targets back: each is held, so that one the title lets go
+        // of is still there to read
+        static const bool probing = std::getenv("XV_D3D_PROBE") != nullptr;
+        static std::set<ID3D12Resource *> held;
+        if (probing && resource && held.insert(resource).second)
+            resource->AddRef();
     }
     // XV_D3D_LOST: what each view is of, for the draw the host drops the device at
     if (static const bool checking = std::getenv("XV_D3D_LOST") != nullptr; checking) {
@@ -2226,15 +2344,123 @@ void STDMETHODCALLTYPE create_srv_at(ID3D12Device *self, const D3D12_RESOURCE_DE
             create_srv(self, texture, &view, handle);
         return;
     }
-    if (!buffer_at(address, resource, offset, size))
-        return;
     const UINT element = view.Buffer.StructureByteStride ? view.Buffer.StructureByteStride
                          : view.Buffer.Flags & D3D12_BUFFER_SRV_FLAG_RAW
                              ? 4
                              : element_bytes(view.Format);
+    const bool known = buffer_at(address, resource, offset, size);
+    if (static std::atomic<int> shown{0};
+        std::getenv("XV_D3D_LOST") && shown++ < 6) {
+        float first[16]{};
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+            info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            std::memcpy(first, reinterpret_cast<const void *>(address), sizeof first);
+        std::fprintf(stderr,
+                     "[Lost] a view of a buffer of memory at %llx (%s): first %llu, %u of %u "
+                     "bytes, flags %u, format %d, of %llu bytes: %g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g%c",
+                     static_cast<unsigned long long>(address), known ? "a buffer" : "no buffer",
+                     static_cast<unsigned long long>(view.Buffer.FirstElement),
+                     view.Buffer.NumElements, view.Buffer.StructureByteStride, view.Buffer.Flags, view.Format, static_cast<unsigned long long>(of ? of->Width : 0),
+                     first[0], first[1], first[2], first[3], first[4], first[5], first[6], first[7],
+                     first[8], first[9], first[10], first[11], first[12], first[13], first[14],
+                     first[15], 10);
+    }
+    if (!known) {
+        // Memory of the title's that is in no buffer here: what the view is of is copied,
+        // as it is now, to where the host can have a view (7952987A has the matrices its
+        // first screens are drawn with in such views, made as it draws).
+        const auto bytes =
+            (view.Buffer.FirstElement + std::uint64_t{view.Buffer.NumElements}) * element;
+        MEMORY_BASIC_INFORMATION info{};
+        if (console != Target::scarlett || !element || !bytes || bytes > (16ull << 20) ||
+            !VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) ||
+            info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) ||
+            reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize - address < bytes ||
+            !ring_copy(reinterpret_cast<const void *>(address), bytes, bytes,
+                       256 % element ? element : 256, &resource, &offset))
+            return;
+    }
     if (element)
         view.Buffer.FirstElement += offset / element;
     create_srv(self, resource, &view, handle);
+    if (!known) {
+        MemoryView kept;
+        kept.handle = handle;
+        std::memcpy(kept.resource, desc, sizeof kept.resource);
+        keep_memory_view(kept);
+    }
+}
+// the view of a buffer in the host's `slot`, as one of elements of `stride` bytes
+void structured_view(ID3D12Device *device, std::uint64_t slot, std::uint32_t stride) {
+    BufferView view;
+    {
+        const std::lock_guard lock(memory_view_mutex);
+        const auto found = buffer_views.find(slot);
+        if (found == buffer_views.end())
+            return;
+        view = found->second;
+    }
+    const std::uint64_t element = view.desc.Buffer.StructureByteStride
+                                      ? view.desc.Buffer.StructureByteStride
+                                  : view.desc.Buffer.Flags & D3D12_BUFFER_SRV_FLAG_RAW
+                                      ? 4
+                                      : element_bytes(view.desc.Format);
+    const auto start = view.desc.Buffer.FirstElement * element;
+    const auto bytes = view.desc.Buffer.NumElements * element;
+    if (!element || element == stride || start % stride || bytes < stride)
+        return;
+    auto made = view.desc;
+    made.Format = DXGI_FORMAT_UNKNOWN;
+    made.Buffer.FirstElement = start / stride;
+    made.Buffer.NumElements = static_cast<UINT>(bytes / stride);
+    made.Buffer.StructureByteStride = stride;
+    made.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+    original<void(STDMETHODCALLTYPE *)(void *, void *, const void *, Handle)>(device, 18)(
+        device, view.resource, &made, Handle{slot});
+    const std::lock_guard lock(memory_view_mutex);
+    buffer_views[slot] = {view.resource, made};
+}
+// the copy a view of the title's memory is of, made again: `slot` is the host's
+extern std::atomic<ID3D12Device *> d3d12_device;
+extern std::atomic<bool> lost_again;
+void refresh_memory_view(std::uint64_t slot) {
+    MemoryView view;
+    {
+        const std::lock_guard lock(memory_view_mutex);
+        const auto found = memory_views.find(slot);
+        if (found == memory_views.end())
+            return;
+        view = found->second;
+    }
+    auto *const device = d3d12_device.load();
+    if (!device)
+        return;
+    if (static std::atomic<int> shown{0};
+        std::getenv("XV_D3D_LOST") && (shown++ < 12 || lost_again)) {
+        std::uint64_t address = view.buffer.BufferLocation;
+        if (!view.constants)
+            std::memcpy(&address, view.resource + sizeof(D3D12_SHADER_RESOURCE_VIEW_DESC),
+                        sizeof address);
+        else if (view.buffer.SizeInBytes >= 0x1a0)
+            address += 0x160;
+        float first[16]{};
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+            info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            std::memcpy(first, reinterpret_cast<const void *>(address), sizeof first);
+        std::fprintf(stderr,
+                     "[Lost] a view of memory at %llx (%s) made again: %g %g %g %g | %g %g %g %g "
+                     "| %g %g %g %g | %g %g %g %g%c",
+                     static_cast<unsigned long long>(address),
+                     view.constants ? "constants" : "a buffer", first[0], first[1], first[2],
+                     first[3], first[4], first[5], first[6], first[7], first[8], first[9],
+                     first[10], first[11], first[12], first[13], first[14], first[15], 10);
+    }
+    if (view.constants)
+        create_cbv(device, &view.buffer, view.handle);
+    else
+        create_srv_at(device, nullptr, view.resource, view.handle);
 }
 void STDMETHODCALLTYPE create_uav_at(ID3D12Device *self, const D3D12_RESOURCE_DESC *of,
                                      const void *desc, Handle handle) {
@@ -2399,8 +2625,8 @@ std::map<const void *, KeptPipeline> kept_pipelines;
 // `samplers`: the registers that have the number of a sampler in the sampler heap. Those
 // descriptors that the title wrote itself are made the host's before a draw.
 struct HeapUses {
-    // per stage (vertex, pixel): what its user registers hold - `kind` 1 a table, 5
-    // constants; the first register, how many, the title's root parameter - then the
+    // per stage (vertex, pixel): what its user registers hold - `kind` 1 a table, 2 a root
+    // view, 5 constants; the first register, how many, the title's root parameter - then the
     // descriptors read and the registers that have a sampler's number
     struct Entry {
         int kind = 0;
@@ -2409,6 +2635,7 @@ struct HeapUses {
     struct Use {
         std::uint32_t reg, place;
         D3D12_DESCRIPTOR_RANGE_TYPE type;
+        std::uint32_t stride = 0; // of a buffer's elements, as the shader reads them
     };
     struct Stage {
         std::vector<Entry> entries;
@@ -2426,13 +2653,14 @@ HeapUses::Stage heap_stage(const D3D12_SHADER_BYTECODE &code) {
     const auto layout = modules::shader_heap_layout(
         {static_cast<const std::uint8_t *>(code.pShaderBytecode), code.BytecodeLength});
     for (const auto &entry : layout.entries)
-        stage.entries.push_back({entry.type == 3 ? 1 : 5, entry.reg, entry.count, entry.slot});
+        stage.entries.push_back(
+            {entry.type == 3 ? 1 : entry.type == 1 ? 2 : 5, entry.reg, entry.count, entry.slot});
     for (const auto &read : layout.reads)
         if (read.type == 3)
             stage.samplers.push_back(read.reg);
         else
-            stage.uses.push_back(
-                {read.reg, read.place, static_cast<D3D12_DESCRIPTOR_RANGE_TYPE>(read.type)});
+            stage.uses.push_back({read.reg, read.place,
+                                  static_cast<D3D12_DESCRIPTOR_RANGE_TYPE>(read.type), read.stride});
     return stage;
 }
 std::map<const void *, std::shared_ptr<const HeapUses>> heap_pipelines; // under kept_mutex
@@ -2443,7 +2671,8 @@ std::shared_ptr<const HeapUses> heap_uses(const void *pipeline) {
 }
 // that root signature: sixteen constants for the vertex shader (b0) and as many for the
 // pixel shader (b1), both in space 200, the sampler the shaders sample with, and the heaps indexed
-// by the shaders. Null where the host has no such heaps.
+// by the shaders; then a root view of each kind (t0, b0 and u0 of space 201) for the one a
+// shader may read. Null where the host has no such heaps.
 ID3D12RootSignature *heap_signature(ID3D12Device *device);
 bool heap_shaders_wanted(ID3D12Device *device) {
     // not yet by default: with it the host turns some pipelines down (E_OUTOFMEMORY) and
@@ -2460,10 +2689,17 @@ ID3D12RootSignature *heap_signature(ID3D12Device *device) {
     std::call_once(once, [&] {
         using Serialize = HRESULT(WINAPI *)(const void *, void **, void **);
         const auto serialize = host_d3d12<Serialize>("D3D12SerializeVersionedRootSignature");
-        D3D12_ROOT_PARAMETER1 parameters[2]{};
+        D3D12_ROOT_PARAMETER1 parameters[5]{};
         for (UINT n = 0; n < 2; ++n) {
             parameters[n].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
             parameters[n].Constants = {n, 200, 16};
+            parameters[n].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+        parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        for (UINT n = 2; n < 5; ++n) {
+            parameters[n].Descriptor = {0, 201, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE};
             parameters[n].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         }
         D3D12_STATIC_SAMPLER_DESC sampler{};
@@ -2474,7 +2710,7 @@ ID3D12RootSignature *heap_signature(ID3D12Device *device) {
         sampler.RegisterSpace = 200;
         D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc{};
         desc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-        desc.Desc_1_1.NumParameters = 2;
+        desc.Desc_1_1.NumParameters = 5;
         desc.Desc_1_1.pParameters = parameters;
         desc.Desc_1_1.NumStaticSamplers = 1;
         desc.Desc_1_1.pStaticSamplers = &sampler;
@@ -2520,6 +2756,9 @@ D3D12_SHADER_BYTECODE keep_shader(const D3D12_SHADER_BYTECODE &code) {
 }
 // XV_D3D_LOST: how each pipeline was made, for the draw that the host drops the device at
 std::map<const void *, std::string> made_pipelines;
+// XV_D3D_LOST_AT=<n>: what is said of the first draws is said again of the twelve from draw
+// n on, when the title has got further
+std::atomic<bool> lost_again{false};
 void lost_pipeline(const char *how, void *const *pipeline, const void *root) {
     static const bool checking = std::getenv("XV_D3D_LOST") != nullptr;
     if (!checking || !pipeline || !*pipeline)
@@ -3987,13 +4226,28 @@ void prepare_draw(ListProxy *list) {
                 for (UINT n = 0; n < entry.count && at + n < 16; ++n)
                     if (n < argument->words.size())
                         user[at + n] = argument->words[n];
+            } else if (entry.kind == 2 && argument->kind == 3) {
+                list->host->SetGraphicsRootShaderResourceView(2, root_address(argument->value));
+            } else if (entry.kind == 2 && argument->kind == 2) {
+                list->host->SetGraphicsRootConstantBufferView(3, root_constants(argument->value));
+            } else if (entry.kind == 2 && argument->kind == 4) {
+                list->host->SetGraphicsRootUnorderedAccessView(4, host_address(argument->value));
             }
         }
         for (const auto &use : stage.uses)
             if (const auto at = use.reg - 8; at < 16 && tables[at]) {
                 const auto where = tables[at] + std::uintptr_t{use.place} * heaps[at].stride;
-                if (where + heaps[at].stride <= heaps[at].end)
-                    decode_as(heaps[at], where, use.type);
+                if (where + heaps[at].stride > heaps[at].end)
+                    continue;
+                // a view of the title's memory is of that memory as it is now
+                std::uint64_t words[2];
+                std::memcpy(words, reinterpret_cast<const void *>(where), sizeof words);
+                if (words[0] == host_mark)
+                    refresh_memory_view(words[1]);
+                decode_as(heaps[at], where, use.type);
+                if (use.type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV && use.stride > 4)
+                    structured_view(heaps[at].device, host_slot(heaps[at], where).ptr,
+                                    use.stride);
             }
         if (!stage.samplers.empty()) {
             ShadowHeap samplers{};
@@ -4013,7 +4267,8 @@ void prepare_draw(ListProxy *list) {
         list->host->SetGraphicsRoot32BitConstants(index, 16, user, 0);
     }
     // XV_D3D_LOST: what the first of these draws are given
-    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 24) {
+    if (static std::atomic<int> shown{0};
+        std::getenv("XV_D3D_LOST") && (shown++ < 24 || lost_again)) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC made{};
         {
             const std::lock_guard lock(kept_mutex);
@@ -4042,7 +4297,7 @@ void prepare_draw(ListProxy *list) {
                      user[5], list->heap_uses->stages[1].entries.size(), text.c_str(),
                      list->heap_uses->made.c_str(), 10);
         {
-            float first[8]{};
+            float first[18]{};
             MEMORY_BASIC_INFORMATION info{};
             const auto at = list->vertices.BufferLocation;
             const bool memory =
@@ -4052,33 +4307,100 @@ void prepare_draw(ListProxy *list) {
                 std::memcpy(first, reinterpret_cast<const void *>(at), sizeof first);
             std::fprintf(stderr,
                          "[Lost]   vertices set %u times on this list; stream 0 at %llx, %u bytes, "
-                         "stride %u, %s: %g %g %g %g %g %g %g %g%c",
+                         "stride %u, %s: %g %g %g %g %g %g %g %g; then %g %g; %g %g %g; %g %g%c",
                          list->vertex_calls, static_cast<unsigned long long>(at),
                          list->vertices.SizeInBytes, list->vertices.StrideInBytes,
                          memory ? "memory" : "not memory here", first[0], first[1], first[2],
-                         first[3], first[4], first[5], first[6], first[7], 10);
+                         first[3], first[4], first[5], first[6], first[7], first[10], first[11],
+                         first[12], first[13], first[14], first[16], first[17], 10);
         }
-        for (const auto &use : list->heap_uses->stages[1].uses)
-            if (const auto at = use.reg - 8; at < 16 && tables[at]) {
-                std::uint64_t words[2]{};
+        // what each stage reads, by the table its register has
+        for (UINT index = 0; index < 2; ++index) {
+            const auto &stage = list->heap_uses->stages[index];
+            for (const auto &entry : stage.entries) {
+                const auto *const argument =
+                    entry.slot < arguments.size() ? &arguments[entry.slot] : nullptr;
+                std::fprintf(stderr, "[Lost]   %s s%u: kind %d x%u of parameter %u, given %d/%llx%c",
+                             index ? "pixel" : "vertex", entry.reg, entry.kind, entry.count,
+                             entry.slot, argument ? argument->kind : 0,
+                             static_cast<unsigned long long>(argument ? argument->value : 0), 10);
+            }
+            for (const auto &use : stage.uses) {
+                std::uintptr_t table = 0;
+                ShadowHeap heap{};
+                for (const auto &entry : stage.entries)
+                    if (entry.kind == 1 && entry.reg == use.reg && entry.slot < arguments.size() &&
+                        arguments[entry.slot].kind == 1) {
+                        const std::lock_guard lock(shadow_mutex);
+                        if (const auto *const in = shadow_heap(arguments[entry.slot].value)) {
+                            heap = *in;
+                            table = arguments[entry.slot].value;
+                        }
+                    }
+                if (!table)
+                    continue;
+                std::uint64_t words[4]{};
                 std::memcpy(words,
-                            reinterpret_cast<const void *>(tables[at] + std::uintptr_t{use.place} *
-                                                                            heaps[at].stride),
-                            sizeof words);
+                            reinterpret_cast<const void *>(table + std::uintptr_t{use.place} *
+                                                                       heap.stride),
+                            std::min<std::size_t>(sizeof words, heap.stride));
                 ID3D12Resource *resource = nullptr;
                 std::uint64_t offset = 0, room = 0;
                 const bool marked = words[0] == host_mark;
                 const bool buffer =
                     !marked && buffer_at(words[0] & 0xffff'ffff'ffffull, resource, offset, room);
-                std::fprintf(stderr, "[Lost]   s%u place %u type %d: %016llx %016llx, %s%c",
-                             use.reg, use.place, use.type,
+                std::fprintf(stderr,
+                             "[Lost]   %s s%u place %u type %d (heap slot %llu): %016llx %016llx "
+                             "%016llx %016llx, %s%c",
+                             index ? "pixel" : "vertex", use.reg, use.place, use.type,
+                             static_cast<unsigned long long>((table - heap.base) / heap.stride +
+                                                             use.place),
                              static_cast<unsigned long long>(words[0]),
                              static_cast<unsigned long long>(words[1]),
+                             static_cast<unsigned long long>(words[2]),
+                             static_cast<unsigned long long>(words[3]),
                              marked   ? "the host's"
                              : buffer ? "the title's, of a buffer known here"
                                       : "the title's, of NO buffer known here",
                              10);
+                // the memory a view of the title's memory is of, as it is now
+                MemoryView view;
+                bool kept = false;
+                {
+                    const std::lock_guard lock(memory_view_mutex);
+                    if (const auto found = lost_views.find(words[1]);
+                        marked && found != lost_views.end())
+                        std::fprintf(stderr, "[Lost]     %s%c", found->second.c_str(), 10);
+                    if (const auto found = memory_views.find(words[1]);
+                        marked && found != memory_views.end()) {
+                        view = found->second;
+                        kept = true;
+                    }
+                }
+                if (kept) {
+                    std::uint64_t address = view.buffer.BufferLocation;
+                    if (!view.constants)
+                        std::memcpy(&address,
+                                    view.resource + sizeof(D3D12_SHADER_RESOURCE_VIEW_DESC),
+                                    sizeof address);
+                    else if (view.buffer.SizeInBytes >= 0x1a0)
+                        address += 0x160;
+                    float first[16]{};
+                    MEMORY_BASIC_INFORMATION info{};
+                    if (VirtualQuery(reinterpret_cast<void *>(address), &info, sizeof info) &&
+                        info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+                        std::memcpy(first, reinterpret_cast<const void *>(address), sizeof first);
+                    std::fprintf(stderr,
+                                 "[Lost]     of memory at %llx (%s): %g %g %g %g | %g %g %g %g | "
+                                 "%g %g %g %g | %g %g %g %g%c",
+                                 static_cast<unsigned long long>(address),
+                                 view.constants ? "constants" : "a buffer", first[0], first[1],
+                                 first[2], first[3], first[4], first[5], first[6], first[7],
+                                 first[8], first[9], first[10], first[11], first[12], first[13],
+                                 first[14], first[15], 10);
+                }
             }
+        }
         std::fflush(stderr);
     }
 }
@@ -4174,6 +4496,11 @@ void lost_draw(void *self, const char *method, UINT count) {
         if (static_cast<ListProxy *>(self)->heap_uses)
             kind += ", of the title's programs";
         ++kinds[kind];
+        static const std::uint64_t again = [] {
+            const auto *const text = std::getenv("XV_D3D_LOST_AT");
+            return text ? std::strtoull(text, nullptr, 10) : 0ull;
+        }();
+        lost_again = again && draws >= again && draws < again + 12;
         if (++draws % 500 == 0) {
             std::fprintf(stderr, "[Lost] %llu draws:", static_cast<unsigned long long>(draws));
             for (const auto &[name, number] : kinds)
@@ -4184,7 +4511,7 @@ void lost_draw(void *self, const char *method, UINT count) {
         }
     }
     static std::atomic<int> shown{0};
-    if (!std::getenv("XV_D3D_LOST") || shown++ >= 16)
+    if (!std::getenv("XV_D3D_LOST") || (shown++ >= 16 && !lost_again))
         return;
     auto *const list = static_cast<ListProxy *>(self);
     const void *root = nullptr;
@@ -4345,8 +4672,11 @@ void STDMETHODCALLTYPE set_index_buffer(void *self, const D3D12_INDEX_BUFFER_VIE
 // into a buffer of ours, which is what the host is given: 64 KiB of it, or as much as is
 // there. The copies go round a ring, which a frame does not come near filling.
 constexpr std::uint64_t most_copied = 64 << 10;
-// the GPU address of a copy of `bytes` (most_copied at most) at `source`, 0 if there is no ring
-std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most) {
+// the GPU address of a copy of `bytes` (most_copied at most) at `source`, 0 if there is no ring;
+// with `align`, the copy starts on a multiple of it in the ring, which `buffer` and `offset`
+// are given
+std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t most,
+                        std::uint64_t align, ID3D12Resource **buffer, std::uint64_t *offset) {
     constexpr std::uint64_t ring_size = 256ull << 20;
     most = std::min(most, ring_size);
     static std::mutex mutex;
@@ -4378,11 +4708,15 @@ std::uint64_t ring_copy(const void *source, std::uint64_t bytes, std::uint64_t m
         std::fflush(stderr);
     }
     bytes = std::min(bytes, most);
-    if (next + most > ring_size)
+    if (next + most + align > ring_size)
         next = 0;
-    const auto at = next;
-    next += (bytes + 255) & ~255ull;
+    const auto at = align ? (next + align - 1) / align * align : next;
+    next = (at + bytes + 255) & ~255ull;
     std::memcpy(memory + at, source, bytes);
+    if (buffer)
+        *buffer = ring;
+    if (offset)
+        *offset = at;
     return ring->GetGPUVirtualAddress() + at;
 }
 std::uint64_t root_address(std::uint64_t address) {
@@ -4526,7 +4860,10 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
     const auto stride = console_stride(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     for (UINT i = 1; targets && single && i < count; ++i)
         host_view({targets[0].ptr + std::size_t{i} * stride});
-    if (!host.empty()) {
+    // only for XV_D3D_PROBE: the title may have let go of a resource its view is still
+    // listed for
+    static const bool probing = std::getenv("XV_D3D_PROBE") != nullptr;
+    if (probing && !host.empty()) {
         const std::lock_guard lock(target_mutex);
         if (const auto found = target_of.find(host[0].ptr); found != target_of.end()) {
             last_target = found->second;
@@ -4544,7 +4881,8 @@ void STDMETHODCALLTYPE om_set_render_targets(void *self, UINT count, const Handl
     Handle host_depth{};
     if (depth)
         host_depth = host_view(*depth);
-    if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 16) {
+    if (static std::atomic<int> shown{0};
+        std::getenv("XV_D3D_LOST") && (shown++ < 16 || lost_again)) {
         const std::lock_guard lock(target_mutex);
         const auto say = [](std::uint64_t handle) {
             const auto found = view_text.find(handle);
@@ -5969,10 +6307,14 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
     std::size_t shader_at[3] = {};
     bool simple_graphics = true;
     bool made = false;
+    // a rectangle list: where the stream has its geometry shader and its rasterizer
+    bool rectangles = false;
+    std::size_t geometry_at = 0, rasterizer_at = 0;
     std::size_t signature_at = 0; // where in the stream the root signature's pointer is
     ID3D12RootSignature *from_shader = nullptr;
     std::shared_ptr<const HeapUses> uses;
     std::string types = "stream of"; // XV_D3D_LOST: the subobjects, as the title numbers them
+    std::string notes;               // and how its shaders were made for the host
     if (desc && desc->pPipelineStateSubobjectStream && console == Target::scarlett) {
         const auto *bytes = static_cast<const std::uint8_t *>(desc->pPipelineStateSubobjectStream);
         for (std::size_t at = 0; at + 8 <= desc->SizeInBytes;) {
@@ -6002,10 +6344,15 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
             if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY && size >= 8) {
                 D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
                 std::memcpy(&topology, stream.data() + stream.size() - size + 4, 4);
-                simple_graphics &= topology != rectangle_type;
+                rectangles |= topology == rectangle_type;
                 topology = host_topology_type(topology);
                 std::memcpy(stream.data() + stream.size() - size + 4, &topology, 4);
             }
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER && size >= 12)
+                rasterizer_at = stream.size() - size + 4;
+            if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS &&
+                size >= 8 + sizeof(D3D12_SHADER_BYTECODE))
+                geometry_at = stream.size() - size + 8;
             if (type == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT && size >= 8) {
                 DXGI_FORMAT depth;
                 std::memcpy(&depth, stream.data() + stream.size() - size + 4, 4);
@@ -6081,10 +6428,39 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
         }
         made |= host_bytecode(modules::ShaderStage::compute, compute, modules::HostShaderModel::sm5,
                               {}, signature);
+        if (made && std::getenv("XV_D3D_LOST")) {
+            notes = ":";
+            for (int index = 0; index < 3; ++index)
+                if (shaders[index].pShaderBytecode &&
+                    modules::console_only_shader(shader_bytes(shaders[index])))
+                    notes += " " + modules::host_shader_note(
+                                       static_cast<modules::ShaderStage>(index),
+                                       shader_bytes(shaders[index]), uses != nullptr);
+        }
         const D3D12_SHADER_BYTECODE translated[] = {vertex, pixel, compute};
         for (std::size_t index = 0; index < std::size(shader_at); ++index)
             if (shader_at[index])
                 std::memcpy(stream.data() + shader_at[index], &translated[index], sizeof vertex);
+        // the fourth corner of each rectangle, as in create_graphics_pipeline
+        if (rectangles && simple_graphics && vertex.pShaderBytecode) {
+            const auto corner = modules::rectangle_shader(shader_bytes(vertex));
+            if (corner.empty()) {
+                report_half_rectangles();
+            } else {
+                if (!geometry_at) {
+                    stream.resize(stream.size() + 24);
+                    const UINT type = D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS;
+                    std::memcpy(stream.data() + stream.size() - 24, &type, 4);
+                    geometry_at = stream.size() - 16;
+                }
+                const D3D12_SHADER_BYTECODE geometry{corner.data(), corner.size()};
+                std::memcpy(stream.data() + geometry_at, &geometry, sizeof geometry);
+                if (rasterizer_at) {
+                    const auto cull = D3D12_CULL_MODE_NONE;
+                    std::memcpy(stream.data() + rasterizer_at + 4, &cull, 4);
+                }
+            }
+        }
         if (made && !signature &&
             (from_shader = shader_root_signature(self, !shaders[2].pShaderBytecode,
                                                  {shaders[0], shaders[1], shaders[2]}))) {
@@ -6114,10 +6490,10 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
                 types += byte;
             }
         }
-        lost_pipeline((types + (from_shader                  ? ", signature from its shaders"
-                                : shaders[2].pShaderBytecode ? ", compute"
-                                : made                       ? ", shaders made for the host"
-                                                             : ""))
+        lost_pipeline((types + (from_shader ? std::string(", signature from its shaders")
+                                : shaders[2].pShaderBytecode ? ", compute" + notes
+                                : made                       ? ", shaders made for the host" + notes
+                                                             : std::string()))
                           .c_str(),
                       state, signature);
     }
@@ -6126,6 +6502,9 @@ HRESULT STDMETHODCALLTYPE create_pipeline_state(ID3D12Device *self,
     if (FAILED(result)) {
         std::fprintf(stderr, "[Runtime] CreatePipelineState from a stream of %zu bytes: 0x%08lx\n",
                      desc ? desc->SizeInBytes : 0, static_cast<unsigned long>(result));
+        if (static std::atomic<int> shown{0}; std::getenv("XV_D3D_LOST") && shown++ < 40)
+            std::fprintf(stderr, "[Lost]   %s%s\n", types.c_str(),
+                         (made ? ", shaders made for the host" + notes : std::string()).c_str());
         report_messages();
     }
     return result;
